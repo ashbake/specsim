@@ -9,6 +9,7 @@ from scipy.integrate import trapz
 from astropy.io import fits
 from scipy import interpolate
 import sys,glob
+from astropy.convolution import Gaussian1DKernel, convolve
 
 from functions import *
 
@@ -49,6 +50,33 @@ def load_phoenix(stelname,wav_start=750,wav_end=780):
 	# Convert 
 	return lam[isub]/10.0,spec[isub] * 10 * 100**2 #nm, phot/m2/s/nm
 
+def load_sonora(stelname,wav_start=750,wav_end=780):
+	"""
+	load sonora model file
+	
+	return subarray 
+	
+	wav_start, wav_end specified in nm
+	
+	convert s from erg/cm2/s/Hz to phot/cm2/s/nm using
+	https://hea-www.harvard.edu/~pgreen/figs/Conversions.pdf
+
+	wavelenght loaded is microns high to low
+	"""
+	f = np.loadtxt(stelname,skiprows=2)
+
+	lam  = 10000* f[:,0][::-1] #microns to angstroms, needed for conversiosn
+	spec = f[:,1][::-1] # erg/cm2/s/Hz
+	
+	spec *= 3e18/(lam**2)# convert spec to erg/cm2/s/angstrom
+	
+	conversion_factor = 5.03*10**7 * lam #lam in angstrom here
+	spec *= conversion_factor # phot/cm2/s/angstrom
+	
+	isub = np.where( (lam > wav_start*10.0) & (lam < wav_end*10.0))[0]
+
+	return lam[isub]/10.0,spec[isub] * 10 * 100**2 #nm, phot/m2/s/nm (my fave)
+
 def calc_nphot(dl_l, zp, mag):
 	"""
 	http://astroweb.case.edu/ssm/ASTR620/mags.html
@@ -71,7 +99,6 @@ def calc_nphot(dl_l, zp, mag):
 
 	return dl_l * zp * 10**(-0.4*mag) * phot_per_s_m2_per_Jy
 
-
 def scale_stellar(so, mag):
 	"""
 	scale spectrum by magnitude
@@ -81,7 +108,11 @@ def scale_stellar(so, mag):
 
 	load new stellar to match bounds of filter since may not match working badnpass elsewhere
 	"""
-	stelv,stels       =  load_phoenix(so.stel.phoenix_file,wav_start=np.min(so.filt.xraw), wav_end=np.max(so.filt.xraw)) #phot/m2/s/nm
+	if so.stel.model=='phoenix':
+		stelv,stels       =  load_phoenix(so.stel.stel_file,wav_start=np.min(so.filt.xraw), wav_end=np.max(so.filt.xraw)) #phot/m2/s/nm
+	elif so.stel.model=='sonora':
+		stelv,stels       =  load_sonora(so.stel.stel_file,wav_start=np.min(so.filt.xraw), wav_end=np.max(so.filt.xraw)) #phot/m2/s/nm
+
 	filt_interp       =  interpolate.interp1d(so.filt.xraw, so.filt.yraw, bounds_error=False,fill_value=0)
 
 	filtered_stellar   = stels * filt_interp(stelv)    # filter profile resampled to phoenix times phoenix flux density
@@ -89,6 +120,51 @@ def scale_stellar(so, mag):
 	nphot_phoenix      = integrate(stelv,filtered_stellar)            # what's the integrated flux now? in same units as ^
 	
 	return nphot_expected_0/nphot_phoenix
+
+def _lsf_rotate(deltav,vsini,epsilon=0.6):
+    '''
+    Computes vsini rotation kernel.
+    Based on the IDL routine LSF_ROTATE.PRO
+
+    Parameters
+    ----------
+    deltav : float
+        Velocity sampling for kernel (x-axis) [km/s]
+
+    vsini : float
+        Stellar vsini value [km/s]
+
+    epsilon : float
+        Limb darkening value (default is 0.6)
+
+    Returns
+    -------
+    kernel : array
+        Computed kernel profile
+
+    velgrid : float
+        x-values for kernel [km/s]
+
+    '''
+
+    # component calculations
+    ep1 = 2.0*(1.0 - epsilon)
+    ep2 = np.pi*epsilon/2.0
+    ep3 = np.pi*(1.0 - epsilon/3.0)
+
+    # make x-axis
+    npts = np.ceil(2*vsini/deltav)
+    if npts % 2 == 0:
+        npts += 1
+    nwid = np.floor(npts/2)
+    x_vals = (np.arange(npts) - nwid) * deltav/vsini
+    xvals_abs = np.abs(1.0 - x_vals**2)
+    velgrid = xvals_abs*vsini
+
+    # compute kernel
+    kernel = (ep1*np.sqrt(xvals_abs) + ep2*xvals_abs)/ep3
+
+    return kernel, velgrid
 
 
 class fill_data():
@@ -128,9 +204,17 @@ class fill_data():
 		"""
 		# Part 1: load raw spectrum
 		#
-		teff = str(int(so.var.teff)).zfill(5)
-		so.stel.phoenix_file      = so.stel.phoenix_folder + 'lte%s-4.50-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'%(teff)
-		so.stel.vraw,so.stel.sraw = load_phoenix(so.stel.phoenix_file,wav_start=so.const.l0, wav_end=so.const.l1) #phot/m2/s/nm
+		if so.var.teff < 2300: # sonora models arent sampled as well so use phoenix as low as can
+			g    = '316' # mks units, np.log10(316 * 100)=4.5 to match what im holding for phoenix models.
+			teff = str(int(so.var.teff))
+			so.stel.stel_file         = so.stel.sonora_folder + 'sp_t%sg%snc_m0.0' %(teff,g)
+			so.stel.vraw,so.stel.sraw = load_sonora(so.stel.stel_file,wav_start=so.const.l0,wav_end=so.const.l1)
+			so.stel.model             = 'sonora'
+		else:
+			teff = str(int(so.var.teff)).zfill(5)
+			so.stel.model             = 'phoenix' 
+			so.stel.stel_file         = so.stel.phoenix_folder + 'lte%s-4.50-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'%(teff)
+			so.stel.vraw,so.stel.sraw = load_phoenix(so.stel.stel_file,wav_start=so.const.l0, wav_end=so.const.l1) #phot/m2/s/nm
 		
 		so.stel.v   = self.x
 		tck_stel    = interpolate.splrep(so.stel.vraw,so.stel.sraw, k=2, s=0)
@@ -141,7 +225,15 @@ class fill_data():
 		so.stel.s   *= so.stel.factor_0 
 		so.stel.units = 'photons/s/m2/nm' # stellar spec is in photons/s/m2/nm
 
-
+		# broaden star spectrum with rotation kernal
+		if so.stel.vsini > 0:
+			dwvl_mean = np.abs(np.nanmean(np.diff(self.x)))
+			SPEEDOFLIGHT = 2.998e8 # m/s
+			dvel_mean = (dwvl_mean / np.nanmean(self.x)) * SPEEDOFLIGHT / 1e3 # average sampling in km/s
+			vsini_kernel,_ = _lsf_rotate(dvel_mean,so.stel.vsini,epsilon=0.6)
+			flux_vsini     = convolve(so.stel.s,vsini_kernel,normalize_kernel=True)  # photons / second / Ang
+			so.stel.s      = flux_vsini
+			#****TODO****
 	
 	def telluric(self,so):
 		"""

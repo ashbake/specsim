@@ -63,7 +63,8 @@ class STELLAR():
         # Filled in by code:
         self.vraw = None # wavelength like normal (should match exoplanet and be in standard wavelength)
         self.sraw = None #  spectrum
-
+        self.vsini = 0 # km/s
+        
 class TELLURIC():
     "telluric transmission file, static"
     def __init__(self):

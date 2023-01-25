@@ -18,7 +18,7 @@ matplotlib.rc('font', **font)
 
 sys.path.append('./utils/')
 from objects import load_object
-from load_inputs import fill_data, load_filter,load_phoenix
+from load_inputs import fill_data, load_filter
 from functions import *
 #from kpf_etc.etc import kpf_photon_noise_estimate, kpf_etc_rv, kpf_etc_snr
 
@@ -40,18 +40,18 @@ def hispec_sim_spectrum(so,throughput):
 
 	return v_resamp, s_resamp
 
+def find_min_throughput(so,snrgoal,nframes,dark=0.8,rn=12,hispec_pixel_column=3,method='max',ploton=False):
+	"""
+	inputs:
+	-------
 
-if __name__=='__main__':	
 
-	configfile = 'hispec.cfg'
-	so    = load_object(configfile)
-	cload = fill_data(so)
-	
-	hispec_pixel_column = 3 # pixels in a column
+	output:
+	-------
+	minimum throughput needed to reach snrgoal
 
-	nframes  =  4*3600/so.var.exp_time
-	dark = 0.8 # e-/pix/s
-	rn      = 12 # e-, check this**
+	"""
+	#snrgoal = 30 # as stated by requirement
 
 	throughputs = np.arange(20)/100
 	snrmean     = np.zeros_like(throughputs)
@@ -66,80 +66,90 @@ if __name__=='__main__':
 		snrmean[i] = np.mean(snr)
 		snrmedian[i] = np.median(snr)
 		snrmax[i] = np.max(snr)
-		n30 = len(np.where(snr > 30)[0])
+		n30 = len(np.where(snr > snrgoal)[0])
 		snr30frac[i] = n30/len(snr)
 
-	# plot of results
-	plt.figure(figsize=(7,4))
-	plt.plot(throughputs,snrmax,label='Max SNR')
-	plt.plot(throughputs,snrmean,label='Mean SNR')
-	#plt.plot(throughputs,snrmedian,label='Median SNR')
-	plt.xlabel('Throughput')
-	plt.ylabel('SNR')
-	plt.title('%s=%s, t_total=4hr (%ss/frame), Teff=%s'%(so.filt.band,int(so.var.mag),int(so.var.exp_time),int(so.var.teff)))
-	plt.grid()
-	plt.axhline(y=30,color='k',ls='--')
-	plt.legend()
-	plt.subplots_adjust(bottom=0.15)
-	figname = 'throughputgoal_%smag_%s_Teff_%s_texp_%ss.png' %(so.filt.band,so.var.mag,so.var.teff,int(so.var.exp_time*nframes))
-	plt.savefig('./output/snrplots/' + figname)
+	# interpolate throughput vs snr30frac curve to more accurately pull out where snr goes above goal
+	throughputs_fine = np.arange(np.min(throughputs),np.max(throughputs),0.001)
+	if method=='max':
+		interpsnr = interp1d(throughputs,snrmax)
+		isub      = np.where(interpsnr(throughputs_fine) > snrgoal)
 
-	plt.figure(figsize=(7,4))
-	plt.plot(throughputs,snr30frac)
-	plt.xlabel('Throughput')
-	plt.ylabel('Fraction of Spectrum above SNR 30')
-	plt.title('%s=%s, t_total=4hr (%ss/frame), Teff=%s'%(so.filt.band,int(so.var.mag),int(so.var.exp_time),int(so.var.teff)))
-	plt.grid()
-	plt.subplots_adjust(bottom=0.15)
-	plt.axhline(y=0.5,color='k',ls='--')
-	figname = 'snr30frac_%smag_%s_Teff_%s_texp_%ss.png' %(so.filt.band,so.var.mag,so.var.teff,int(so.var.exp_time*nframes))
-	plt.savefig('./output/snrplots/' + figname)
+	elif method=='mean':
+		interpsnr = interp1d(throughputs,snrmean)
+		isub      = np.where(interpsnr(throughputs_fine) > snrgoal)
 
+	if ploton:
+		# plot of results
+		plt.figure(figsize=(7,4))
+		plt.plot(throughputs,snrmax,label='Max SNR')
+		plt.plot(throughputs,snrmean,label='Mean SNR')
+		#plt.plot(throughputs,snrmedian,label='Median SNR')
+		plt.xlabel('Throughput')
+		plt.ylabel('SNR')
+		plt.title('%s=%s, t_total=4hr (%ss/frame), Teff=%s'%(so.filt.band,int(so.var.mag),int(so.var.exp_time),int(so.var.teff)))
+		plt.grid()
+		plt.axhline(y=30,color='k',ls='--')
+		plt.legend()
+		plt.subplots_adjust(bottom=0.15)
+		figname = 'throughputgoal_%smag_%s_Teff_%s_texp_%ss.png' %(so.filt.band,so.var.mag,so.var.teff,int(so.var.exp_time*nframes))
+		plt.savefig('./output/snrplots/' + figname)
+
+		plt.figure(figsize=(7,4))
+		plt.plot(throughputs,snr30frac)
+		plt.xlabel('Throughput')
+		plt.ylabel('Fraction of Spectrum above SNR 30')
+		plt.title('%s=%s, t_total=4hr (%ss/frame), Teff=%s'%(so.filt.band,int(so.var.mag),int(so.var.exp_time),int(so.var.teff)))
+		plt.grid()
+		plt.subplots_adjust(bottom=0.15)
+		plt.axhline(y=0.5,color='k',ls='--')
+		figname = 'snr30frac_%smag_%s_Teff_%s_texp_%ss.png' %(so.filt.band,so.var.mag,so.var.teff,int(so.var.exp_time*nframes))
+		plt.savefig('./output/snrplots/' + figname)
+
+	return throughputs_fine[isub[0][0]]
+
+
+def plot_snr(throughput,dark1,dark2,rn1,rn2):
 	# example SNR plot
-	throughput=0.075
-	dark1 = 0.8
-	dark2 = 1.6
+	#throughput=0.075
+	#dark1 = 0.8
+	#dark2 = 1.6
 	v,s  = hispec_sim_spectrum(so,throughput)
-	noise1 = np.sqrt(s + hispec_pixel_column * (rn**2 + so.var.exp_time*dark1)) #noise in reduced pixel column
-	noise2 = np.sqrt(s + hispec_pixel_column * (rn**2 + so.var.exp_time*dark2)) #noise in reduced pixel column
+	noise1 = np.sqrt(s + hispec_pixel_column * (rn1**2 + so.var.exp_time*dark1)) #noise in reduced pixel column
+	noise2 = np.sqrt(s + hispec_pixel_column * (rn2**2 + so.var.exp_time*dark2)) #noise in reduced pixel column
 	snr1 = np.sqrt(nframes) * s/noise1
 	snr2 = np.sqrt(nframes) * s/noise2	
 
 	plotsnr=True
 	plt.figure(figsize=(7,4))
-	plt.plot(v,snr1 ,'g',alpha=0.7,label='Dark=%se-/pix/s'%dark1)
-	plt.plot(v,snr2 ,'orange',alpha=0.7,label='Dark=%se-/pix/s'%dark2)
+	plt.plot(v,snr1 ,'g',alpha=0.7,label='Dark=%se-/pix/s, RN=%s'%(dark1,rn1))
+	plt.plot(v,snr2 ,'orange',alpha=0.7,label='Dark=%se-/pix/s, RN=%s'%(dark2,rn2))
 	plt.ylabel('SNR')
 	plt.xlabel('Wavelength (nm)')
 	plt.title('%s=%s, t_total=4hr (%ss/frame), Teff=%s,\nThroughput=%s'%(so.filt.band,int(so.var.mag),int(so.var.exp_time),int(so.var.teff),throughput))
 	plt.axhline(y=30,color='k',ls='--')
 	plt.subplots_adjust(bottom=0.15,top=0.85)
 	plt.legend(fontsize=14)
-	figname = 'dark_noise_effect_flat_throughput_%s_%smag_%s_Teff_%s_texp_%ss.png' %(throughput,so.filt.band,so.var.mag,so.var.teff,int(so.var.exp_time*nframes))
+	figname = 'example_flat_throughput_%s_%smag_%s_Teff_%s_texp_%ss.png' %(throughput,so.filt.band,so.var.mag,so.var.teff,int(so.var.exp_time*nframes))
 	plt.savefig('./output/snrplots/' + figname)
 
-	throughput=0.075
-	dark=0.8
-	rn1 = 12
-	rn2 = 24
-	v,s  = hispec_sim_spectrum(so,throughput)
-	noise1 = np.sqrt(s + hispec_pixel_column * (rn1**2 + so.var.exp_time*dark)) #noise in reduced pixel column
-	noise2 = np.sqrt(s + hispec_pixel_column * (rn2**2 + so.var.exp_time*dark)) #noise in reduced pixel column
-	snr1 = np.sqrt(nframes) * s/noise1
-	snr2 = np.sqrt(nframes) * s/noise2	
 
-	plotsnr=True
-	plt.figure(figsize=(7,4))
-	plt.plot(v,snr1 ,'g',alpha=0.7,label='Read Noise=%se-'%rn1)
-	plt.plot(v,snr2 ,'orange',alpha=0.7,label='Read Noise=%se-'%rn2)
-	plt.ylabel('SNR')
-	plt.xlabel('Wavelength (nm)')
-	plt.title('%s=%s, t_total=4hr (%ss/frame), Teff=%s,\nThroughput=%s'%(so.filt.band,int(so.var.mag),int(so.var.exp_time),int(so.var.teff),throughput))
-	plt.axhline(y=30,color='k',ls='--')
-	plt.subplots_adjust(bottom=0.15,top=0.85)
-	plt.legend(fontsize=14)
-	figname = 'read_noise_effect_flat_throughput_%s_%smag_%s_Teff_%s_texp_%ss.png' %(throughput,so.filt.band,so.var.mag,so.var.teff,int(so.var.exp_time*nframes))
-	plt.savefig('./output/snrplots/' + figname)
+if __name__=='__main__':	
 
+	configfile = 'hispec.cfg'
+	so    = load_object(configfile)
+	cload = fill_data(so)
+	
+	hispec_pixel_column = 3 # pixels in a column
+	nframes  = 4*3600/so.var.exp_time
+	dark     = 0.8 # e-/pix/s  12me-/s/(frame/s)  - every time read out, get some emissin
+	rn       = 12 # e-, check this**
+	snrgoal  = 30 
+
+	min_throughput = find_min_throughput(so,snrgoal,nframes,dark=dark,rn=rn,hispec_pixel_column=hispec_pixel_column,method='mean')
+
+	#plot_snr(0.075,dark1=dark,dark2=dark*2,rn1=rn,rn2=rn)
+
+	# do a set of stellar temperatures to calc min throughput for
 
 

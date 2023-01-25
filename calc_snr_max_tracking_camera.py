@@ -5,7 +5,7 @@ import sys,matplotlib, os
 import numpy as np
 import matplotlib.pylab as plt
 from scipy import interpolate
-
+import matplotlib.ticker as mticker
 from astropy import units as u
 from astropy import constants as c 
 from astropy.io import fits
@@ -20,7 +20,7 @@ fontname = 'Arial Narrow'
 
 sys.path.append('./utils/')
 from objects import load_object
-from load_inputs import fill_data, load_filter,load_phoenix
+from load_inputs import fill_data, load_filter,load_phoenix,load_sonora
 from functions import *
 #from kpf_etc.etc import kpf_photon_noise_estimate, kpf_etc_rv, kpf_etc_snr
 
@@ -68,26 +68,28 @@ def select_tracking_cam(camera='h2rg'):
 def get_band_mag(so,family,band,factor_0):
 	"""
 	factor_0: scaling model to photons
-
-	vega factor_0 0mag: 5.883445585494627e-17
 	"""
 	x,y          = load_filter(so,family,band)
-	filt_interp  = interpolate.interp1d(x, y, bounds_error=False,fill_value=0)
-	dl_l         = np.mean(integrate(x,y)/x) # dlambda/lambda to account for spectral fraction
+	filt_interp  =  interpolate.interp1d(x, y, bounds_error=False,fill_value=0)
+	dl_l         =   np.mean(integrate(x,y)/x) # dlambda/lambda to account for spectral fraction
 	
 	# load stellar the multiply by scaling factor, factor_0, and filter. integrate
-	vraw,sraw = load_phoenix(so.stel.phoenix_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
+	if so.stel.model=='phoenix':
+		vraw,sraw = load_phoenix(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
+	elif so.stel.model=='sonora':
+		vraw,sraw = load_sonora(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
+	
 	filtered_stel = factor_0 * sraw * filt_interp(vraw)
 	flux = integrate(vraw,filtered_stel)    #phot/m2/s
 
-	phot_per_s_m2_per_Jy = 1.51*10**7 # conversion to phot/s/m2 from Jansky
+	phot_per_s_m2_per_Jy = 1.51*10**7 # convert to phot/s/m2 from Jansky
 	
 	flux_Jy = flux/phot_per_s_m2_per_Jy/dl_l
 	
-	# get zeropoints
-	zps                     = np.loadtxt(so.filt.zp_file,dtype=str).T # load all zeropoints
-	izp                     = np.where((zps[0]==family) & (zps[1]==band))[0] # index of one for band using
-	zp                      = np.float(zps[2][izp]) # select zeropoint of interest
+	# get zps
+	zps                     = np.loadtxt(so.filt.zp_file,dtype=str).T
+	izp                     = np.where((zps[0]==family) & (zps[1]==band))[0]
+	zp                      = np.float(zps[2][izp])
 
 	mag = -2.5*np.log10(flux_Jy/zp)
 
@@ -108,8 +110,8 @@ def get_wfe(Rmag):
 	aowfe_ngs=np.array([133,134,134,134,135,137,140,144,153,162,182,209,253,311,398,510,671,960,1446,2238,3505])
 	aowfe_lgs=np.array([229,229,229,229,229,229,230,230,231,231,232,235,238,247,255,281,301,345,434,601,889])
 
-	f_ngs = interpolate.interp1d(mag_arr,aowfe_ngs, bounds_error=False,fill_value=10000)
-	f_lgs = interpolate.interp1d(mag_arr,aowfe_lgs, bounds_error=False,fill_value=10000)
+	f_ngs = interpolate.interp1d(mag_arr,aowfe_ngs, bounds_error=False,fill_value=100000)
+	f_lgs = interpolate.interp1d(mag_arr,aowfe_lgs, bounds_error=False,fill_value=100000)
 
 	wfe = np.min([f_ngs(Rmag), f_lgs(Rmag)])
 
@@ -147,7 +149,13 @@ def pick_tracking_band(so,band):
 	if band=='z':
 		l0,lf = 800,950
 		center_wavelength = 875
-		throughput = 0.2
+		throughput = 1 # 20% was applied in total throughput of new dichroic
+		bandpass = tophat(so.stel.v,l0,lf,throughput) #make up fake band
+
+	if band=='y':
+		l0,lf = 980,1100
+		center_wavelength = 1050
+		throughput = 1
 		bandpass = tophat(so.stel.v,l0,lf,throughput) #make up fake band
 
 	if band=='JHgap':
@@ -180,7 +188,7 @@ def calc_plate_scale(camera, D=10, fratio=40):
 	platescale_arcsec_pix = platescale_arcsec_um * pitch
 	return platescale_arcsec_pix
 
-def calc_trackingcamera_photons(so,exptime,mag,band='z'):
+def calc_trackingcamera_photons(so,exptime,mag,band='z',camera='h2rg'):
 	"""
 	get total photons through tracking band
 
@@ -189,7 +197,7 @@ def calc_trackingcamera_photons(so,exptime,mag,band='z'):
 	"""
 	
 	# load qe mod factor to modify QE of detector in next step
-	_, _, qe_mod,_ = select_tracking_cam(camera='h2rg')
+	_, _, qe_mod,_ = select_tracking_cam(camera=camera)
 
 	# scale to diff magnitudes from one that was loaded
 	s_ccd_hires = so.stel.s*10**(-0.4*(mag - so.var.mag))* exptime *\
@@ -203,7 +211,7 @@ def calc_trackingcamera_photons(so,exptime,mag,band='z'):
 
 	return total_photons
 
-def get_fwhm(mag,band,camera='h2rg',offaxis=0):
+def get_fwhm(mag,band,tt_resid,camera='h2rg',offaxis=0):
 	"""
 	combine DL by strehlt and tip/tilt error and off axis
 
@@ -222,8 +230,7 @@ def get_fwhm(mag,band,camera='h2rg',offaxis=0):
 	diffraction_spot_pix = diffraction_spot_arcsec / platescale_arcsec_pix
 	fwhm_ho = diffraction_spot_pix / strehl**(1/4) # 1/strehl**.25 from dimitri, to account for broadening deviation from diffraction limit
 
-	fwhm_tt = 10*10**-3/platescale_arcsec_pix # assume 10 [arcsec] for now
-	# ^^to be updated as fxn of magnitude data
+	fwhm_tt = tt_resid*10**-3/platescale_arcsec_pix # assume 10 [arcsec] for now
 
 	fwhm_offaxis=offaxis *4 # [pix] if off axis input is 1, assume at edge of field where RMS is 4 pix
 	# ^ need to use mm instead of 4pix, and load camera pixel pitch
@@ -233,27 +240,115 @@ def get_fwhm(mag,band,camera='h2rg',offaxis=0):
 
 	return fwhm,strehl
 
-def calc_trackingcam_noise(nphot,exptime,fwhm,camera='h2rg'):
+def calc_trackingcam_noise(nphot,bkg,exptime,fwhm,camera='h2rg'):
 	"""
+	bkg in counts per second per pixel
 	"""
 	# load tracking camera stats
 	rn, pitch, qe, dark = select_tracking_cam(camera=camera)
 
 	npix = np.pi * fwhm**2
 
-	noise =  np.sqrt(nphot + npix * (rn**2  + exptime*dark)) #have to add sky #noise in reduced pixel column
+	noise =  np.sqrt(nphot + npix * (rn**2  + exptime*(dark+bkg))) #have to add sky #noise in reduced pixel column
 
 	return noise
+
+def get_mag_limit_per_exptime(exptimes,magarr,centroid,tracking_requirement_pixel):
+	"""
+	"""
+	magdense = np.arange(np.min(magarr),np.max(magarr)-1,0.01)
+	mag_requirement = np.zeros((len(exptimes)))
+	for j, exptime in enumerate(exptimes):
+		# interpolate curve on higher density grid
+		interp   = interp1d(magarr,centroid[:,j])
+		cendense = interp(magdense)
+		try:
+			ireq = np.where(cendense > tracking_requirement_pixel)[0][0]
+		except:
+			ireq = 0
+		mag_requirement[j] = magdense[ireq]
+
+	return mag_requirement
+
+def get_tip_tilt_resid(Vmag, mode):
+	"""
+	load data from haka sims, spit out tip tilt
+	"""
+	modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files 
+	imode = np.where(modes==mode)[0]
+
+	#load data file
+	f = np.loadtxt('./data/WFE/HAKA/Kstar_tiptilt.txt').T
+	vmags = f[0]
+	tip_tilts = f[1:][imode] # switch to take best mode for observing case
+
+	#interpolate
+	f_tt = interpolate.interp1d(vmags,tip_tilts, bounds_error=False,fill_value=10000)
+
+	return f_tt(Vmag)
+
+def get_HO_WFE(Vmag, mode):
+	"""
+	load data from haka sims, spit out tip tilt
+	"""
+	modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files 
+	imode = np.where(modes==mode)[0][0]
+
+	#load data file
+	f = np.loadtxt('./data/WFE/HAKA/Kstar_HOwfe.txt').T
+	vmags = f[0]
+	wfes = f[1:][imode]
+
+	#interpolate
+	f_wfe = interpolate.interp1d(vmags,wfes, bounds_error=False,fill_value=10000)
+
+	return f_wfe(Vmag)
+
+def get_sky_bg(x,airmass,pwv=1.5):
+	"""
+	"""
+	diam = 10. * u.m
+	area = 76. * u.m * u.m
+	delta_lb = 0.001 * u.micron
+	wave = np.arange(0.8,2.5,delta_lb.value) 
+	fwhm = ((wave * u.micron / diam) * u.radian).to(u.arcsec)
+	solidangle = fwhm**2 * 1.13 #corrected for Gaussian beam (factor 1.13)
+	npix = 3
+	lam0=2000.
+	R=100000
+	
+	sky_background_MK = np.zeros([4,3,235000])
+	sky_background_MK_wv = np.array([1.,1.6,3.,5.])#water vapor 
+	sky_background_MK_airmass = np.array([1.,1.5,2.])#airmass
+	path = '../../../_DATA/'
+	#
+	sky_background_MK_tmp = np.genfromtxt(path+'sky/mk_skybg_zm_'+str(pwv)+'_'+str(airmass)+'_ph.dat', skip_header=0)
+	sky_background_MK = sky_background_MK_tmp[:,1]
+	sky_background_MK_wave = sky_background_MK_tmp[:,0] #* u.nm
+	if np.max(wave) < 10: wave *= 1e+3
+	pix_nm  = lam0/R/npix
+	sky_background_interp=np.interp(wave, sky_background_MK_wave, sky_background_MK) * u.photon/(u.s*u.arcsec**2*u.nm*u.m**2) * area * solidangle * 2000/100000/3 * u.nm 
+
+	sky_background_interp2=np.interp(x, wave, sky_background_interp) 
+
+	return sky_background_interp2
 
 def plot_tracking_bands():
 	"""
 	"""
 	plt.figure(figsize=(8,5))
-	for band in ['z','JH gap','J','H','K']:
+	for band in ['z','y','J','JH gap','H','K']:
 		print(band)
 		if band=='z':
 			l0,lf = 800,950
 			x = np.arange(l0-5,lf+5)
+			throughput = 1
+			bandpass = tophat(x,l0,lf,throughput) #make up fake band
+
+		if band=='y':
+			l0,lf = 980,1100
+			x = np.arange(l0-5,lf+5)
+			center_wavelength = 1050
 			throughput = 1
 			bandpass = tophat(x,l0,lf,throughput) #make up fake band
 
@@ -271,19 +366,30 @@ def plot_tracking_bands():
 		#plt.fill_between(so.stel.v,bandpass,alpha=0.8,label=band,edgecolor='k')
 		plt.plot(x,bandpass,linewidth=3,label=band)
 
-	for band in ['R','I','J','H','K']:
-		x,y = load_filter(so,'Johnson',band)
-		plt.plot(x,y,alpha=0.5,c='k')
-		if band=='R': 
-			plt.fill_between(x,y,alpha=0.1,facecolor='k',label='Generic \nJohnson \nRIJHK')
-		else:
-			plt.fill_between(x,y,alpha=0.1,facecolor='k')
 
+	#for band in ['R','I','J','H','K']:
+	#	x,y = load_filter(so,'Johnson',band)
+	#	plt.plot(x,y,alpha=0.5,c='k')
+	#	if band=='R': 
+	#		plt.fill_between(x,y,alpha=0.1,facecolor='k',label='Generic \nJohnson \nRIJHK')
+	#	else:
+	#		plt.fill_between(x,y,alpha=0.1,facecolor='k')
+	x,y = load_filter(so,'Johnson','V')
+	plt.plot(x,y,alpha=0.5,c='k')
+	plt.fill_between(x,y,alpha=0.1,facecolor='m',label='Johnson V')
+	
+	#plt.plot(so.stel.v,so.tel.s * so.stel.s/np.max(so.stel.s),'gray',alpha=0.5,zorder=-100)
+	spectrum = so.hispec.ytransmit * so.tel.s * so.stel.s/np.max(so.stel.s)
+	spec_lores = degrade_spec(so.stel.v[::10], spectrum[::10], 2000)
+	star_lores = degrade_spec(so.stel.v[::10], so.stel.s[::10]/np.max(so.stel.s), 2000)
+	plt.plot(so.stel.v[::10],star_lores,'k',zorder=-100,label='T=%sK'%so.var.teff)
+	plt.plot(so.stel.v[::10],spec_lores,'gray',alpha=0.8,zorder=-101,label='Throughput x \n Normalized Flux')
 	plt.title('Tracking Camera Filter Profiles')
 	plt.xlabel('Wavelength (nm)')
 	plt.ylabel('Transmission')
-	plt.legend(fontsize=12)
-	plt.savefig('output/trackingcamera/tracking_camera_filter_assumptions.png')
+	plt.legend(fontsize=10,loc=1)
+
+	plt.savefig('output/trackingcamera/tracking_camera_filter_assumptions_%sK.png'%so.var.teff,dpi=500)
 
 def plot_psf_size_vs_mag():
 	"""
@@ -379,36 +485,37 @@ def plot_tracking_cam_spot_rms(camera='h2rg'):
 	plt.title('Tracking Camera Spot RMS')
 	plt.legend()
 
-def plot_individual_terms():
-	fig, axs = plt.subplots(4)
+def plot_snr_and_fwhm():
+	# plot noise breakdown related
+	j = -1  # corresponds to one second
+	npix = np.pi * fwhm**2
+	rn, pitch, qe, dark = select_tracking_cam(camera=camera)
+	shot = np.sqrt(signal)
+	readnoise = np.sqrt(npix * rn**2)
+	shotdark = np.sqrt(npix* exptime*dark)
 
-	plt.figure(figsize=(7,4))
-	for j, exptime in enumerate(exptimes):
-		axs[0].semilogy(magarr,fwhm[:,j],label=exptime)
-		# plot fwhm from different sources of fwhm 
-	plt.grid('True')
+	#plt.figure(figsize=(7,4))
+	fig, axs = plt.subplots(2,figsize=(6,8),sharex=True)
 
-	plt.figure(figsize=(7,4))
-	for j, exptime in enumerate(exptimes):
-		axs[1].semilogy(magarr,signal[:,j],label=exptime)
-	plt.grid('True')
+	axs[0].semilogy(magarr,signal[:,j],'k',lw=4,label='signal')
+	axs[0].semilogy(magarr,signal[:,j]*strehl[:,j],'k-',lw=2,label='signal*strehl')
+	axs[0].semilogy(magarr,noise[:,j],'gray',lw=4,label='noise')
+	axs[0].semilogy(magarr,shot[:,j],'m-.',c='orange',label='shot noise')
+	axs[0].semilogy(magarr,readnoise[:,j],'--',c='m',label='read noise')
+	axs[0].semilogy(magarr,shotdark[:,j],'g-',label='dark')
+	axs[0].grid('True')
+	axs[0].legend(fontsize=10)
+	axs[0].set_ylabel('Counts (e-)')
+	axs[0].set_title('Cam: %s Band: '%camera + track_band + ' Temp: %sK ($t_{exp}$=1s)'%(int(so.var.teff)))
 
-	plt.figure(figsize=(7,4))
-	for j, exptime in enumerate(exptimes):
-		axs[2].semilogy(magarr,snr_arr[:,j],label=exptime)
-	plt.grid('True')
+	axs[1].semilogy(magarr,fwhm[:,j],label=exptime)
+	axs[1].grid('True')
+	axs[1].set_ylabel('FWHM [pixels]')
+	axs[1].set_xlabel('%s Magnitude'%so.filt.band)
+	axs[1].yaxis.set_minor_formatter(mticker.ScalarFormatter())
+	axs[1].yaxis.set_major_formatter(mticker.ScalarFormatter())
 
-	plt.figure(figsize=(7,4))
-	axs[3].plot(magarr,[get_wfe(mag) for mag in magarr],'.')
-	plt.grid('True')
-
-	# plot all things signal related
-	fig2, axs2 = plt.subplots(4)
-
-	plt.figure(figsize=(7,4))
-	for j, exptime in enumerate(exptimes):
-		axs2[1].semilogy(magarr,signal[:,j],label=exptime)
-	plt.grid('True')
+	plt.subplots_adjust(bottom=0.15,hspace=0,left=0.15)
 
 def plot_wfe():
 	wfes = []
@@ -426,64 +533,7 @@ def plot_wfe():
 	plt.ylabel('H-band SR')
 
 
-if __name__=='__main__':
-	# questions
-	# how to split up wfe to get right centroid error
-
-	#load inputs
-	configfile = 'hispec_tracking_camera.cfg'
-	so         = load_object(configfile)
-	cload      = fill_data(so)
-
-	#############
-	# Guide Camera
-	#############
-	camera   = 'h2rg'
-	track_band = 'JHgap'  # this is the tracking band
-	mode     = 'DM' # currently not used, eventually implement DM,LGS, and pywfs modes
-	exptimes = np.array([0.001,0.01,0.1,1,10])
-	magarr   = np.arange(0,20,1)
-
-	snr_arr   = np.zeros((len(magarr),len(exptimes)))
-	signal    = np.zeros((len(magarr),len(exptimes)))
-	noise     = np.zeros((len(magarr),len(exptimes)))
-	fwhm      = np.zeros((len(magarr),len(exptimes)))
-	centroid  = np.zeros((len(magarr),len(exptimes)))
-	Rmags     = np.zeros((len(magarr)))
-	for i,mag in enumerate(magarr): # this is the magnitude in filter band
-		factor_0       = so.stel.factor_0 * 10**(-0.4 *(mag-so.var.mag)) # instead could use factor_0 = scale_stellar(so, mag)
-		Rmags[i]       = get_band_mag(so,'Johnson','R',factor_0) 
-		wfe            = get_wfe(Rmags[i])
-		#test_mag      = get_band_mag(so,'Johnson',band,factor_0);plt.plot(mag,test_mag) # if want to test mags match, they do now..
-		for j, exptime in enumerate(exptimes):
-			signal[i,j]             = calc_trackingcamera_photons(so,exptime,mag,band=track_band)
-			fwhm[i,j],strehl        = get_fwhm(mag,track_band,camera=camera,offaxis=0)
-			noise[i,j]              = calc_trackingcam_noise(signal[i,j],exptime,fwhm[i,j],camera=camera)
-			snr_arr[i,j]            = signal[i,j]/noise[i,j]
-			centroid[i,j]           = (1/np.pi) * fwhm[i,j]/(strehl* snr_arr[i,j]) #snr_to_centroidaccuracy(snr_arr[i,j],fwhm[i,j],wfe)
-
-
-	# compute requirement. requirement is 0.2lambda/D in y band
-	platescale_arcsec_pix  = calc_plate_scale(camera)
-	yband_wavelength       = 1020 # nm
-	tracking_requirement_arcsec = 206265 * 0.2 * yband_wavelength / (so.const.tel_diam*10**9) 
-	tracking_requirement_pixel  = tracking_requirement_arcsec/platescale_arcsec_pix
-
-	# get intersection of tracking requiremet for each exposure time
-	magdense = np.arange(0,19,0.01)
-	mag_requirement = np.zeros((len(exptimes)))
-	for j, exptime in enumerate(exptimes):
-		# interpolate curve on higher density grid
-		interp = interp1d(magarr,centroid[:,j])
-		cendense = interp(magdense)
-		try:
-			ireq = np.where(cendense > tracking_requirement_pixel)[0][0]
-		except:
-			ireq = 0
-		mag_requirement[j] = magdense[ireq]
-
-
-	# PLOT
+def plot_centroiderr_vmag():
 	plt.figure(figsize=(8,6))
 	ax = plt.axes()
 	for j, exptime in enumerate(exptimes):
@@ -505,32 +555,141 @@ if __name__=='__main__':
 	plt.ylim(1e-5,2)
 	plt.plot([15,15],[1e-5,2],'k--')
 
-	# PLOT
-	# mag limit vs exp time
-	plt.figure(figsize=(7,6))
-	ax = plt.axes()
-	plt.semilogx(exptimes,mag_requirement,'--',c='green')
-	plt.semilogx(exptimes,mag_requirement,'o',c='green')
-	#plt.fill_between(exptimes,mag_requirement,facecolor='green',alpha=0.2)
-	plt.fill_between(exptimes,mag_requirement,y2=15 * np.ones_like(exptimes),facecolor='green',alpha=0.2)
-	for j, exptime in enumerate(exptimes):
-		plt.text(exptime*0.9,mag_requirement[j]*.93,str(round(mag_requirement[j],1)))
+def get_tip_tilt_resid(Vmag, mode):
+	"""
+	load data from haka sims, spit out tip tilt
+	"""
+	modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files 
+	imode = np.where(modes==mode)[0]
 
-	plt.axhline(15,c='k',linestyle='--')
+	#load data file
+	f = np.loadtxt('./data/WFE/HAKA/Kstar_tiptilt.txt').T
+	vmags = f[0]
+	tip_tilts = f[1:][imode] # switch to take best mode for observing case
 
-	plt.title('Cam: %s Band: '%camera + track_band + ' Temp: %sK'%(int(so.var.teff)))
-	plt.xlabel('Exposure Time [s]')
-	plt.ylabel('%s Magnitude Limit' %so.filt.band)
-	plt.subplots_adjust(bottom=0.15,top=0.85)
-	plt.grid(color='gray',linestyle='--',dash_joinstyle='miter')
-	ax.xaxis.set_minor_locator(AutoMinorLocator())
-	#ax.yaxis.set_minor_locator(AutoMinorLocator())
-	ax.tick_params(which='minor',length=4,color='gray',direction="in")
-	plt.xlim(np.min(magarr),np.max(magarr))
-	plt.ylim(4,18)
+	#interpolate
+	f_tt = interpolate.interp1d(vmags,tip_tilts, bounds_error=False,fill_value=10000)
 
-	# save
+	return f_tt(Vmag)
 
 
+def compute_band_photon_counts():
+	"""
+	"""
+	newmags = []
+	all_bands = []
+	Johnson_bands = ['U','B','V','R','I','J','H','K']
+	for i,band in enumerate(Johnson_bands):
+		newmags.append(get_band_mag(so,'Johnson',band,so.stel.factor_0))
+		all_bands.append(band)
 
+	#newmags.append(get_band_mag(so,'Sloan','uprime_filter',so.stel.factor_0))
+	#all_bands.append('uprime_filter')
+
+	get_band_mag(so,'SLOAN','uprime_filter',so.stel.factor_0)
+
+
+if __name__=='__main__':
+	# questions
+	# how to split up wfe to get right centroid error
+
+	#load inputs
+	configfile = 'hispec_tracking_camera.cfg'
+	so         = load_object(configfile)
+	cload      = fill_data(so)
+
+	#############
+	# Guide Camera
+	#############
+	camera     = 'h2rg'
+	track_band = 'JHgap'  # this is the tracking band
+	track_bands = ['z','y','J','JHgap','H','K']
+	mode     = 'LGS' # 	modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files 
+	exptimes = np.array([0.001,0.01,0.1,1,10])
+	magarr   = np.arange(0,20,1)
+	bkg      = 0#skybkg : #e-/sec/arcsec2/nm/m2 from file, incorporate this and instrument bkg
+
+	plt.figure(0,figsize=(7,6))
+	ax = plt.axes()	
+	for track_band in track_bands:
+		snr_arr   = np.zeros((len(magarr),len(exptimes)))
+		signal    = np.zeros((len(magarr),len(exptimes)))
+		noise     = np.zeros((len(magarr),len(exptimes)))
+		fwhm      = np.zeros((len(magarr),len(exptimes)))
+		centroid  = np.zeros((len(magarr),len(exptimes)))
+		strehl    = np.zeros((len(magarr),len(exptimes)))
+		Vmags     = np.zeros((len(magarr)))
+		for i,mag in enumerate(magarr): # this is the magnitude in filter band
+			factor_0       = so.stel.factor_0 * 10**(-0.4 *(mag-so.var.mag)) # instead could use factor_0 = scale_stellar(so, mag)
+			Vmags[i]       = get_band_mag(so,'Johnson','V',factor_0) 
+			#wfe           = get_wfe(Rmags[i])
+			wfe      = get_HO_WFE(Vmags[i],mode)
+			tt_resid = get_tip_tilt_resid(Vmags[i],mode)
+			#test_mag      = get_band_mag(so,'Johnson',band,factor_0);plt.plot(mag,test_mag) # if want to test mags match, they do now..
+			for j, exptime in enumerate(exptimes):
+				signal[i,j]             = calc_trackingcamera_photons(so,exptime,mag,band=track_band)
+				fwhm[i,j],strehl[i,j]   = get_fwhm(mag,track_band,tt_resid,camera=camera,offaxis=1)
+				# calculate bkg here
+				noise[i,j]              = calc_trackingcam_noise(signal[i,j],bkg,exptime,fwhm[i,j],camera=camera)
+				snr_arr[i,j]            = signal[i,j]/noise[i,j]
+				centroid[i,j]           = (1/np.pi) * fwhm[i,j]/(strehl[i,j]* snr_arr[i,j]) 
+				#snr_to_centroidaccuracy(snr_arr[i,j],fwhm[i,j],wfe)
+
+		# compute requirement. requirement is 0.2lambda/D in y band
+		platescale_arcsec_pix  = calc_plate_scale(camera)
+		yband_wavelength       = 1020 # nm
+		tracking_requirement_arcsec = 206265 * 0.2 * yband_wavelength / (so.const.tel_diam*10**9) 
+		tracking_requirement_pixel  = tracking_requirement_arcsec/platescale_arcsec_pix
+
+		# get intersection of tracking requiremet for each exposure time
+		mag_requirement = get_mag_limit_per_exptime(exptimes,magarr,centroid,tracking_requirement_pixel)
+
+		# save to text file for certain temperature
+		f  = open('./output/trackingcamera/%s_maglimit_%s_%smag.txt' %(camera,track_band,so.filt.band),'a+')
+		writeme = str(so.var.teff) + '\n' + track_band + '\n' + str(so.var.exp_time) + '\n' 
+		for exptime in exptimes: writeme+=str(exptime) + ' '
+		writeme+='\n'
+		for mag in mag_requirement: writeme+=str(mag) + ' '
+		writeme+='\n'
+		f.write(writeme)
+		f.close()
+
+		
+		# PLOT !!!
+		#plot_centroiderr_vmag()
+
+
+		# mag limit vs exp time
+
+		iplot = np.where(mag_requirement!=0) # dont plot 0s where strehl cant be calculated
+		ax.semilogx(exptimes[iplot],mag_requirement[iplot],'--',label='%s Tracking'%track_band)
+		ax.semilogx(exptimes[iplot],mag_requirement[iplot],'o',c='k')
+		#ax.xaxis.set_major_formatter(mticker.ScalarFormatter())
+		#ax.xaxis.set_major_formatter(mticker.FormatStrFormatter('%.3f'))
+		my_xticks = ['0.001','0.01','0.1','1','10']
+		plt.xticks(exptimes, my_xticks)
+
+		#plt.fill_between(exptimes,mag_requirement,y2=15 * np.ones_like(exptimes),facecolor='green',alpha=0.2)
+		# label magnitudes
+		#for j, exptime in enumerate(exptimes):
+		#	plt.text(exptime*0.9,mag_requirement[j]*.93,str(round(mag_requirement[j],1)))
+
+		plt.axhline(15,c='k',linestyle='--')
+
+		#plt.title('Cam: %s Band: '%camera + track_band + ' Temp: %sK'%(int(so.var.teff)))
+		plt.title('Cam: %s, Temp: %sK'%(camera,int(so.var.teff)))
+		plt.xlabel('Exposure Time [s]')
+		plt.ylabel('%s Magnitude Limit' %so.filt.band)
+		plt.subplots_adjust(bottom=0.15,top=0.85)
+		plt.grid(color='gray',linestyle='--',dash_joinstyle='miter')
+		#ax.xaxis.set_minor_locator(AutoMinorLocator())
+		#ax.yaxis.set_minor_locator(AutoMinorLocator())
+		#ax.tick_params(which='minor',length=4,color='gray',direction="in")
+		plt.legend()
+		plt.ylim(4,18)
+	plt.fill_between(exptimes,15,y2=18,facecolor='green',alpha=0.2)
+	plt.savefig('./output/trackingcamera/limiting_mag_T%sK.png'%so.var.teff,dpi=1000)
+
+
+	#plot_tracking_bands()
 
