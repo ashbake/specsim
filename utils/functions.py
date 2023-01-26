@@ -42,6 +42,14 @@ def degrade_spec(x,y,res):
 
     return y_lowres
 
+def tophat(x,l0,lf,throughput):
+    ion = np.where((x > l0) & (x<lf))[0]
+    bandpass = np.zeros_like(x)
+    bandpass[ion] = throughput
+    return bandpass
+
+
+
 def vac_to_stand(wave_vac):
     """Convert vacuum wavelength (Ang) to standard wavelength in air since we're
     doing ground based stuff. 

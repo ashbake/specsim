@@ -22,6 +22,7 @@ sys.path.append('./utils/')
 from objects import load_object
 from load_inputs import fill_data, load_filter,load_phoenix,load_sonora
 from functions import *
+from noise_tools import get_sky_bg, get_inst_bg
 #from kpf_etc.etc import kpf_photon_noise_estimate, kpf_etc_rv, kpf_etc_snr
 
 from matplotlib.ticker import (AutoMinorLocator)
@@ -316,7 +317,7 @@ def get_sky_bg(x,airmass,pwv=1.5):
 	npix = 3
 	lam0=2000.
 	R=100000
-	
+
 	sky_background_MK = np.zeros([4,3,235000])
 	sky_background_MK_wv = np.array([1.,1.6,3.,5.])#water vapor 
 	sky_background_MK_airmass = np.array([1.,1.5,2.])#airmass
