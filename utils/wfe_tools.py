@@ -3,9 +3,9 @@
 ###############################################################
 
 import numpy as np
-from scipy.interpolate import interp1d
 from scipy.integrate import trapz
 from scipy import signal
+from scipy import signal, interpolate
 
 all = {}
 
@@ -42,6 +42,44 @@ def get_HO_WFE(Vmag, mode):
     f_wfe = interpolate.interp1d(vmags,wfes, bounds_error=False,fill_value=10000)
 
     return f_wfe(Vmag)
+
+
+def calc_strehl(wfe,wavelength):
+    strehl = np.exp(-(2*np.pi*wfe/wavelength)**2)
+
+    return strehl
+
+def plot_wfe():
+    """
+    """
+    modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files 
+    
+    f_tt = np.loadtxt('./data/WFE/HAKA/Kstar_tiptilt.txt').T
+    vmags = f_tt[0]
+    f_wfe = np.loadtxt('./data/WFE/HAKA/Kstar_HOwfe.txt').T
+    
+    fig, ax = plt.subplots(2,figsize=(6,6),sharex=True)
+    for mode in modes:
+        imode = np.where(modes==mode)[0][0]
+
+        wfes      = f_wfe[1:][imode]
+        tip_tilts = f_tt[1:][imode] # switch to take best mode for observing case
+
+        ax[0].plot(vmags,tip_tilts,label=mode)
+        ax[1].plot(vmags,wfes,label=mode)
+
+    ax[0].set_xlim(3,20)
+    ax[0].set_ylim(0,20)
+    ax[0].legend(loc=2,fontsize=10)
+    ax[0].grid(True)
+    ax[0].set_ylabel('Tip Tilt Resid. (mas)')
+    ax[1].set_xlabel('V Mag')
+
+    ax[1].set_ylim(100,500)
+    ax[1].set_ylabel('HO WFE (nm)')
+    ax[1].grid(True)
+    plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15)
+    ax[0].set_title('K Star HAKA WFE Estimate')
 
 
 #

@@ -11,6 +11,11 @@ from scipy import interpolate
 import sys,glob
 from astropy.convolution import Gaussian1DKernel, convolve
 
+from throughput_tools import pick_coupling, get_band_mag, get_base_throughput
+from wfe_tools import get_tip_tilt_resid, get_HO_WFE
+import obs_tools
+import noise_tools
+
 from functions import *
 
 __all__ = ['fill_data','load_phoenix']
@@ -49,6 +54,13 @@ def load_phoenix(stelname,wav_start=750,wav_end=780):
 
 	# Convert 
 	return lam[isub]/10.0,spec[isub] * 10 * 100**2 #nm, phot/m2/s/nm
+
+def load_filter(filter_path,family,band):
+	"""
+	"""
+	filter_file    = glob.glob(filter_path + '*' + family + '*' + band + '.dat')[0]
+	xraw, yraw     = np.loadtxt(filter_file).T # nm, transmission out of 1
+	return xraw/10, yraw
 
 def load_sonora(stelname,wav_start=750,wav_end=780):
 	"""
@@ -177,23 +189,46 @@ class fill_data():
 	Edits
 	-----
 	Ashley - initial implementation Oct 26, 2018
+	Ashley - changed variable names jan 26, 2023
 	"""
 	def __init__(self, so):		
-		# define 
-		self.x = np.arange(so.const.l0,so.const.l1,0.0005)
-		self.hispec(so)
+		print("------FILLING OBJECT--------")
+		# define x array to carry everywhere
+		self.x = np.arange(so.inst.l0,so.inst.l1,0.0005)
+		# define bands here
+		so.inst.y=[970,1070]
+		so.inst.J=[1170,1327]
+		so.inst.H=[1490,1780]
+		so.inst.K=[1990,2460]
+
+		# order of these matter
 		self.filter(so)
 		self.stellar(so)
 		self.telluric(so)
+		self.ao(so)
+		self.instrument(so)
+		self.observe(so)
+		self.tracking(so)
 
-	def hispec(self,so):
-		###########
-		# load hispec transmission
-		xtemp, ytemp  = np.loadtxt(so.hispec.transmission_file,delimiter=',').T #microns!
-		f = interp1d(xtemp*1000,ytemp,kind='linear', bounds_error=False, fill_value=0)
+	def filter(self,so):
+		"""
+		load band for scaling stellar spectrum
+		"""
+		# read zeropoint file, get zp
+		zps                     = np.loadtxt(so.filt.zp_file,dtype=str).T
+		izp                     = np.where((zps[0]==so.filt.family) & (zps[1]==so.filt.band))[0]
+		so.filt.zp              = np.float(zps[2][izp])
+
+		# find filter file and load filter
+		so.filt.filter_file         = glob.glob(so.filt.filter_path + '*' + so.filt.family + '*' +so.filt.band + '.dat')[0]
+		so.filt.xraw, so.filt.yraw  = np.loadtxt(so.filt.filter_file).T # nm, transmission out of 1
+		if np.max(so.filt.xraw)>5000: so.filt.xraw /= 10
+		if np.max(so.filt.xraw) < 10: so.filt.xraw *= 1000
 		
-		so.hispec.xtransmit, so.hispec.ytransmit = self.x, f(self.x) 
+		f                       = interpolate.interp1d(so.filt.xraw, so.filt.yraw, bounds_error=False,fill_value=0)
+		so.filt.v, so.filt.s    = self.x, f(self.x)  #filter profile sampled at stellar
 
+		so.filt.dl_l            = np.mean(integrate(so.filt.xraw, so.filt.yraw)/so.filt.xraw) # dlambda/lambda
 
 	def stellar(self,so):
 		"""
@@ -204,24 +239,27 @@ class fill_data():
 		"""
 		# Part 1: load raw spectrum
 		#
-		if so.var.teff < 2300: # sonora models arent sampled as well so use phoenix as low as can
+		print('Teff set to %s'%so.stel.teff)
+		print('%s band mag set to %s'%(so.filt.band,so.stel.mag))
+	
+		if so.stel.teff < 2300: # sonora models arent sampled as well so use phoenix as low as can
 			g    = '316' # mks units, np.log10(316 * 100)=4.5 to match what im holding for phoenix models.
-			teff = str(int(so.var.teff))
+			teff = str(int(so.stel.teff))
 			so.stel.stel_file         = so.stel.sonora_folder + 'sp_t%sg%snc_m0.0' %(teff,g)
-			so.stel.vraw,so.stel.sraw = load_sonora(so.stel.stel_file,wav_start=so.const.l0,wav_end=so.const.l1)
+			so.stel.vraw,so.stel.sraw = load_sonora(so.stel.stel_file,wav_start=so.inst.l0,wav_end=so.inst.l1)
 			so.stel.model             = 'sonora'
 		else:
-			teff = str(int(so.var.teff)).zfill(5)
+			teff = str(int(so.stel.teff)).zfill(5)
 			so.stel.model             = 'phoenix' 
 			so.stel.stel_file         = so.stel.phoenix_folder + 'lte%s-4.50-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'%(teff)
-			so.stel.vraw,so.stel.sraw = load_phoenix(so.stel.stel_file,wav_start=so.const.l0, wav_end=so.const.l1) #phot/m2/s/nm
+			so.stel.vraw,so.stel.sraw = load_phoenix(so.stel.stel_file,wav_start=so.inst.l0, wav_end=so.inst.l1) #phot/m2/s/nm
 		
 		so.stel.v   = self.x
 		tck_stel    = interpolate.splrep(so.stel.vraw,so.stel.sraw, k=2, s=0)
 		so.stel.s   = interpolate.splev(self.x,tck_stel,der=0,ext=1)
 
 		# apply scaling factor to match filter zeropoint
-		so.stel.factor_0   = scale_stellar(so, so.var.mag) 
+		so.stel.factor_0   = scale_stellar(so, so.stel.mag) 
 		so.stel.s   *= so.stel.factor_0 
 		so.stel.units = 'photons/s/m2/nm' # stellar spec is in photons/s/m2/nm
 
@@ -243,31 +281,182 @@ class fill_data():
 		_,ind  = np.unique(data['Wave/freq'],return_index=True)
 		tck_tel   = interpolate.splrep(data['Wave/freq'][ind],data['Total'][ind], k=2, s=0)
 		so.tel.v, so.tel.s = self.x, interpolate.splev(self.x,tck_tel,der=0,ext=1)
-
-	def filter(self,so):
-		"""
-		load tracking band
-		"""
-		# read zeropoint file, get zp
-		zps                     = np.loadtxt(so.filt.zp_file,dtype=str).T
-		izp                     = np.where((zps[0]==so.filt.family) & (zps[1]==so.filt.band))[0]
-		so.filt.zp              = np.float(zps[2][izp])
-
-		# find filter file and load filter
-		so.filt.filter_file         = glob.glob(so.filt.filter_path + '*' + so.filt.family + '*' +so.filt.band + '.dat')[0]
-		so.filt.xraw, so.filt.yraw  = np.loadtxt(so.filt.filter_file).T # nm, transmission out of 1
-		so.filt.xraw /= 10
 		
-		f                       = interpolate.interp1d(so.filt.xraw, so.filt.yraw, bounds_error=False,fill_value=0)
-		so.filt.v, so.filt.s    = so.hispec.xtransmit, f(so.hispec.xtransmit)  #filter profile sampled at stellar
+		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['H2O'][ind], k=2, s=0)
+		so.tel.h2o = interpolate.splev(self.x,tck_tel,der=0,ext=1)
 
-		so.filt.dl_l            = np.mean(integrate(so.filt.xraw, so.filt.yraw)/so.filt.xraw) # dlambda/lambda
+		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['Rayleigh'][ind], k=2, s=0)
+		so.tel.rayleigh = interpolate.splev(self.x,tck_tel,der=0,ext=1)
+
+	def ao(self,so,rerun=0):
+		"""
+		fill in ao info 
+		"""
+		if so.ao.v_mag_set=='default':  
+			so.ao.v_mag  = get_band_mag(so,'Johnson','V',so.stel.factor_0) # get magnitude in r band
+		else:
+			so.ao.v_mag = so.ao.v_mag_set
+		print('Vmag is %s'%so.ao.v_mag)
+		print('AO mode: %s'%so.ao.mode)
+
+		so.ao.ho_wfe = get_HO_WFE(so.ao.v_mag,so.ao.mode)
+		print('HO WFE is %s'%so.ao.ho_wfe)
+	
+		so.ao.tt_dynamic = get_tip_tilt_resid(so.ao.v_mag,so.ao.mode)
+		print('tt dynamic is %s'%so.ao.tt_dynamic)
+
+		# consider throughput impact of ao here
+		if so.ao.mode =='80J':
+			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.J[1],0.8)
+		elif so.ao.mode =='80H':
+			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.H[0],so.inst.H[1],0.8)
+		elif so.ao.mode =='80JH':
+			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.H[1],0.8)
+		else:
+			so.ao.pywfs_dichroic = np.ones_like(self.x)
+
+	def instrument(self,so):
+		###########
+		# load hispec transmission
+		#xtemp, ytemp  = np.loadtxt(so.inst.transmission_file,delimiter=',').T #microns!
+		#f = interp1d(xtemp*1000,ytemp,kind='linear', bounds_error=False, fill_value=0)
+		
+		#so.inst.xtransmit, so.inst.ytransmit = self.x, f(self.x) 
+
+		# save dlambda
+		sig = so.stel.v/so.inst.res/so.inst.res_samp # lambda/res = dlambda, nm per pixel
+		so.inst.sig=sig
+
+		# THROUGHPUT
+		so.inst.base_throughput  = get_base_throughput(x=self.x,datapath=so.inst.transmission_path) # everything except coupling
+		try:
+			so.inst.coupling, so.inst.strehl = pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,so.ao.tt_dynamic,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,transmission_path=so.inst.transmission_path) # includes PIAA and HO term
+		except ValueError:
+			# hack here bc tt dynamic often is out of bounds
+			so.inst.coupling, so.inst.strehl = pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,9.5,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,transmission_path=so.inst.transmission_path) # includes PIAA and HO term
+			so.inst.notes = 'tt dynamic out of bounds! %smas' %so.ao.tt_dynamic
+
+		so.inst.xtransmit = self.x
+		so.inst.ytransmit = so.inst.base_throughput* so.inst.coupling * so.ao.pywfs_dichroic
+
+	def observe(self,so):
+		"""
+		"""
+		flux_per_sec_nm = so.stel.s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)**so.tel.airmass
+
+		if so.obs.texp_frame_set=='default':
+			max_ph_per_s  =  np.max(flux_per_sec_nm * so.inst.sig)
+			so.obs.texp_frame = np.min((900,so.inst.saturation/max_ph_per_s))
+			print('Texp per frame set to %s'%so.obs.texp_frame)
+			so.obs.nframes = int(np.ceil(so.obs.texp/so.obs.texp_frame))
+			print('Nframes set to %s'%so.obs.nframes)
+		else:
+			so.obs.texp_frame = so.obs.texp_frame_set
+			so.obs.nframes = int(np.ceil(so.obs.texp/so.obs.texp_frame))
+			print('Texp per frame set to %s'%so.obs.texp_frame)
+			print('Nframes set to %s'%so.obs.nframes)
+		
+		# degrade to instrument resolution
+		so.obs.flux_per_nm = flux_per_sec_nm * so.obs.texp_frame
+		s_ccd_lores = degrade_spec(so.stel.v, so.obs.flux_per_nm, so.inst.res)
+
+		# resample onto res element grid
+		so.obs.v, so.obs.s_frame = resample(so.stel.v,s_ccd_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
+		so.obs.s = so.obs.s_frame * so.obs.nframes
+
+		# load background! spectrum
+		skybg    = noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
+		instbg   = noise_tools.get_inst_bg(so.obs.v,npix=so.inst.pix_vert,lam0=2000,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area)
+
+		# calc noise
+		noise_frame  = noise_tools.sum_total_noise(so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,instbg, skybg, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
+		noise_frame[np.where(np.isnan(noise_frame))] = np.inf
+		noise_frame[np.where(noise_frame==0)] = np.inf
+
+		so.obs.noise_frame = noise_frame
+		so.obs.noise = np.sqrt(so.obs.nframes)*noise_frame
+
+	def tracking(self,so):
+		"""
+		"""
+		#pick guide camera - eventually settle on one and put params in config file!
+		rn, pixel_pitch, qe_mod, dark = obs_tools.get_tracking_cam(camera='h2rg')
+		so.track.pixel_pitch = pixel_pitch
+		so.track.dark        = dark
+		so.track.rn          = rn
+		so.track.qe_mod      = qe_mod  # wont need this later bc qe will match throughput model
+
+		# load and store tracking camera throughput - file structure hard coded
+		xtemp, ytemp  = np.loadtxt(so.track.transmission_file,delimiter=',').T #microns!
+		f = interp1d(xtemp*1000,ytemp,kind='linear', bounds_error=False, fill_value=0)
+		so.track.xtransmit, so.track.ytransmit = self.x, f(self.x) * so.track.qe_mod 
+	
+		# get plate scale
+		so.track.platescale = obs_tools.calc_plate_scale(so.track.pixel_pitch, D=so.inst.tel_diam, fratio=so.track.fratio)
+		so.track.platescale_units = 'arcsec/pixel'
+
+		# load tracking band
+		bandpass, so.track.center_wavelength = obs_tools.get_tracking_band(self.x,so.track.band)
+		so.track.band = bandpass * so.ao.pywfs_dichroic
+
+		# get fwhm (in pixels)
+		so.track.fwhm = obs_tools.get_fwhm(so.ao.ho_wfe,so.ao.tt_dynamic,so.track.center_wavelength,so.inst.tel_diam,so.track.platescale,offaxis=so.track.offaxis,getall=False)
+		so.track.fwhm_units = 'pixel'
+		print('Tracking FWHM=%spix'%so.track.fwhm)
+
+		# get sky background and instrument background, spec is ph/nm/s, fwhm must be in arcsec
+		so.track.sky_bg_spec = noise_tools.get_sky_bg_tracking(self.x,so.track.fwhm*so.track.platescale,airmass=so.tel.airmass,pwv=so.tel.pwv,area=so.inst.tel_area,skypath=so.tel.skypath)
+		so.track.sky_bg_ph   = so.track.texp * np.trapz(so.track.sky_bg_spec * so.track.band,self.x)
+
+		so.track.inst_bg_spec = noise_tools.get_inst_bg_tracking(self.x,so.track.fwhm * so.track.platescale,area=76)
+		so.track.inst_bg_ph   = so.track.texp * np.trapz(so.track.inst_bg_spec * so.track.band,self.x)
+
+		# get photons in band
+		so.track.signal_spec = so.stel.s * so.track.texp *\
+		 			so.inst.tel_area * so.track.ytransmit*\
+		 			np.abs(so.tel.s)**so.tel.airmass
+	
+		so.track.nphot = np.trapz(so.track.signal_spec * so.track.band,so.stel.v)
+		print('Tracking photons: %se-'%so.track.nphot)
+		# get noise
+		npix = np.pi * so.track.fwhm**2
+		so.track.noise = noise_tools.sum_total_noise(so.track.nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,npix)
+		print('Tracking noise: %se-'%so.track.noise)
+		so.track.snr = so.track.nphot/so.track.noise 
+		
+		so.track.strehl = np.exp(-(2*np.pi*so.ao.ho_wfe/so.track.center_wavelength)**2)
+		so.track.centroid_err = (1/np.pi) * so.track.fwhm/(so.track.strehl* so.track.snr) 
+
+	def set_teff(self,so,temp,trackonly=False):
+		"""
+		given new temperature, relaod things as needed
+		mode: 'track' or 'spec'
+		"""
+		so.stel.teff = temp
+		self.stellar(so)
+		self.ao(so)
+		if not trackonly:
+			self.instrument(so)
+		self.tracking(so)
+
+	def set_mag(self,so,mag,trackonly=False):
+		"""
+		given new temperature, relaod things as needed
+		"""
+		so.stel.mag = mag
+		self.stellar(so)
+		self.ao(so)
+		if not trackonly:
+			self.instrument(so)
+		self.tracking(so)
+
+	def set_tracking_band(self,so,band):
+		"""
+		given new temperature, relaod things as needed
+		"""
+		so.track.band = band
+		self.tracking(so)
 
 
-def load_filter(so,family,band):
-	"""
-	"""
-	filter_file    = glob.glob(so.filt.filter_path + '*' + family + '*' + band + '.dat')[0]
-	xraw, yraw     = np.loadtxt(filter_file).T # nm, transmission out of 1
-	return xraw/10, yraw
+
 

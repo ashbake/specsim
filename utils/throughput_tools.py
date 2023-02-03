@@ -3,10 +3,14 @@
 ###############################################################
 
 import numpy as np
-from scipy.interpolate import interp1d
+from scipy import signal, interpolate
+import pandas as pd
+
 from scipy.integrate import trapz
 from scipy import signal
 
+import load_inputs #load_filter,load_phoenix, load_sonora
+from functions import integrate
 all = {}
 
 
@@ -14,15 +18,15 @@ def get_band_mag(so,family,band,factor_0):
     """
     factor_0: scaling model to photons
     """
-    x,y          = load_filter(so,family,band)
+    x,y          = load_inputs.load_filter(so.filt.filter_path,family,band)
     filt_interp  =  interpolate.interp1d(x, y, bounds_error=False,fill_value=0)
-    dl_l         =   np.mean(integrate(x,y)/x) # dlambda/lambda to account for spectral fraction
+    dl_l         =  np.mean(integrate(x,y)/x) # dlambda/lambda to account for spectral fraction
     
     # load stellar the multiply by scaling factor, factor_0, and filter. integrate
     if so.stel.model=='phoenix':
-        vraw,sraw = load_phoenix(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
+        vraw,sraw = load_inputs.load_phoenix(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
     elif so.stel.model=='sonora':
-        vraw,sraw = load_sonora(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
+        vraw,sraw = load_inputs.load_sonora(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
     
     filtered_stel = factor_0 * sraw * filt_interp(vraw)
     flux = integrate(vraw,filtered_stel)    #phot/m2/s
@@ -40,11 +44,13 @@ def get_band_mag(so,family,band,factor_0):
 
     return mag
 
-def pick_coupling(waves,dynwfe,ttStatic,ttDynamic,LO=30,PLon=0,piaa_boost=1.3):
+def pick_coupling(waves,dynwfe,ttStatic,ttDynamic,LO=30,PLon=0,piaa_boost=1.3,transmission_path='/Users/ashbake/Documents/Research/Projects/HISPEC/SNR_calcs/data/throughput/hispec_subsystems_11032022/'):
     """
     select correct coupling file
     to do:implement interpolation of coupling files instead of rounding variables
     """
+    PLon = int(PLon)
+
     if np.min(waves) > 10:
         waves/=1000 # convert nm to um
 
@@ -59,11 +65,11 @@ def pick_coupling(waves,dynwfe,ttStatic,ttDynamic,LO=30,PLon=0,piaa_boost=1.3):
         raise ValueError('PL is out of range')
 
     if PLon:
-        points, values_1,values_2,values_3 = grid_interp_coupling(PLon) # move this outside this function ,do one time!
+        points, values_1,values_2,values_3 = grid_interp_coupling(PLon,path=transmission_path) # move this outside this function ,do one time!
         point = (LO,ttStatic,ttDynamic,waves)
-        mode1 = interpn(points, values_1, point,bounds_error=False,fill_value=0) # see example https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.interpn.html#scipy.interpolate.interpn
-        mode2 = interpn(points, values_2, point,bounds_error=False,fill_value=0) 
-        mode3 = interpn(points, values_3, point,bounds_error=False,fill_value=0) 
+        mode1 = interpolate.interpn(points, values_1, point,bounds_error=False,fill_value=0) # see example https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.interpn.html#scipy.interpolate.interpn
+        mode2 = interpolate.interpn(points, values_2, point,bounds_error=False,fill_value=0) 
+        mode3 = interpolate.interpn(points, values_3, point,bounds_error=False,fill_value=0) 
 
         PLwav,PLdat = load_photonic_lantern() #transfer matrices input mode--> each SMF
         mat = PLdat[10] # use middle one for now
@@ -72,11 +78,12 @@ def pick_coupling(waves,dynwfe,ttStatic,ttDynamic,LO=30,PLon=0,piaa_boost=1.3):
         test3 = mode1 * mat[2,2]  + mode2*mat[1,2] + mode3*mat[2,2]
         # apply only to YJ or make matrix diagonal for HK..map onto same wavelength grid somehow
         # get coupling
-        raw_coupling = mode1+mode2+mode3 # do dumb things for now
+        losses = 0.95
+        raw_coupling = losses*(mode1+mode2+mode3) # do dumb things for now #0.95 is a recombination loss term 
     else:
         points, values_1 = grid_interp_coupling(PLon)
         point = (LO,ttStatic,ttDynamic,waves)
-        raw_coupling = interpn(points, values_1, point,bounds_error=False,fill_value=0)
+        raw_coupling = interpolate.interpn(points, values_1, point,bounds_error=False,fill_value=0)
 
     if np.max(waves) < 10:
         waves*=1000 # nm to match dynwfe
@@ -84,9 +91,9 @@ def pick_coupling(waves,dynwfe,ttStatic,ttDynamic,LO=30,PLon=0,piaa_boost=1.3):
     ho_strehl =  np.exp(-(2*np.pi*dynwfe/waves)**2) # computed per wavelength as grid
     coupling  = raw_coupling * piaa_boost * ho_strehl
     
-    return coupling,ho_strehl
+    return coupling, ho_strehl
 
-def grid_interp_coupling(PLon):
+def grid_interp_coupling(PLon,path='/Users/ashbake/Documents/Research/Projects/HISPEC/SNR_calcs/data/throughput/hispec_subsystems_11032022/'):
     """
     interpolate coupling files over their various parameters
     """
@@ -95,10 +102,10 @@ def grid_interp_coupling(PLon):
     ttDynamics = np.arange(0,10,0.5)
     
     if PLon: 
-        path_to_files     = './data/throughput/hispec_subsystems_11032022/coupling/couplingEff_wPL_202212014/'
+        path_to_files     = path + 'coupling/couplingEff_wPL_202212014/'
         filename_skeleton = 'couplingEff_atm0_adc0_PL%s_defoc0nmRMS_LO%snmRMS_ttStatic%smas_ttDynamic%smasRMS.csv'
     else:
-        path_to_files     = './data/throughput/hispec_subsystems_11032022/coupling/couplingEff_20221005/'
+        path_to_files     = path + 'coupling/couplingEff_20221005/'
         filename_skeleton = 'couplingEff_atm0_adc0_defoc0nmRMS_LO%snmRMS_ttStatic%smas_ttDynamic%smasRMS.csv'
 
     # to dfine values, must open up each file. not sure if can deal w/ wavelength
@@ -127,21 +134,28 @@ def grid_interp_coupling(PLon):
     else:
         return points,values_1
 
-def plot_throughput(v,throughput):
+def plot_throughput(so):
     """
     """
-    plt.figure('throughput')
-    plt.plot(v,throughput)
-    plt.xlabel('Wavelength (nm)')
+    plt.figure(figsize=(7,4))
+    plt.plot(so.stel.v,so.inst.coupling,label='Coupling Only')
+    plt.plot(so.stel.v,so.inst.base_throughput,label='All But Coupling')    
+    plt.plot(so.stel.v,so.inst.ytransmit,'k',label='Total Throughput')  
     plt.ylabel('Transmission')
-    plt.xlim(980,2450)
-    plt.ylim(0,0.08)
+    plt.xlabel('Wavelength (nm)')
+    plt.title('%s=%s, Vmag=%s, Teff=%s'%(so.filt.band,int(so.stel.mag),round(so.ao.v_mag,1),int(so.stel.teff)))
+    plt.subplots_adjust(bottom=0.15)
+    plt.axhline(y=0.05,color='m',ls='--',label='5%')
+    plt.legend()
+    plt.grid()
+    figname = 'throughput_%s_%smag_%s_Teff_%s_texp_%ss.png' %(mode,so.filt.band,so.stel.mag,so.stel.teff,int(so.obs.texp_frame*nframes))
+    #plt.savefig('./output/snrplots/' + figname)
 
-def get_emissivity(wave):
+
+def get_emissivity(wave,datapath = './data/throughput/hispec_subsystems_11032022/'):
     """
     get throughput except leave out couplingalso store emissivity
     """
-    datapath = './data/throughput/hispec_subsystems_11032022/'
     x = wave.copy()
     if np.min(x) > 10:
         x/=1000 #convert nm to um
@@ -163,13 +177,29 @@ def get_emissivity(wave):
 
     return em_red,em_blue,temps
 
-def get_base_throughput(x,ploton=False):
+def get_emissivities(wave,surfaces=['tel'],datapath = './data/throughput/hispec_subsystems_11032022/'):
+    """
+    get throughput except leave out couplingalso store emissivity
+    """
+    x = wave.copy()
+    if np.min(x) > 10:
+        x/=1000 #convert nm to um
+
+    em= []
+    for i in surfaces:
+        wtemp, stemp = np.loadtxt(datapath + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
+        f = interpolate.interp1d(wtemp, stemp, bounds_error=False,fill_value=0)
+        em.append(1-f(x)) # 1 - interp throughput onto x
+
+    return em
+
+
+def get_base_throughput(x,ploton=False,datapath = './data/throughput/hispec_subsystems_11032022/'):
     """
     get throughput except leave out coupling
 
     also store emissivity
     """
-    datapath = './data/throughput/hispec_subsystems_11032022/'
     #plt.figure()
     for spec in ['red','blue']:
         if spec=='red':

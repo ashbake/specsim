@@ -12,14 +12,13 @@ class storage_object():
     def __init__(self):
         # Classes
         self.run  = RUN()
-        self.const= CONSTANT()
-        self.var  = VARIABLE()
         self.filt = FILTER()
         self.stel = STELLAR()
         self.tel  = TELLURIC()
-        self.out  = OUTPUT()
-        self.hispec   = HISPEC()
-        self.kpf  = KPF()
+        self.inst = INSTRUMENT()
+        self.ao   = AO()
+        self.obs  = OBSERVATION() 
+        self.track= TRACK()       
         # non class things
         self.info = "see objects.py in utils/ for info"
 
@@ -30,19 +29,38 @@ class RUN():
         self.plot_prefix   = None       # stellar spec file name
         self.savename      = None # wavelength like normal (should match exoplanet and be in standard wavelength)
 
-class CONSTANT():
+class AO():
     "float values"
     def __init__(self):
-        self.l0   = None       # starting wavelength
-        self.l1   = None       # ending wavelength
-        self.res_hispec = 100000 # resolution
+        self.mode   = 'SH'     # AO mode corresponding to ao wfe load fxn
+        self.tt_static   = 0    # mas, static tip tilt error
+        self.tt_dynamic  = 'default' # mas or 'default', dynamic tip tilt error, default: takes from file based on stellar magnitdue
+        self.lo_wfe = 50    # nm, low order 
+        self.defocus = 25 #nm, low order
+        self.v_mag   = 'default' # magnitude or 'defaul't, magnitude of AO star, default: uses Vmag of target star
+        self.ho_wfe  = 'default' # nm or 'default', high order wave front error, default: loads from file
 
-class VARIABLE():
+
+class INSTRUMENT():
+    "float values"
+    def __init__(self):
+        self.l0   = 900     # nm, start of wavelengths to consider
+        self.l1   = 2500    # nm, ending wavelength
+        self.res  = 100000 # resolving power
+        self.pix_vert = 3 # pixels, vertical extent of spectrum in cross dispersion
+        self.tel_area = 76 # m2, telescope area, mauna kea is default
+        self.tel_diam = 10 #m ,telescope diameter,  mauna kea default
+        self.res_samp = 3 #pixels, sampling of resolution element
+        self.saturation = 100000 # electrons, saturation limit ofr detector
+        self.readnoise  = 12 # e-, read noise of detector
+        self.darknoise  = 0.01 # e-/pix/s, dark current to assume
+
+class OBSERVATION():
     "float values, variables"
     def __init__(self):
-        self.mag      = None       # v band magntidue
-        self.teff     = None       # K, 100K steps
-        self.exp_time = None       # seconds
+        self.texp      = 900  # seconds, total integrated exposure time 
+        self.texp_frame= 900  # seconds, maximum for a single exposure, 'max' will compute exposure to hit 50% full well 
+        self.nramp = 1        # number of up the ramp samples per frame exposure
 
 class FILTER():
     "float values"
@@ -53,7 +71,10 @@ class FILTER():
         self.filter_file=None
         self.zp_file = './data/filters/zeropoints.txt'
         self.zp_unit = 'Jy'
-        self.band='J'
+        self.band='J' # band to pick
+        self.family = 'Johnson' # family of filter band, see zeropoints file
+        zps    = np.loadtxt(self.zp_file,dtype=str).T
+        self.options =[zps[0],zps[1]] # returns options for bands to pick
 
 class STELLAR():
     "star info and spectrum"
@@ -75,48 +96,19 @@ class TELLURIC():
         self.s = None #  spectrum
 
 
-class OUTPUT():
-    "output file info and storage"
+class TRACK():
+    "tracking camera storage"
     def __init__(self):
         # User optional defined
-        self.savename = None # output name
+        self.transmission_file = None # output name
         # Filled in by code
-        self.spectrum = None # ca H&k spectrum
+        self.xtransmit = None # x array of throughput [nm]
+        self.ytransmit = None # throughput of tracking camera [0,1]
+        self.texp      = None # exposure time of tracking camera [s]
+        self.frat      = 40 # f ratio of tracking camera arm
+        self.band      = 'JHgap' # band being used, [JHgap,z,y,J,H,K]
+        self.offset    = 0 # offset of guide star to science target, [mas] # not implemented correctly yet
 
-class HISPEC():	
-    "HK data"
-    def __init__(self):
-        self.transmission_file=None
-
-
-class KPF():
-    "KPF data"
-    def __init__(self):
-        """
-        KPF data
-        """
-        self.transmission_file=None
-        self.res = None
-        # defined here only
-        self.order_wavelengths = np.array([448.10241617, 451.39728688, 454.74097048, 458.13455982,
-        461.57918057, 465.07599254, 468.62619096, 472.23100781,
-        475.8917133 , 479.60961731, 483.38607099, 487.22246838,
-        491.12024812, 495.08089528, 499.10594321, 503.19697554,
-        507.35562823, 511.58359179, 515.88261357, 520.25450013,
-        524.70111979, 529.2244053 , 533.82635666, 538.50904399,
-        543.27461076, 548.12527692, 553.06334248, 558.09119105,
-        563.21129372, 568.4262131 , 573.73860762, 579.15123599,
-        584.66696205, 590.28875976, 596.0197186 , 601.86304917,
-        607.82208926, 613.90031015, 620.10132339, 626.42888791,
-        632.88691768, 639.47948974, 646.21085279, 653.08543633,
-        660.10786038, 667.28294582, 674.61572544, 682.11145573,
-        689.77562939, 697.61398881, 705.63254041, 713.83756995,
-        722.235659  , 730.83370256, 739.6389279 , 748.65891482,
-        757.90161747, 767.37538769, 777.08900019, 787.05167968,
-        797.27313007, 807.76356599, 818.53374687, 829.59501372,
-        840.95932898, 852.63931966, 864.64832416])
-        self.order_fsrs = np.array([])
-        
 
 def LoadConfig(configfile, config={}):
     """

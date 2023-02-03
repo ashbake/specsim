@@ -10,6 +10,13 @@ from scipy import signal
 all = {'integrate','gaussian', 'define_lsf', 'vac_to_stand', 'setup_band', 'resample'}
 
 
+def butter_highpass_filter(data, cutoff, fs, order=5):
+    nyq = 0.5 * fs
+    Wn = cutoff / nyq # critical frequency
+    b, a = signal.butter(order, Wn, btype = "highpass", analog = False)
+    y = signal.filtfilt(b, a, data)
+    return y
+
 def integrate(x,y):
     """
     Integrate y wrt x
@@ -47,7 +54,6 @@ def tophat(x,l0,lf,throughput):
     bandpass = np.zeros_like(x)
     bandpass[ion] = throughput
     return bandpass
-
 
 
 def vac_to_stand(wave_vac):
@@ -92,8 +98,27 @@ def setup_band(x, x0=0, sig=0.3, eta=1):
 
     return y
 
+def rebin(x,y,nbin=3, eta=1):
+    """
+    resample using convolution
 
-def resample(x,y,sig=0.3, dx=0, eta=1,mode='slow'):
+    x: wavelength array in nm
+    y: y values evaluated at x
+
+    nbin: - integer; numbers of pixels to combine
+    eta: factor to multiply y by,default 1
+    """
+    tophat  = eta * np.ones(nbin) # do i need to pad this?
+
+    int_spec_oversample    = signal.fftconvolve(y,tophat,mode='same') # dlam integrating factor
+
+    int_lam  = x[::nbin] # 
+    int_spec = int_spec_oversample[::nbin]
+
+    return int_lam, int_spec
+
+
+def resample(x,y,sig=0.3, dx=0, eta=1,mode='variable'):
     """
     resample using convolution
 
@@ -120,6 +145,25 @@ def resample(x,y,sig=0.3, dx=0, eta=1,mode='slow'):
         
         int_lam  = x[int(nsamp/2 + dx/dlam):][::nsamp] # shift over by dx/dlam (npoints) before taking every nsamp point
         int_spec =  int_spec_oversample[int(nsamp/2 + dx/dlam):][::nsamp]
+
+    if mode=='variable':
+        # mode to take variable res element
+        dlam    = np.median(np.diff(x)) # nm per pixel, most accurate if x is uniformly sampled in wavelength
+        if np.min(sig) <= dlam: raise ValueError('Sigma value is smaller than the sampling of the provided wavelength array')
+        nsamp   = sig // dlam    # width of tophat
+        nsamp = nsamp.astype('int')
+        
+        nsamp_unique = np.unique(nsamp)
+        int_lam=np.array([])
+        int_spec=np.array([])
+        for n in nsamp_unique:
+            isub = np.where(nsamp==n)[0]
+            tophat  = eta * np.ones(n) # do i need to pad this?
+            int_spec_oversample    = dlam * signal.fftconvolve(y[isub],tophat,mode='same') # dlam integrating factor
+            xnew = x[isub][::n]
+            ynew = int_spec_oversample[::n]
+            int_lam   = np.concatenate((int_lam,xnew))
+            int_spec  = np.concatenate((int_spec,ynew))
 
     elif mode=='slow':
         i=0
