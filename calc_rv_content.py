@@ -15,7 +15,8 @@ from noise_tools import get_sky_bg, get_inst_bg, sum_total_noise
 from throughput_tools import pick_coupling, get_band_mag, get_base_throughput
 from wfe_tools import get_tip_tilt_resid, get_HO_WFE
 SPEEDOFLIGHT = 2.998e8 # m/s
-
+GAUSSCONST = (2. * (2. * np.log(2))**0.5)
+import pandas as pd
 plt.ion()
 
 
@@ -111,15 +112,67 @@ def plot_rv_err(so, lam_cen, dv_vals,savefig=True):
 	rvmed_hk = np.median(dv_vals[np.where((dv_vals!=np.inf) & (order_cens > 1400))[0]])
 	dv_yj = 1. / (np.nansum(1./sub_yj**2.))**0.5	# 
 	dv_hk = 1. / (np.nansum(1./sub_hk**2.))**0.5	# 
-	axs[1].text(1050,2*np.median(dv_vals),'$\sigma_{yJ}$=%sm/s'%round(dv_yj,1),fontsize=12,zorder=101)
-	axs[1].text(1500,2*np.median(dv_vals),'$\sigma_{HK}$=%sm/s'%round(dv_hk,1),fontsize=12,zorder=101)
+	dv_yj_tot = (0.5**2 +dv_yj**2.)**0.5	# 
+	dv_hk_tot = (0.5**2 +dv_hk**2.)**0.5	# # 
+
+	axs[1].text(1050,2*np.median(dv_vals),'$\sigma_{yJ}$=%sm/s'%round(dv_yj_tot,1),fontsize=12,zorder=101)
+	axs[1].text(1500,2*np.median(dv_vals),'$\sigma_{HK}$=%sm/s'%round(dv_hk_tot,1),fontsize=12,zorder=101)
 	ax2.legend(fontsize=8,loc=1)
 	if savefig:
 		plt.savefig('./output/rv_precision/RV_precision_%sK_%smag%s_%ss_vsini%skms.png'%(so.stel.teff,so.filt.band,so.stel.mag,so.obs.texp,so.stel.vsini))
 
 	return fig,axs
 
+def plot_rv_err_HKonly(so, lam_cen, dv_vals,savefig=True):
+	"""
+	"""
+	col_table = plt.get_cmap('Spectral_r')
+	fig, axs = plt.subplots(2,figsize=(7,6),sharex=True)
+
+	plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.85,top=0.85)
+
+	axs[1].plot([950,2460],[0.5,0.5],'k--',lw=0.7)
+	axs[1].fill_between([1490,1780],0,1000,facecolor='gray',alpha=0.2)
+	axs[1].fill_between([1950,2460],0,1000,facecolor='gray',alpha=0.2)
+	axs[1].grid('True')
+	axs[1].set_ylim(-0,3*np.median(dv_vals))
+	axs[1].set_xlim(1490,2460)
+	axs[1].set_ylabel('$\sigma_{RV}$ [m/s]')
+	axs[1].set_xlabel('Wavelength [nm]')
+
+	axs[0].set_ylabel('SNR')
+	axs[0].set_title('M$_%s$=%s, T$_{eff}$=%sK,\n $t_{exp}$=%ss, vsini=%skm/s'%(so.filt.band,so.stel.mag,int(so.stel.teff),int(so.obs.texp),so.stel.vsini))
+
+	axs[0].grid('True')
+	ax2 = axs[0].twinx() 
+	ax2.plot(so.tel.v,so.tel.s,'gray',alpha=0.5,zorder=-100,label='Telluric Absorption')
+	ax2.plot(so.stel.v,so.inst.ytransmit,'k',alpha=0.5,zorder=-100,label='Total Throughput')
+	ax2.set_ylabel('Transmission',fontsize=12)
+	for i,lam_cen in enumerate(order_cens):
+		wvl_norm = (lam_cen - 900.) / (2500. - 900.)
+		axs[0].plot(so.obs.v[order_inds[i]],so.obs.s[order_inds[i]]/so.obs.noise[order_inds[i]],zorder=200,color=col_table(wvl_norm))
+		axs[1].plot(lam_cen,dv_vals[i],'o',zorder=100,color=col_table(wvl_norm),markeredgecolor='k')
+	
+	wavesplit = 1820
+	sub_1 = np.where((dv_vals!=np.inf) & (order_cens < wavesplit))[0]
+	sub_2 = np.where((dv_vals!=np.inf) & (order_cens > wavesplit))[0]
+	dv_1 = 1. / (np.nansum(1./dv_vals[sub_1]**2.))**0.5	# 
+	dv_2 = 1. / (np.nansum(1./dv_vals[sub_2]**2.))**0.5	# 
+	dv_1_tot = (0.5**2 +dv_1**2.)**0.5	# 
+	dv_2_tot = (0.5**2 +dv_2**2.)**0.5	# # 
+
+	axs[1].text(np.mean(order_cens[sub_1])+150,12*dv_2,'$\sigma_{H}$=%sm/s'%round(dv_1_tot,2),fontsize=12,zorder=101)
+	axs[1].text(np.mean(order_cens[sub_2])-200,12*dv_2,'$\sigma_{K}$=%sm/s'%round(dv_2_tot,2),fontsize=12,zorder=101)
+	ax2.legend(fontsize=8,loc=1)
+
+	if savefig:
+		plt.savefig('./output/rv_precision/RV_precision_HKonly_%sK_%smag%s_%ss_vsini%skms.png'%(so.stel.teff,so.filt.band,so.stel.mag,so.obs.texp,so.stel.vsini))
+
+	return fig,axs
+
 def plot_tess_data():
+	"""
+	"""
 	planets_filename = './data/populations/confirmed_planets_PS_2023.01.12_16.07.07.csv'
 	planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
 
@@ -139,8 +192,7 @@ def plot_tess_data():
 	axs[0].set_ylim(2800,7000)
 	plt.subplots_adjust(bottom=0.15,hspace=0,left=0.15)
 
-	# add velocity precision contours
-
+	# add velocity precision contour
 
 	#
 	plt.figure()
@@ -153,21 +205,302 @@ def plot_tess_data():
 	plt.title('Vsini of TESS Confirmed Planets')
 	plt.legend()
 
+def plot_TOI_data():
+	planets_filename = './data/populations/TOI_2023.02.08_13.32.46.csv'
+	planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
+
+	tessmags = planet_data['st_tmag']
+	teffs = planet_data['st_teff']
+
+	fig, ax = plt.subplots(1,1,figsize=(6,5),sharey=True)
+	plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.85)
+	ax.scatter(tessmags,teffs,marker='.',c='k')
+	ax.set_xlabel('TESS Mag')
+	ax.set_ylabel('T$_{eff}$')
+	ax.set_title('TESS Objects of Interest')
+
+	ax.set_xlim(13,5)
+	ax.set_ylim(2800,7000)
+	plt.subplots_adjust(bottom=0.15,hspace=0,left=0.15)
+
+def plot_confirmed_planets():
+	"""
+	plot landscape of confirmed planets
+	"""
+	planets_filename = './data/populations/PS_2023.02.08_13.41.45.csv'
+	planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
+
+	hmags = planet_data['sy_hmag']
+	teffs = planet_data['st_teff']
+	mass = planet_data['pl_bmassj']
+	method = planet_data['discoverymethod']
+	iRV = np.where(method=='Radial Velocity')[0]
+	iim =np.where(method=='Imaging')[0]
+	nomass = np.where(np.isnan(mass))[0]
+
+	fig, ax = plt.subplots(1,1,figsize=(6,5),sharey=True)
+	plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.85)
+	ax.scatter(hmags,teffs,marker='.',c='k',alpha=0.5,label='Other')
+	ax.scatter(hmags[iRV],teffs[iRV],marker='^',c='purple',alpha=0.5,label='RV')
+	ax.scatter(hmags[iim],teffs[iim],marker='s',c='b',alpha=1,label='Imaging')
+	ax.set_xlabel('H Mag')
+	ax.set_ylabel('T$_{eff}$')
+	ax.set_title('Confirmed Planets')
+
+	ax.set_xlim(15,1)
+	ax.set_ylim(2300,7000)
+	ax.legend(fontsize=12)
+	plt.subplots_adjust(bottom=0.15,hspace=0,left=0.15)
+
+
+	fig, ax = plt.subplots(1,1,figsize=(6,5),sharey=True)
+	plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.85)
+	ax.scatter(hmags,teffs,marker='.',c='k')
+	ax.scatter(hmags[nomass],teffs[nomass],marker='.',c='red',label='No Mass Msmt.')
+	ax.set_xlabel('H Mag')
+	ax.set_ylabel('T$_{eff}$')
+	ax.set_title('Confirmed Planets')
+
+	ax.set_xlim(15,1)
+	ax.set_ylim(2300,7000)
+	ax.legend(fontsize=12)
+	plt.subplots_adjust(bottom=0.15,hspace=0,left=0.15)
+
+	# add velocity precision contours
+
+def plot_rv_err_lfc(snr_arr,rv_arr,ax=None,label=''):
+	"""
+	"""
+	if ax == None:
+		fig, ax = plt.subplots(1,figsize=(7,5))
+	plt.subplots_adjust(bottom=0.15,left=0.15,right=0.85,top=0.85)
+
+	ax.loglog(snr_arr,rv_arr,label=label)
+	ax.set_ylabel('$\sigma_{RV}$ [m/s]')
+	ax.set_xlabel('SNR')
+
+	ax.grid(True)
+	ax.set_title('RV Error vs Cal. SNR')
+	plt.legend()
+
+	return ax
+
+def plot_rv_grid_2d():
+	"""
+	"""
+	def fmt(x):
+		return str(int(x))
+
+	teffs = [2300,2500, 3000, 3600,4200,5800,6600,8000,9600]
+	magarr = np.arange(0,17,2)
+	ao_modes = ['SH','LGS_STRAP_45','LGS_100J_130']# assuming 100J mean JHgap
+
+	savename_1 = './output/rv_precision/rv_grid_data/rv_error_texp_%ss_ao_%s_teff_%s_%smag.npy' %(900.0,ao_modes[0],teffs,magarr)
+	savename_2 = './output/rv_precision/rv_grid_data/rv_error_texp_%ss_ao_%s_teff_%s_%smag.npy' %(900.0,ao_modes[1],teffs,magarr)
+	savename_3 = './output/rv_precision/rv_grid_data/rv_error_texp_%ss_ao_%s_teff_%s_%smag.npy' %(900.0,ao_modes[2],teffs,magarr)
+	rv_grid_1 = np.load(savename_1)
+	rv_grid_2 = np.load(savename_2)
+	rv_grid_3 = np.load(savename_3)
+
+	# pick max
+	rv_err_grid  = np.zeros((len(teffs), len(magarr))) #best of all ao modes
+	for ii,teff in enumerate(teffs):
+		for jj,mag in enumerate(magarr): # this is the magnitude in filter band
+			rv_err_grid[ii,jj] = np.min((rv_grid_1[ii,jj],rv_grid_2[ii,jj],rv_grid_3[ii,jj]))
+
+	# resample onto regular grid for imshow
+	rv_err_grid= rv_err_grid.T
+	rv_err_grid[0,-1] = 0.86
+	extent = (np.min(teffs),np.max(teffs),np.min(magarr),np.max(magarr))
+	rv_err_grid = np.sqrt(rv_err_grid**2 - .25)
+
+	fig, ax = plt.subplots(1,1, figsize=(12,8))	
+	ax.imshow(rv_err_grid,aspect='auto',origin='lower',\
+				interpolation='quadric',cmap='nipy_spectral',\
+				extent=extent,vmax=100,vmin=.4)
+	cs = ax.contour(rv_err_grid, levels=[1,3,5,10,50] ,\
+				colors=['r'],origin='lower',\
+				extent=extent)
+	ax.invert_yaxis()
+	ax.clabel(cs, cs.levels, inline=True,fmt=fmt,fontsize=10,\
+		colors=['r','r','r','r'],zorder=101)
+
+	c3_1   = cs.collections[1].get_paths()[0].vertices # extract rv 3 curve
+	c3_2   = cs.collections[1].get_paths()[1].vertices # extract rv 3 curve
+	c3 = np.concatenate((c3_1,c3_2))
+
+	ax.set_ylim(0,16)
+	ax.set_ylabel('%s Magnitude'%so.filt.band)
+	ax.set_xlabel('Wavelength (nm)')
+
+	ax.set_title('AO Mode: %s, %sband, Teff:%s, t=4hr'%(so.ao.mode,so.filt.band,so.stel.teff))
+	figname = 'snr2d_%s_band_%s_teff_%s_texp_%ss.png' %(so.ao.mode,so.filt.band,so.stel.teff,so.obs.texp)
+	# duplicate axis to plot filter response
+	plt.savefig('./output/snrplots/' + figname)
+
+	return c3
+
+def run_rv_error_grids(rv_floor=1):
+	"""
+	run RV grids!
+
+	step through temperature and J mag
+	"""
+	teffs = [2300,2500, 3000, 3600,4200,5800,6600,8000,9600]
+	vsini = [1,2,2.5,2,1,1,2,10,20] # https://aa.oma.be/stellar_rotation but take low end distribution
+	telluric_mask	 = make_telluric_mask(so,cutoff=0.01,velocity_cutoff=10)
+	order_cens, order_inds  = get_order_bounds(so)
+	magarr = np.arange(0,17,2)
+
+	rv_err_grid  = np.zeros((len(teffs), len(magarr)))
+	for ii,teff in enumerate(teffs):
+		so.stel.teff=teff
+		so.stel.vsin = vsini[ii]
+		cload      = fill_data(so)
+		for jj,mag in enumerate(magarr): # this is the magnitude in filter band
+			cload.set_filter_band_mag(so,so.filt.band,so.filt.family,mag,trackonly=False)
+			so.obs.noise[np.where(telluric_mask==0)] = np.inf
+			all_w				    = get_rv_content(so.obs.v,so.obs.s,so.obs.noise)
+			dv_tot,dv_spec,dv_vals	= get_rv_precision(all_w,order_cens,order_inds,noise_floor=1,mask=telluric_mask)
+			rv_err_grid[ii,jj] = np.sqrt(dv_spec**2 + rv_floor**2)
+
+	savename = 'rv_error_texp_%ss_ao_%s_teff_%s_%smag' %(so.obs.texp,so.ao.mode,teffs,magarr)
+	np.save('./output/rv_precision/rv_grid_data/%s'%savename,rv_err_grid)
+
+	return rv_err_grid
+
+def load_kpf_3ms_line():
+	"""
+	the contour method doesnt work too well - will need to redo
+	"""
+	from kpf_etc.etc import kpf_photon_noise_estimate, kpf_etc_rv, kpf_etc_snr
+	
+	teffs = [2701, 2800, 2900, 3000, 3600,4200,5800]
+	colors = [7.1,6.8,5.6,5.2,3.8,2.2,1.5,1,.05,-0.09]
+	magarr = np.arange(-8,17,1)
+
+	rv_err_grid_kpf  = np.zeros((len(teffs), len(magarr)))
+	for ii,teff in enumerate(teffs):
+		for jj,mag in enumerate(magarr): # this is the magnitude in filter band
+			try: 
+				sigma_rv_val, wvl_arr, snr_ord, dv_ord = kpf_photon_noise_estimate(teff,mag+colors[ii],900)  
+				rv_err_grid_kpf[ii,jj] = sigma_rv_val
+			except:
+				continue
+
+	rv_err_grid= rv_err_grid_kpf.T
+	extent = (np.min(teffs),np.max(teffs),np.min(magarr),np.max(magarr))
+	rv_err_grid = np.sqrt(rv_err_grid**2 - .25)
+
+	fig, ax = plt.subplots(1,1, figsize=(8,6))	
+	ax.imshow(rv_err_grid,aspect='auto',origin='lower',\
+				interpolation='quadric',cmap='nipy_spectral',\
+				extent=extent,vmax=100,vmin=.01)
+	cs = ax.contour(rv_err_grid, levels=[1,3,5,10,50] ,\
+				colors=['r'],origin='lower',\
+				extent=extent)
+	ax.invert_yaxis()
+	ax.clabel(cs, cs.levels, inline=True,fmt=fmt,fontsize=10,\
+		colors=['r','r','r','r'],zorder=101)
+
+	c3_1   = cs.collections[1].get_paths()[0].vertices # extract rv 3 curve
+	c3_2   = cs.collections[1].get_paths()[1].vertices # extract rv 3 curve
+	c3_kpf = np.concatenate((c3_1,c3_2))
+
+	return c3_kpf
+
+def plot_temperate_planets_MRI(c3):
+	"""
+	inputs:
+	c3 - contour of rv=3m/s 
+	"""
+	planets_filename = './data/populations/rv_less2earthrad_less380Teq_less4000Teff_planets_.csv'
+	planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
+
+	hmags = planet_data['sy_hmag']
+	teffs = planet_data['st_teff']
+	mass = planet_data['pl_bmassj']
+	mass_earth = planet_data['pl_bmasse']
+	period = planet_data['pl_orbper']
+	starmass = planet_data['st_mass']
+	teq  = planet_data['pl_eqt']
+	names = planet_data['pl_name']
+	hostnames = planet_data['hostname']
+	rvamps = planet_data['pl_rvamp']
+	radii = planet_data['pl_rade']
+	method=planet_data['discoverymethod']
+	incl = planet_data['pl_orbincl']
+	itransit = np.where((incl>89))[0]
+	
+
+	# get masses through mass - rad relation
+	mass_est = 0.00314558 * radii**1.81 # 0.003 to jupiter mass , https://www.aanda.org/articles/aa/pdf/2017/08/aa29922-16.pdf  1.81= 1/.55
+	rv_est = 203 * period**(-1/3) * mass_est/(starmass + 9.548*10**-4 * mass_est)**(2/3) #https://exoplanetarchive.ipac.caltech.edu/docs/poet_calculations.html
+
+
+
+	fig, ax = plt.subplots()
+	s = ax.scatter(teffs[itransit],hmags[itransit],c=teq[itransit],s=30*radii[itransit]**2,cmap='RdYlBu_r',ec='k')
+	fig.colorbar(s, ax=ax)
+	hostnames_plotted = []
+	host_dic = {}
+	for i in teffs[itransit].keys():
+		if np.isnan(rv_est[i]): continue
+		if hostnames[i] not in hostnames_plotted:
+			host_dic[hostnames[i]] = []
+			host_dic[hostnames[i]].append(rv_est[i])
+			hostnames_plotted.append(hostnames[i])
+			#ax.annotate(str(np.round(rv_est[i],1)), (teffs[i],hmags[i]-0.2),fontsize=8)
+		else:
+			host_dic[hostnames[i]].append(rv_est[i])
+
+	hostnames_plotted = []
+	for i in teffs[itransit].keys():
+		if np.isnan(rv_est[i]): continue
+		if hostnames[i] not in hostnames_plotted:
+			hostnames_plotted.append(hostnames[i])
+			rv_max =  np.max(host_dic[hostnames[i]])
+			ax.annotate(str(np.round(rv_max,1)), (teffs[i],hmags[i]-0.2),fontsize=8)
+
+	plt.xlabel('T$_{eff}$ (K)')
+	plt.ylabel('H (mag)')
+
+
+	# fill 3m/s section
+	# plt.fill_between()
+	#c3 = plot_rv_grid_2d()
+	#c3 = np.concatenate((np.array([[2300,11.9]]),c3))
+
+	#plt.fill_between(c3[:,0],np.min(magarr),c3[:,1],fc='red',alpha=0.3)
+	plt.fill_between([3000,3800],np.min(magarr),[12,10],fc='red',alpha=0.3)
+	plt.fill_between([2500,3000],np.min(magarr),[12,12],fc='red',alpha=0.3)
+	# fill kpf
+
+	#c3_kpf = load_kpf_3ms_line()
+	#c3_kpf = np.concatenate((np.array([[2700,9.8]]),c3_kpf))
+	c3_kpf_x = [2700, 2800,3000,3100,3400,3700,3800]
+	c3_kpf_y = [9.7,10.3,10.8,10.83,11.3,11.5,11.65]
+	plt.fill_between(c3_kpf_x,np.min(magarr),c3_kpf_y,fc='steelblue',alpha=0.3)
+
+	ax.set_ylim(7.8,14)
+	ax.set_xlim(2500,4000)
+
+
 
 if __name__=='__main__':
 	#load inputs
-	configfile = 'hispec_rv_err.cfg'
-	so    = load_object(configfile)
+	configfile = 'modhis_rv_err.cfg'
+	so	= load_object(configfile)
 	cload = fill_data(so) # put coupling files in load and wfe stuff too
 
 	def get_order_bounds(so):
 		"""
 		given array, return max and mean of snr per order
 		"""
-		order_peaks      = signal.find_peaks(so.inst.base_throughput,height=0.055,distance=2e4,prominence=0.01)
-		order_cen_lam    = so.stel.v[order_peaks[0]]
-		blaze_angle      =  76
-		order_indices    =[]
+		order_peaks	  = signal.find_peaks(so.inst.base_throughput,height=0.055,distance=2e4,prominence=0.01)
+		order_cen_lam	= so.stel.v[order_peaks[0]]
+		blaze_angle	  =  76
+		order_indices	=[]
 		for i,lam_cen in enumerate(order_cen_lam):
 			line_spacing = 0.02 if lam_cen < 1475 else 0.01
 			m = np.sin(blaze_angle*np.pi/180) * 2 * (1/line_spacing)/(lam_cen/1000)
@@ -178,17 +511,21 @@ if __name__=='__main__':
 
 		return order_cen_lam,order_indices
 
-	def make_telluric_mask(so,cutoff=0.01):
+	def make_telluric_mask(so,cutoff=0.01,velocity_cutoff=5):
 		telluric_spec = np.abs(so.tel.s/so.tel.rayleigh)**so.tel.airmass
 		telluric_spec[np.where(np.isnan(telluric_spec))] = 0
 		telluric_spec_lores = degrade_spec(so.stel.v, telluric_spec, so.inst.res)
 		# resample onto v array
-		filt_interp     = interpolate.interp1d(so.stel.v, telluric_spec_lores, bounds_error=False,fill_value=0)
-		s_tel           = filt_interp(so.obs.v)/np.max(filt_interp(so.obs.v))    # filter profile resampled to phoenix times phoenix flux density
+		filt_interp	 = interpolate.interp1d(so.stel.v, telluric_spec_lores, bounds_error=False,fill_value=0)
+		s_tel		   = filt_interp(so.obs.v)/np.max(filt_interp(so.obs.v))	# filter profile resampled to phoenix times phoenix flux density
 
-		cutoff = 0.01 # reject lines greater than 1% depth
+		#cutoff = 0.01 # reject lines greater than 1% depth
 		telluric_mask = np.ones_like(s_tel)
 		telluric_mask[np.where(s_tel < (1-cutoff))[0]] = 0
+		# avoid +/-5km/s  (5pix) around telluric
+		for iroll in range(velocity_cutoff):
+			telluric_mask[np.where(np.roll(s_tel,iroll) < (1-cutoff))[0]] = 0
+			telluric_mask[np.where(np.roll(s_tel,-1*iroll) < (1-cutoff))[0]] = 0
 
 		return telluric_mask
 
@@ -198,30 +535,76 @@ if __name__=='__main__':
 		flux_interp = interpolate.InterpolatedUnivariateSpline(v,s, k=1)
 		dflux = flux_interp.derivative()
 		spec_deriv = dflux(v)
-		sigma_ord = np.abs(s) ** 0.5 # np.abs(n)
+		sigma_ord = np.abs(n) #np.abs(s) ** 0.5 # np.abs(n)
 		sigma_ord[np.where(sigma_ord ==0)] = 1e10
 		all_w = (v ** 2.) * (spec_deriv ** 2.) / sigma_ord ** 2. # include read noise and dark here!!
 		
 		return all_w
 
 	def get_rv_precision(all_w,order_cens,order_inds,noise_floor=0.5,mask=None):
+		if np.any(mask==None):
+			mask = np.ones_like(all_w)
 		dv_vals = np.zeros_like(order_cens)
 		for i,lam_cen in enumerate(order_cens):
-			w_ord = all_w[order_inds[i]] * telluric_mask[order_inds[i]]
+			w_ord = all_w[order_inds[i]] * mask[order_inds[i]]
 			dv_order  = SPEEDOFLIGHT / (np.nansum(w_ord[1:-1])**0.5) # m/s
 			dv_vals[i]  = dv_order
 		
 		dv_tot  = np.sqrt(dv_vals**2 + noise_floor**2)
 		dv_spec  = 1. / (np.nansum(1./dv_vals**2.))**0.5
 
-		return dv_tot,dv_spec
+		return dv_tot,dv_spec,dv_vals
 
+	# change to use spec_rv_noise_calc in ccd_tools.py
 	order_cens, order_inds  = get_order_bounds(so)
-	telluric_mask           = make_telluric_mask(so,cutoff=0.01)
-	all_w                   = get_rv_content(so.obs.v,so.obs.s,so.obs.noise)
-	dv_vals,dv_spec         = get_rv_precision(all_w,order_cens,order_inds,noise_floor=0.5,mask=telluric_mask)
+	telluric_mask		    = make_telluric_mask(so,cutoff=0.01,velocity_cutoff=10)
+	all_w				    = get_rv_content(so.obs.v,so.obs.s,so.obs.noise)
+	dv_tot,dv_spec,dv_vals	= get_rv_precision(all_w,order_cens,order_inds,noise_floor=1,mask=telluric_mask)
 
-	fig,axs=plot_rv_err(so, lam_cen, dv_vals)
+	fig,axs = plot_rv_err(so, order_cens, dv_vals)
+	plot_rv_err_HKonly(so, order_cens, dv_vals,savefig=True)
+
+
+	############
+	# LFC!!
+	# make LFC spectrum
+	wvl  = so.obs.v[order_inds[-1]]
+	dlam = 8
+	dfreq = 16 # 16GHz : LFC, 30GhZ etalon
+	dx    = [16,30,5]
+	modes =['freq', 'freq','lam']
+
+	# mask spectrum
+	if mode=='freq':
+		flo,fhi    = SPEEDOFLIGHT/(np.max(wvl)), SPEEDOFLIGHT/(np.min(wvl)) # GHz
+		line_freqs = np.arange(flo,fhi,dfreq)
+		line_wvls  = SPEEDOFLIGHT/line_freqs 
+	if mode=='lam': 
+		line_wvls  = np.arange(np.min(wvl),np.max(wvl),dlam)
+	
+	# make spectrum
+	weights    = np.ones_like(line_wvls)
+	fwhms      = so.inst.sig * so.inst.res_samp
+	spectrum   = 1 - ccf_tools.spec_make(wvl, weights, line_wvls, fwhms)
+
+	# step through snr arr
+	snr_arr = np.array([5.,10,30,50,80,100,500,1000.])
+	rv_arr = np.zeros_like(snr_arr)
+	for i,snr in enumerate(snr_arr):
+		spectrum_phot = spectrum * snr**2
+		#all_w                  = get_rv_content(so.obs.v,spectrum_phot,spectrum_phot**0.5)
+		#dv_tot,dv_spec,dv_vals = get_rv_precision(all_w,order_cens,order_inds,noise_floor=0.5,mask=None)
+		#rv_arr[i] = dv_spec
+		sigma_spec = np.sqrt(spectrum_phot + so.inst.pix_vert * so.inst.readnoise**2)
+		rv_arr[i]  = ccf_tools.spec_rv_noise_calc(wvl, spectrum_phot,sigma_spec) #dv_spec
+
+	# combine orders
+	norders=13
+	rv_arr_norders  = 1. / (norders/(rv_arr**2.))**0.5
+
+	#ax = plot_rv_err_lfc(snr_arr,rv_arr_norders,ax=None,label=str(dfreq) + 'GHz line spacing')
+	ax = plot_rv_err_lfc(snr_arr,rv_arr_norders,ax=ax,label=str(dfreq) + 'GHz line spacing, 13 orders')
+	#ax = plot_rv_err_lfc(snr_arr,rv_arr_norders,ax=None,label=str(dlam) + 'nm line spacing')
 
 
 

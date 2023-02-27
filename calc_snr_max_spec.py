@@ -160,7 +160,7 @@ def plot_snr_mag_peaks_2d(so, mag_arr,v,snr_arr,mode='max'):
 	fig, ax = plt.subplots(1,1, figsize=(12,8))	
 	ax.imshow(snr_arr_order_regular,aspect='auto',origin='lower',\
 				interpolation='quadric',cmap='nipy_spectral',\
-				extent=extent)
+				extent=extent,vmax=2000,vmin=0)
 	cs = ax.contour(snr_arr_order_regular, levels=[30,50,100,500,1000] ,\
 				colors=['r','k','k','k','k'],origin='lower',\
 				extent=extent)
@@ -333,14 +333,31 @@ def plot_noise(v,n_arr):
 	figname = 'throughput_%s_%smag_%s_Teff_%s_texp_%ss.png' %(mode,so.filt.band,so.stel.mag,so.stel.teff,int(so.obs.texp_frame*nframes))
 	#plt.savefig('./output/snrplots/' + figname)
 
+def plot_cool_stars():
+	planets_filename = './data/populations/rv_less2earthrad_less360Teq_less4000Teff_planets_.csv'
+	planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
+
+	hmags = planet_data['sy_hmag']
+	teffs = planet_data['st_teff']
+	mass = planet_data['pl_bmassj']
+	teq  = planet_data['pl_eqt']
+	names = planet_data['pl_name']
+	hostnames = planet_data['hostname']
+	rvamps = planet_data['pl_rvamp']
+
+	plt.scatter(teffs,hmags)
+
+
 if __name__=='__main__':
 	#load inputs
-	configfile = 'hispec.cfg'
+	configfile = 'modhis_snr.cfg'
 	so    = load_object(configfile)
 	cload = fill_data(so) # put coupling files in load and wfe stuff too
 
+	couple2 = so.inst.coupling
+
 	cload.set_teff(so,3600) 
-	mag_arr= np.arange(8,16)
+	mag_arr= np.arange(5,16)
 	snr_arr = []
 	s_arr   = []
 	n_arr   = []
@@ -349,9 +366,9 @@ if __name__=='__main__':
 	for mag in mag_arr:
 		cload.set_mag(so,mag) 
 		v,snr, n_frame, s_frame = run_one_spec(so)
-		snr_arr.append(snr)
-		s_arr.append(s_frame)
-		n_arr.append(n_frame)
+		snr_arr.append(so.obs.snr)
+		s_arr.append(so.obs.s_frame)
+		n_arr.append(so.obs.n_frame)
 		c_arr.append(so.inst.coupling)
 	
 	plot_snr_mag_peaks(so, mag_arr,v,snr_arr,mode='max')

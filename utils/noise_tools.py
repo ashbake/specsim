@@ -154,7 +154,7 @@ def get_inst_bg_tracking(x,fwhm,area=76):
 
     return tel_thermal.value # units of ph/nm/s
 
-def sum_total_noise(flux,texp, nramp, inst_bg, sky_bg,darknoise,readnoise,npix):
+def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg,darknoise,readnoise,npix,noisecap=None):
     """
     noise in 1 exposure
 
@@ -164,8 +164,8 @@ def sum_total_noise(flux,texp, nramp, inst_bg, sky_bg,darknoise,readnoise,npix):
         spectrum of star in units of electrons
     texp - float [seconds]
         exposure time, (0s,900s] (for one frame)
-    nramp - int
-        number of ramps which will reduce read noise [1,inf] - 16 max for kpic
+    nsamp - int
+        number of samples in a ramp which will reduce read noise [1,inf] - 16 max for kpic
     inst_bg - array or float [e-/s]
         instrument background, if array should match sampling of flux
     sky_bg - array or float [e-/s]
@@ -176,7 +176,9 @@ def sum_total_noise(flux,texp, nramp, inst_bg, sky_bg,darknoise,readnoise,npix):
         read noise of detector
     npix - float [pixels]
         number of pixels in cross dispersion of spectrum being combined into one 1D spectrum
-
+    noisecap - float or None (default: None)
+        noise cap to be applied. Defined relative to flux such that 1/noisecap is the max SNR allowed
+    
     outputs:
     -------
     noise: array [e-]
@@ -190,14 +192,20 @@ def sum_total_noise(flux,texp, nramp, inst_bg, sky_bg,darknoise,readnoise,npix):
     sig_bg   = np.sqrt(inst_bg + sky_bg) 
 
     # read noise  - reduces by number of ramps
-    sig_read = np.max((6,(readnoise/np.sqrt(nramp))))
+    sig_read = np.max((6,(readnoise/np.sqrt(nsamp))))
     
     # dark current - times time and pixels
-    sig_dark = np.sqrt(nramp * darknoise * npix) #* get dark noise every sample
+    sig_dark = np.sqrt(nsamp * darknoise * npix) #* get dark noise every sample
     
     noise = np.sqrt(sig_flux **2 + sig_bg**2 + sig_read**2 + sig_dark**2)
 
+    # cap the noise if a number is provided
+    if noisecap is not None:
+        noise[np.where(noise < noisecap)] = noisecap * flux # noisecap is fraction of flux, 1/noisecap gives max SNR
+
     return noise
+
+
 
 def read_noise(rn,npix):
     """

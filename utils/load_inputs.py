@@ -9,9 +9,10 @@ from scipy.integrate import trapz
 from astropy.io import fits
 from scipy import interpolate
 import sys,glob
+import pandas as pd
 from astropy.convolution import Gaussian1DKernel, convolve
 
-from throughput_tools import pick_coupling, get_band_mag, get_base_throughput
+from throughput_tools import pick_coupling, get_band_mag, get_base_throughput,grid_interp_coupling
 from wfe_tools import get_tip_tilt_resid, get_HO_WFE
 import obs_tools
 import noise_tools
@@ -228,7 +229,8 @@ class fill_data():
 		f                       = interpolate.interp1d(so.filt.xraw, so.filt.yraw, bounds_error=False,fill_value=0)
 		so.filt.v, so.filt.s    = self.x, f(self.x)  #filter profile sampled at stellar
 
-		so.filt.dl_l            = np.mean(integrate(so.filt.xraw, so.filt.yraw)/so.filt.xraw) # dlambda/lambda
+		so.filt.dl_l                 = np.mean(integrate(so.filt.xraw, so.filt.yraw)/so.filt.xraw) # dlambda/lambda
+		so.filt.center_wavelength    = integrate(so.filt.xraw,so.filt.yraw*so.filt.xraw)/integrate(so.filt.xraw,so.filt.yraw)
 
 	def stellar(self,so):
 		"""
@@ -278,31 +280,57 @@ class fill_data():
 		load tapas telluric file
 		"""
 		data      = fits.getdata(so.tel.telluric_file)
-		_,ind  = np.unique(data['Wave/freq'],return_index=True)
-		tck_tel   = interpolate.splrep(data['Wave/freq'][ind],data['Total'][ind], k=2, s=0)
+		pwv0      = fits.getheader(so.tel.telluric_file)['PWV']
+		airmass0  = fits.getheader(so.tel.telluric_file)['AIRMASS']
+		
+		_,ind     = np.unique(data['Wave/freq'],return_index=True)
+		tck_tel   = interpolate.splrep(data['Wave/freq'][ind],data['Total'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
 		so.tel.v, so.tel.s = self.x, interpolate.splev(self.x,tck_tel,der=0,ext=1)
 		
-		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['H2O'][ind], k=2, s=0)
+		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['H2O'][ind]**(so.tel.pwv * so.tel.airmass/pwv0/airmass0), k=2, s=0)
 		so.tel.h2o = interpolate.splev(self.x,tck_tel,der=0,ext=1)
 
-		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['Rayleigh'][ind], k=2, s=0)
+		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['Rayleigh'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
 		so.tel.rayleigh = interpolate.splev(self.x,tck_tel,der=0,ext=1)
 
 	def ao(self,so,rerun=0):
 		"""
 		fill in ao info 
 		"""
-		if so.ao.v_mag_set=='default':  
-			so.ao.v_mag  = get_band_mag(so,'Johnson','V',so.stel.factor_0) # get magnitude in r band
+		# load ao information from ao file
+		if type(so.ao.ho_wfe_set) is str:
+			f = pd.read_csv(so.ao.ho_wfe_set,header=[0,1])
+			so.ao.modes = f.columns
+			mags             = f['mag'].values.T[0]
+			wfes             = f[so.ao.mode].values.T[0]
+			so.ao.ho_wfe_band= f[so.ao.mode].columns[0] # this is the mag band wfe is defined in, must be more readable way..
+			so.ao.ho_wfe_mag = get_band_mag(so,'Johnson',so.ao.ho_wfe_band,so.stel.factor_0) # get magnitude of star in appropriate band
+			f_howfe          = interpolate.interp1d(mags,wfes, bounds_error=False,fill_value=10000)
+			so.ao.ho_wfe     = float(f_howfe(so.ao.ho_wfe_mag))
+			print('HO WFE %s mag is %s'%(so.ao.ho_wfe_band,so.ao.ho_wfe_mag))
 		else:
-			so.ao.v_mag = so.ao.v_mag_set
-		print('Vmag is %s'%so.ao.v_mag)
+			so.ao.ho_wfe = so.ao.ho_wfe_set
+
+		if type(so.ao.ttdynamic_set) is str:
+			f = pd.read_csv(so.ao.ttdynamic_set,header=[0,1])
+			so.ao.modes_tt  = f.columns # should match howfe..
+			mags            = f['mag'].values.T[0]
+			tts             = f[so.ao.mode].values.T[0]
+			so.ao.ttdynamic_band=f[so.ao.mode].columns[0] # this is the mag band wfe is defined in, must be more readable way..			
+			so.ao.ttdynamic_mag = get_band_mag(so,'Johnson',so.ao.ttdynamic_band,so.stel.factor_0) # get magnitude of star in appropriate band
+			f_ttdynamic=  interpolate.interp1d(mags,tts, bounds_error=False,fill_value=10000)
+			so.ao.tt_dynamic     = float(f_ttdynamic(so.ao.ttdynamic_mag))
+			print('Tip Tilt %s mag is %s'%(so.ao.ttdynamic_band,so.ao.ttdynamic_mag))
+		else:
+			so.ao.tt_dynamic = so.ao.ttdynamic_set
+
+
 		print('AO mode: %s'%so.ao.mode)
 
-		so.ao.ho_wfe = get_HO_WFE(so.ao.v_mag,so.ao.mode)
+		#so.ao.ho_wfe = get_HO_WFE(so.ao.v_mag,so.ao.mode) #old
 		print('HO WFE is %s'%so.ao.ho_wfe)
 	
-		so.ao.tt_dynamic = get_tip_tilt_resid(so.ao.v_mag,so.ao.mode)
+		#so.ao.tt_dynamic = get_tip_tilt_resid(so.ao.v_mag,so.ao.mode)
 		print('tt dynamic is %s'%so.ao.tt_dynamic)
 
 		# consider throughput impact of ao here
@@ -312,6 +340,10 @@ class fill_data():
 			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.H[0],so.inst.H[1],0.8)
 		elif so.ao.mode =='80JH':
 			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.H[1],0.8)
+		elif so.ao.mode =='100JH':
+			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.H[1],1)
+		elif so.ao.mode =='100K':
+			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.K[0],so.inst.K[1],1)
 		else:
 			so.ao.pywfs_dichroic = np.ones_like(self.x)
 
@@ -329,11 +361,17 @@ class fill_data():
 
 		# THROUGHPUT
 		so.inst.base_throughput  = get_base_throughput(x=self.x,datapath=so.inst.transmission_path) # everything except coupling
+		
+		# interp grid
+		try: so.inst.points
+		except AttributeError: 
+			out = grid_interp_coupling(int(so.inst.pl_on),path=so.inst.transmission_path)
+			so.inst.grid_points, so.inst.grid_values = out[0],out[1:] #if PL, three values
 		try:
-			so.inst.coupling, so.inst.strehl = pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,so.ao.tt_dynamic,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,transmission_path=so.inst.transmission_path) # includes PIAA and HO term
+			so.inst.coupling, so.inst.strehl = pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,so.ao.tt_dynamic,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values,transmission_path=so.inst.transmission_path) # includes PIAA and HO term
 		except ValueError:
 			# hack here bc tt dynamic often is out of bounds
-			so.inst.coupling, so.inst.strehl = pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,9.5,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,transmission_path=so.inst.transmission_path) # includes PIAA and HO term
+			so.inst.coupling, so.inst.strehl = pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,9.5,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values,transmission_path=so.inst.transmission_path) # includes PIAA and HO term
 			so.inst.notes = 'tt dynamic out of bounds! %smas' %so.ao.tt_dynamic
 
 		so.inst.xtransmit = self.x
@@ -365,26 +403,29 @@ class fill_data():
 		so.obs.s = so.obs.s_frame * so.obs.nframes
 
 		# load background! spectrum
-		skybg    = noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
-		instbg   = noise_tools.get_inst_bg(so.obs.v,npix=so.inst.pix_vert,lam0=2000,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area)
+		so.obs.sky_bg_ph    = noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
+		so.obs.inst_bg_ph   = noise_tools.get_inst_bg(so.obs.v,npix=so.inst.pix_vert,lam0=2000,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area)
 
 		# calc noise
-		noise_frame  = noise_tools.sum_total_noise(so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,instbg, skybg, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
+		noise_frame  = noise_tools.sum_total_noise(so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
 		noise_frame[np.where(np.isnan(noise_frame))] = np.inf
 		noise_frame[np.where(noise_frame==0)] = np.inf
 
 		so.obs.noise_frame = noise_frame
 		so.obs.noise = np.sqrt(so.obs.nframes)*noise_frame
 
+		so.obs.snr = so.obs.s/so.obs.noise
+
 	def tracking(self,so):
 		"""
 		"""
 		#pick guide camera - eventually settle on one and put params in config file!
-		rn, pixel_pitch, qe_mod, dark = obs_tools.get_tracking_cam(camera='h2rg')
+		rn, pixel_pitch, qe_mod, dark,saturation = obs_tools.get_tracking_cam(camera=so.track.camera,x=self.x)
 		so.track.pixel_pitch = pixel_pitch
 		so.track.dark        = dark
 		so.track.rn          = rn
-		so.track.qe_mod      = qe_mod  # wont need this later bc qe will match throughput model
+		so.track.qe_mod      = qe_mod      # to switch cameras, wont need this later bc qe will match throughput model
+		so.track.saturation  = saturation  # to switch cameras, wont need this later bc qe will match throughput model
 
 		# load and store tracking camera throughput - file structure hard coded
 		xtemp, ytemp  = np.loadtxt(so.track.transmission_file,delimiter=',').T #microns!
@@ -397,66 +438,120 @@ class fill_data():
 
 		# load tracking band
 		bandpass, so.track.center_wavelength = obs_tools.get_tracking_band(self.x,so.track.band)
-		so.track.band = bandpass * so.ao.pywfs_dichroic
+		so.track.bandpass = bandpass * so.ao.pywfs_dichroic
 
 		# get fwhm (in pixels)
-		so.track.fwhm = obs_tools.get_fwhm(so.ao.ho_wfe,so.ao.tt_dynamic,so.track.center_wavelength,so.inst.tel_diam,so.track.platescale,offaxis=so.track.offaxis,getall=False)
+		so.track.fwhm = float(obs_tools.get_fwhm(so.ao.ho_wfe,so.ao.tt_dynamic,so.track.center_wavelength,so.inst.tel_diam,so.track.platescale,field=[so.track.field_x,so.track.field_y],camera=so.track.camera,getall=False))
 		so.track.fwhm_units = 'pixel'
 		print('Tracking FWHM=%spix'%so.track.fwhm)
 
 		# get sky background and instrument background, spec is ph/nm/s, fwhm must be in arcsec
 		so.track.sky_bg_spec = noise_tools.get_sky_bg_tracking(self.x,so.track.fwhm*so.track.platescale,airmass=so.tel.airmass,pwv=so.tel.pwv,area=so.inst.tel_area,skypath=so.tel.skypath)
-		so.track.sky_bg_ph   = so.track.texp * np.trapz(so.track.sky_bg_spec * so.track.band,self.x)
+		so.track.sky_bg_ph   = so.track.texp * np.trapz(so.track.sky_bg_spec * so.track.bandpass,self.x)
 
 		so.track.inst_bg_spec = noise_tools.get_inst_bg_tracking(self.x,so.track.fwhm * so.track.platescale,area=76)
-		so.track.inst_bg_ph   = so.track.texp * np.trapz(so.track.inst_bg_spec * so.track.band,self.x)
+		so.track.inst_bg_ph   = so.track.texp * np.trapz(so.track.inst_bg_spec * so.track.bandpass,self.x)
 
 		# get photons in band
 		so.track.signal_spec = so.stel.s * so.track.texp *\
 		 			so.inst.tel_area * so.track.ytransmit*\
 		 			np.abs(so.tel.s)**so.tel.airmass
 	
-		so.track.nphot = np.trapz(so.track.signal_spec * so.track.band,so.stel.v)
-		print('Tracking photons: %se-'%so.track.nphot)
+		so.track.nphot = np.trapz(so.track.signal_spec * so.track.bandpass,so.stel.v)
+		print('Tracking photons: %s e-'%so.track.nphot)
+
 		# get noise
 		npix = np.pi * so.track.fwhm**2
-		so.track.noise = noise_tools.sum_total_noise(so.track.nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,npix)
-		print('Tracking noise: %se-'%so.track.noise)
+		so.track.noise = noise_tools.sum_total_noise(so.track.nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark*so.track.texp,so.track.rn,npix)
+		print('Tracking noise: %s e-'%so.track.noise)
 		so.track.snr = so.track.nphot/so.track.noise 
 		
 		so.track.strehl = np.exp(-(2*np.pi*so.ao.ho_wfe/so.track.center_wavelength)**2)
 		so.track.centroid_err = (1/np.pi) * so.track.fwhm/(so.track.strehl* so.track.snr) 
 
-	def set_teff(self,so,temp,trackonly=False):
+		if so.track.strehl*so.track.nphot/npix > 0.9*so.track.saturation:
+			nphot_capped = 0.8*so.inst.saturation * npix/so.track.strehl # cap nphot
+			noise_capped = 		so.track.noise = noise_tools.sum_total_noise(nphot_capped,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark*so.track.texp,so.track.rn,npix)
+			snr_capped = nphot_capped/noise_capped
+			so.track.centroid_err = (1/np.pi) * so.track.fwhm/(so.track.strehl* snr_capped)  # same fwhm but snr is reduced to not saturate like if used an ND filter
+			so.track.notes = 'saturated! nphot capped at %s'%round(nphot_capped)
+
+	def set_teff_aomode(self,so,temp,aomode,trackonly=False):
 		"""
 		given new temperature, relaod things as needed
 		mode: 'track' or 'spec'
 		"""
 		so.stel.teff = temp
+		so.ao.mode   = aomode
 		self.stellar(so)
 		self.ao(so)
 		if not trackonly:
 			self.instrument(so)
 		self.tracking(so)
+		self.observe(so)
+
+	def set_teff_mag(self,so,temp,mag,star_only=False):
+		"""
+		given new temperature, relaod things as needed
+		mode: 'track' or 'spec'
+		"""
+		so.stel.teff  = temp
+		so.stel.mag   = mag
+		self.stellar(so)
+		if not star_only:
+			self.ao(so)
+			self.instrument(so)
+			self.tracking(so)
+			self.observe(so)
 
 	def set_mag(self,so,mag,trackonly=False):
 		"""
 		given new temperature, relaod things as needed
 		"""
+		print('-----Reloading Stellar Magnitude-----')
 		so.stel.mag = mag
 		self.stellar(so)
 		self.ao(so)
 		if not trackonly:
 			self.instrument(so)
 		self.tracking(so)
+		self.observe(so)
 
-	def set_tracking_band(self,so,band):
+	def set_tracking_band_texp(self,so,band,texp):
 		"""
 		given new temperature, relaod things as needed
 		"""
+		print('-----Reloading Tracking Band and Exposure Time------')
 		so.track.band = band
+		so.track.texp = texp
 		self.tracking(so)
 
+	def set_ao_mode(self,so,mode,trackonly=False):
+		"""
+		given new temperature, relaod things as needed
+		"""
+		print('-----Reloading Stellar Magnitude-----')
+		so.ao.mode = mode
+		self.ao(so)
+		if not trackonly:
+			self.instrument(so)
+		self.tracking(so)
+		self.observe(so)
 
+	def set_filter_band_mag(self,so,band,family,mag,trackonly=False):
+		"""
+		given new filter band, reload everything
+		"""
+		print('-----Reloading Filter Band Definition-----')
+		so.filt.band = band
+		so.filt.family = family
+		so.stel.mag=mag
+		self.filter(so)
+		self.stellar(so)
+		self.ao(so)
+		if not trackonly:
+			self.instrument(so)
+			self.observe(so)
+		self.tracking(so)
 
 

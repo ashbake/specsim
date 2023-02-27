@@ -10,12 +10,7 @@ from scipy import signal
 all = {'integrate','gaussian', 'define_lsf', 'vac_to_stand', 'setup_band', 'resample'}
 
 
-def butter_highpass_filter(data, cutoff, fs, order=5):
-    nyq = 0.5 * fs
-    Wn = cutoff / nyq # critical frequency
-    b, a = signal.butter(order, Wn, btype = "highpass", analog = False)
-    y = signal.filtfilt(b, a, data)
-    return y
+
 
 def integrate(x,y):
     """
