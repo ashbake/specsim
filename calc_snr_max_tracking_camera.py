@@ -290,7 +290,7 @@ def plot_results_mag_req(teff,filt_band='H'):
 	
 	for ii,track_band in enumerate(['y','z','JHgap','J','H','K']):
 		for jj,ao_mode in enumerate(modes):
-			savename = 'cendata_%s_ao_%s_band_%s_teff_%s_%smag.npy' %('h2rg',ao_mode,track_band,teff,filt_band)
+			savename = 'cendata_%s_ao_%s_band_%s_teff_%s_%smag_fieldx_%sarcsec_fieldy_%sarcsec.npy' %('h2rg',ao_mode,track_band,teff,'H',0.0,0.0)
 			try: centroid = np.load('./output/centroid_data/centroid_%s'%savename)
 			except: continue
 			try:	mag_req = get_mag_limit_per_exptime(exptimes,magarr,centroid,tracking_requirement_pixel)
@@ -508,8 +508,8 @@ def plot_results_fwhm(teff):
 
 	for ii,track_band in enumerate(['y','z','JHgap','J','H','K']):
 		for jj,ao_mode in enumerate(modes):
-			savename = 'cendata_%s_ao_%s_band_%s_teff_%s_%smag.npy' %('h2rg',ao_mode,track_band,teff,'H')
-			try: centroid = np.load('./output/centroid_data/centroid_%s'%(savename))
+			savename = 'cendata_%s_ao_%s_band_%s_teff_%s_%smag_fieldx_%sarcsec_fieldy_%sarcsec.npy' %('h2rg',ao_mode,track_band,teff,'H',0.0,0.0)
+			try: centroid = np.load('./output/centroid_data/centroid_%s'%savename)
 			except: continue
 			fwhm = np.load('./output/centroid_data/fwhm_%s'%(savename))
 			snr  = np.load('./output/centroid_data/snr_%s'%(savename))
@@ -661,6 +661,11 @@ if __name__=='__main__':
 	so         = load_object(configfile)
 	cload      = fill_data(so)
 
+	# note that i changed the TT residual=FWHM assumption to be FWHM= 1/.44 *tt 
+	# which will make things slightly worse and need to rerun post PDR
+	# will only change slightly bc where things blow up is where the cutoff is
+	# not huge changes by factor of 2ish in TT since it's small portion of FWHM
+
 	#plot_bg_noise(so)
 	exptimes = np.array([0.001,0.01,0.1,1,10])
 	magarr   = np.arange(1,20,2) # in band of interest
@@ -675,13 +680,13 @@ if __name__=='__main__':
 	
 	# each temp gets own ao mode
 	run_dic = {}
-	#run_dic[1000] = ['LGS_100%s_130']#,'80%s','SH']
-	#run_dic[1500] = ['LGS_100%s_130']#,'80%s','SH']
-	#run_dic[2300] = ['LGS_100%s_130', 'LGS_STRAP_45']#,'80%s','SH']
-	#run_dic[3000] = ['LGS_STRAP_45','LGS_100%s_130']#,'80%s','SH']
-	run_dic[3600] = ['LGS_STRAP_45']#,'LGS_100%s_130','80%s','SH']
-	#run_dic[4200] = ['LGS_STRAP_45']#,'80%s','SH']
-	#run_dic[5800] = ['LGS_STRAP_45']#,'SH']
+	run_dic[1000] = ['LGS_100%s_130','80%s','SH']
+	run_dic[1500] = ['LGS_100%s_130','80%s','SH']
+	run_dic[2300] = ['LGS_100%s_130', 'LGS_STRAP_45','80%s','SH']
+	run_dic[3000] = ['LGS_STRAP_45','LGS_100%s_130','80%s','SH']
+	run_dic[3600] = ['LGS_STRAP_45','LGS_100%s_130','80%s','SH']
+	run_dic[4200] = ['LGS_STRAP_45','80%s','SH']
+	run_dic[5800] = ['LGS_STRAP_45','SH']
 	teffs = run_dic.keys()
 
 	for ii,teff in enumerate(teffs):

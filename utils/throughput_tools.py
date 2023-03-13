@@ -60,7 +60,7 @@ def pick_coupling(waves,dynwfe,ttStatic,ttDynamic,LO=30,PLon=0,piaa_boost=1.3,po
     # check range of each variable
     if ttStatic > 10 or ttStatic < 0:
         raise ValueError('ttStatic is out of range, 0-10')
-    if ttDynamic > 10 or ttDynamic < 0:
+    if ttDynamic > 20 or ttDynamic < 0:
         raise ValueError('ttDynamic is out of range, 0-10')
     if LO > 100 or LO < 0:
         raise ValueError('LO is out of range,0-100')
@@ -86,7 +86,8 @@ def pick_coupling(waves,dynwfe,ttStatic,ttDynamic,LO=30,PLon=0,piaa_boost=1.3,po
         #test3 = mode1 * mat[2,2]  + mode2*mat[1,2] + mode3*mat[2,2]
         # apply only to YJ or make matrix diagonal for HK..map onto same wavelength grid somehow
         # get coupling
-        losses = 0.95
+        losses = np.ones_like(mode1) # due to PL imperfection
+        losses[np.where(waves< 1.400)[0]] = 0.95 # only apply to y band
         raw_coupling = losses*(mode1+mode2+mode3) # do dumb things for now #0.95 is a recombination loss term 
     else:
         if np.any(points==None): points, values = grid_interp_coupling(PLon,path=transmission_path) # move this outside this function ,do one time!
@@ -109,14 +110,14 @@ def grid_interp_coupling(PLon,path='/Users/ashbake/Documents/Research/Projects/H
     """
     LOs = np.arange(0,125,25)
     ttStatics = np.arange(11)
-    ttDynamics = np.arange(0,10,0.5)
+    ttDynamics = np.arange(0,20.5,0.5)
     
     if PLon: 
-        path_to_files     = path + 'coupling/couplingEff_wPL_202212014/'
-        filename_skeleton = 'couplingEff_atm0_adc0_PL%s_defoc0nmRMS_LO%snmRMS_ttStatic%smas_ttDynamic%smasRMS.csv'
+        path_to_files     = path + 'coupling/couplingEff_2023027_v2/'
+        filename_skeleton = 'couplingEff_atm1_adc1_PL1_defoc25nmRMS_LO%snmRMS_ttStatic%smas_ttDynamic%smasRMS.csv'
     else:
-        path_to_files     = path + 'coupling/couplingEff_20221005/'
-        filename_skeleton = 'couplingEff_atm0_adc0_defoc0nmRMS_LO%snmRMS_ttStatic%smas_ttDynamic%smasRMS.csv'
+        path_to_files     = path + 'coupling/couplingEff_woPL_20230227/'
+        filename_skeleton = 'couplingEff_atm1_adc1_PL0_defoc25nmRMS_LO%snmRMS_ttStatic%smas_ttDynamic%smasRMS.csv'
 
     # to dfine values, must open up each file. not sure if can deal w/ wavelength
     values_1 = np.zeros((len(LOs),len(ttStatics),len(ttDynamics),100))
@@ -126,14 +127,13 @@ def grid_interp_coupling(PLon,path='/Users/ashbake/Documents/Research/Projects/H
         for j,ttStatic in enumerate(ttStatics):
             for k,ttDynamic in enumerate(ttDynamics):
                 if round(ttDynamic)==ttDynamic: ttDynamic=round(ttDynamic)
+                f = pd.read_csv(path_to_files+filename_skeleton%(LO,ttStatic,ttDynamic))
                 if PLon:
-                    f = pd.read_csv(path_to_files+filename_skeleton%(PLon,LO,ttStatic,ttDynamic))
                     values_1[i,j,k,:]=f['coupling_eff_mode1'] #what to fill here?
                     values_2[i,j,k,:]=f['coupling_eff_mode2'] #what to fill here?
                     values_3[i,j,k,:]=f['coupling_eff_mode3'] #what to fill here?
                 else:
-                    f = pd.read_csv(path_to_files+filename_skeleton%(LO,ttStatic,ttDynamic))
-                    values_1[i,j,k,:]=f['coupling_efficiency'] #what to fill here?
+                    values_1[i,j,k,:]=f['coupling_eff_mode1'] #what to fill here?
 
                 #values_hk[i,j,k]=f['coupling_eff_mode1'][50] #what to fill here?
     
@@ -161,7 +161,7 @@ def plot_throughput(so):
     figname = 'throughput_%s_%smag_%s_Teff_%s_texp_%ss.png' %(so.ao.mode,so.filt.band,so.stel.mag,so.stel.teff,int(so.obs.texp_frame*nframes))
     plt.savefig('./output/snrplots/' + figname)
 
-def plot_throughput_components(telluric_file,datapath = './data/throughput/hispec_subsystems_11032022/',outputdir='../output/'):
+def plot_throughput_components_HK(telluric_file,datapath = '../data/throughput/hispec_subsystems_11032022/',outputdir='../output/'):
     """
     plot throughput plot for MRI proposal
     """
@@ -224,8 +224,8 @@ def plot_throughput_components(telluric_file,datapath = './data/throughput/hispe
     lgs = data['atm'] * data[spec]['tel'] * data[spec]['ao']* \
                     data[spec]['feicom']*data[spec]['feired']*data[spec]['fibred']*\
                     data[spec]['rspec']*data['coupling_LGS']
-    np.savetxt('output/ngs_throughput.txt',np.vstack((w,ngs)).T)
-    np.savetxt('output/lgs_throughput.txt',np.vstack((w,lgs)).T)
+    #np.savetxt(outputdir + 'ngs_throughput_HK.txt',np.vstack((w,ngs)).T)
+    #np.savetxt(outputdir + 'lgs_throughput_HK.txt',np.vstack((w,lgs)).T)
 
     ngs[np.where(ngs<0.015)[0]] = np.nan
     lgs[np.where((ngs<0.015) & (w > 1.9))[0]] = np.nan
@@ -241,18 +241,118 @@ def plot_throughput_components(telluric_file,datapath = './data/throughput/hispe
     plt.xlim(1.490, 2.455)
     plt.axhline(np.max(ngs),c='k',linestyle='--',linewidth=2)
     plt.fill_between([1.810, 1.960],0.01,y2=1,facecolor='w',zorder=110)
-    
+    plt.fill_between([1.490,1.780],0.01,y2=1,facecolor='gray',alpha=0.2,zorder=110)
+    plt.fill_between([1.990,2.460],0.01,y2=1,facecolor='gray',alpha=0.2,zorder=110)
+
     #plt.title("HISPEC E2E Except Coupling")
     # y lines
     yticks = [0.01, 0.03, 0.05, 0.1, 0.2, 0.4, 0.8]
-    yticks = [0.01, 0.03, 0.09, 0.27, 0.81]
+    #yticks = [0.01, 0.03, 0.09, 0.27, 0.81]
     xticks = np.round((np.arange(1.49, 2.45,0.04)),2)
     plt.yticks(ticks=yticks,labels=yticks,color='k',fontsize=12)
     plt.xticks(rotation=90,ticks=xticks,labels=xticks,color='k',fontsize=12)
     plt.grid(axis='y',alpha=0.4)
     plt.subplots_adjust(bottom=0.17)
-    plt.savefig(outputdir + 'e2e_mri_plot.png')
-    plt.savefig(outputdir + 'e2e_mri_plot.pdf')
+    plt.title('HISPEC HK Throughput')
+    plt.savefig(outputdir + 'e2e_plot_HK.png')
+    plt.savefig(outputdir + 'e2e_plot_HK.pdf')
+
+def plot_throughput_components_YJ(telluric_file,datapath = './data/throughput/hispec_subsystems_11032022/',outputdir='../output/'):
+    """
+    plot throughput plot for MRI proposal
+    """
+    data={}
+    data['red'] = {}
+    data['blue'] =  {}
+
+    #data['Atmosphere'] = pass
+
+    colors = ['b','orange','gray','yellow','lightblue','green','k']
+    labels = ['Atmosphere','Telescope','Keck AO','FEI','Fiber \nCoupling','Fiber\nPropogation',]
+    for spec in ['red','blue']:
+        if spec=='red':
+            include = ['tel', 'ao', 'feicom', 'feired','fibred','rspec']#,'coupling']
+        if spec=='blue':
+            include = ['tel', 'ao', 'feicom', 'feiblue','fibblue','bspec']#,'coupling']
+
+        for i in include:
+            if i==include[0]:
+                w,s = np.loadtxt(datapath + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
+                data[spec][i] = s
+            else:
+                wtemp, stemp = np.loadtxt(datapath + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
+                # interpolate onto s
+                f = interpolate.interp1d(wtemp, stemp, bounds_error=False,fill_value=0)
+                data[spec][i] = f(w)
+                #plt.plot(w,s,label=i)
+
+    #load atmosphere and degrade to lower res, resample onto w
+    teldata      = fits.getdata(telluric_file)
+    _,ind  = np.unique(teldata['Wave/freq'],return_index=True)
+    tck_tel   = interpolate.splrep(teldata['Wave/freq'][ind],teldata['Total'][ind], k=2, s=0)
+    telluric = interpolate.splev(1000*w,tck_tel,der=0,ext=1)
+    telluric_spec  = degrade_spec(w,telluric,2000)
+    data['atm'] = telluric_spec
+ 
+    #load coupling for two options
+    # inputs : waves,dynwfe,ttStatic,ttDynamic
+    data['coupling_NGS'],strehl = pick_coupling(w,130,0,3,LO=0,PLon=1)
+    data['coupling_LGS'],strehl2 = pick_coupling(w,220,0,9.4,LO=30,PLon=1)
+
+    if np.max(w)>1000: w/=1000
+    # plot red only
+    spec = 'blue'
+    plt.figure(figsize=(7,6))
+    plt.semilogy(w,data['atm'],c='royalblue',linewidth=1)
+    plt.plot(w,data['atm'] * data[spec]['tel'],c='darkorange',linewidth=1)
+    plt.plot(w,data['atm'] * data[spec]['tel'] * data[spec]['ao'],c='silver',linewidth=1)
+    plt.plot(w,data['atm'] * data[spec]['tel'] * data[spec]['ao']* \
+                    data[spec]['feicom']*data[spec]['feiblue'],c='gold',linewidth=1)
+    
+    plt.plot(w,data['atm'] * data[spec]['tel'] * data[spec]['ao']* \
+                    data[spec]['feicom']*data[spec]['feiblue']*data[spec]['fibblue']*\
+                    data['coupling_NGS'],c='steelblue',alpha=0.8,linewidth=1)
+    
+    ngs = data['atm'] * data[spec]['tel'] * data[spec]['ao']* \
+                    data[spec]['feicom']*data[spec]['feiblue']*data[spec]['fibblue']*\
+                    data[spec]['bspec']*data['coupling_NGS']
+    lgs = data['atm'] * data[spec]['tel'] * data[spec]['ao']* \
+                    data[spec]['feicom']*data[spec]['feiblue']*data[spec]['fibblue']*\
+                    data[spec]['bspec']*data['coupling_LGS']
+    np.savetxt(outputdir + 'ngs_throughput_bspec.txt',np.vstack((w,ngs)).T)
+    np.savetxt(outputdir+'lgs_throughput_bspec.txt',np.vstack((w,lgs)).T)
+
+    ngs[np.where(ngs<0.015)[0]] = np.nan
+    lgs[np.where((ngs<0.015) & (w > 1.9))[0]] = np.nan
+    lgs[np.where(lgs<0.005)[0]] = np.nan
+    lgs[np.where((lgs<0.005) & (w > 1.9))[0]] = np.nan
+    plt.plot(w,ngs,c='seagreen',linewidth=1)
+    
+    plt.plot(w,lgs,c='seagreen',alpha=0.5,linewidth=1)
+    
+    plt.xlabel('Wavelength (microns)',color='k')
+    plt.ylabel('Cumulative Throughput (log)',color='k')
+    plt.ylim(0.005,1)
+    plt.xlim(0.980, 1.490)
+    plt.axhline(np.max(ngs),c='k',linestyle='--',linewidth=2)
+    plt.fill_between([1.33, 1.49],0.00,y2=1,facecolor='w',zorder=110)
+    plt.fill_between([0.98, 1.07],0.0,y2=1,facecolor='gray',alpha=0.2,zorder=-110)
+    plt.fill_between([1.170,1.327],0.0,y2=1,facecolor='gray',alpha=0.2,zorder=-110)
+    
+    #plt.title("HISPEC E2E Except Coupling")
+    # y lines
+    yticks = [0.01, 0.03, 0.05, 0.1, 0.2, 0.4, 0.8]
+    #yticks = [0.01, 0.03, 0.09, 0.27, 0.81]
+    xticks = np.round((np.arange(0.98, 1.49,0.04)),2)
+    plt.yticks(ticks=yticks,labels=yticks,color='k',fontsize=12)
+    plt.xticks(rotation=90,ticks=xticks,labels=xticks,color='k',fontsize=12)
+    plt.grid(axis='y',alpha=0.4)
+    plt.subplots_adjust(bottom=0.17)
+    plt.title('HISPEC yJ Throughput')
+    plt.savefig(outputdir + 'e2e_mri_plot_yJ.png')
+    plt.savefig(outputdir + 'e2e_mri_plot_yJ.pdf')
+
+
 
 def get_emissivity(wave,datapath = './data/throughput/hispec_subsystems_11032022/'):
     """

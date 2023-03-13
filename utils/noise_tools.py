@@ -220,11 +220,73 @@ def read_noise(rn,npix):
 
 
 
-def plot_noise_components():
+def plot_noise_components(so):
     """
     plot spectra and transmission so know what we're dealing with
     """
     plt.figure()
     plt.plot(so.stel.v,so.hispec.ytransmit)
 
+
+def plot_bg(so, v,instbg,skybg):
+    fig, ax = plt.subplots(1,1, figsize=(8,5))  
+    ax.plot(v,instbg+skybg)
+    ax.set_xlim(900,2500)
+    ax.set_ylim(0,0.5)
+    ax.set_xlabel('Wavelength (nm)')
+    ax.set_ylabel('Sky + Inst Bg (e-/s/pix)')
+    ax2 = ax.twinx()
+    #ax2.fill_between(so.filt.v,so.filt.s,facecolor='gray',edgecolor='black',alpha=0.2)
+    #ax2.set_ylabel('Filter Response')
+    # plot band
+    ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.2)
+    ax2.text(20+np.min(so.inst.y),0.9, 'y')
+    ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.2)
+    ax2.text(50+np.min(so.inst.J),0.9, 'J')
+    ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.2)
+    ax2.text(50+np.min(so.inst.H),0.9, 'H')
+    ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.2)
+    ax2.text(50+np.min(so.inst.K),0.9, 'K')
+    ax2.set_ylim(0,1)
+
+    fig, ax = plt.subplots(1,1, figsize=(8,5))  
+    ax.plot(v,instbg)
+    ax.set_xlim(900,2500)
+    ax.set_ylim(0,0.5)
+    ax.set_xlabel('Wavelength (nm)')
+    ax.set_ylabel('Inst Bg (e-/s/pix)')
+    ax2 = ax.twinx()
+    #ax2.fill_between(so.filt.v,so.filt.s,facecolor='gray',edgecolor='black',alpha=0.2)
+    #ax2.set_ylabel('Filter Response')
+    # plot band
+    ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.2)
+    ax2.text(20+np.min(so.inst.y),0.9, 'y')
+    ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.2)
+    ax2.text(50+np.min(so.inst.J),0.9, 'J')
+    ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.2)
+    ax2.text(50+np.min(so.inst.H),0.9, 'H')
+    ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.2)
+    ax2.text(50+np.min(so.inst.K),0.9, 'K')
+    ax2.set_ylim(0,1)
+
+
+    fig, ax = plt.subplots(1,1, figsize=(8,5))  
+    ax.plot(v,skybg)
+    ax.set_xlim(900,2500)
+    ax.set_ylim(0,0.5)
+    ax.set_xlabel('Wavelength (nm)')
+    ax.set_ylabel('Sky Bg (e-/s/pix)')
+    ax2 = ax.twinx()
+    #ax2.fill_between(so.filt.v,so.filt.s,facecolor='gray',edgecolor='black',alpha=0.2)
+    #ax2.set_ylabel('Filter Response')
+    # plot band
+    ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.2)
+    ax2.text(20+np.min(so.inst.y),0.9, 'y')
+    ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.2)
+    ax2.text(50+np.min(so.inst.J),0.9, 'J')
+    ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.2)
+    ax2.text(50+np.min(so.inst.H),0.9, 'H')
+    ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.2)
+    ax2.text(50+np.min(so.inst.K),0.9, 'K')
+    ax2.set_ylim(0,1)
 

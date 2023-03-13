@@ -8,7 +8,6 @@ from scipy import signal
 from scipy import signal, interpolate
 import matplotlib.pylab as plt
 
-import throughput_tools
 all = {}
 
 def get_tip_tilt_resid(Vmag, mode):
@@ -47,9 +46,36 @@ def get_HO_WFE(Vmag, mode):
 
 
 def calc_strehl(wfe,wavelength):
+    """
+    wfe: nm
+    wavelength: nm
+    """
     strehl = np.exp(-(2*np.pi*wfe/wavelength)**2)
 
     return strehl
+
+def tt_to_strehl(tt,lam,D):
+    """
+    convert tip tilt residuals in mas to strehl according to Rich's equation
+    
+    equation 4.60 from Hardy 1998 (adaptive optics for astronomy) matches this
+
+    lam: nm
+        wavelength(s)
+    D: m
+        telescope diameter
+    tt: mas
+        tip tilt rms
+    """
+    tt_rad = tt * 1e-3/206265 # convert to radians from mas
+    lam_m =lam * 1e-9
+    bottom = 1 + np.pi**2/2*((tt_rad)/(lam_m/D))**2
+    strehl_tt = 1/bottom
+
+    #sig_D = 0.44* lam_m/D
+    #1/(1 + tt_rad**2/sig_D**2) KAON1322 doc eq 5 method matches Richs eqn
+
+    return strehl_tt
 
 def plot_wfe():
     """
@@ -61,11 +87,11 @@ def plot_wfe():
     f = pd.read_csv(so.ao.ho_wfe_set,header=[0,1])
     ftt = pd.read_csv(so.ao.ttdynamic_set,header=[0,1])
     #modes    = [''LGS_100H_130','LGS_100J_130']
-    modes    = ['100JH','80J','80H','100K','SH','LGS_100H_130','LGS_100J_130','LGS_100J_45','LGS_STRAP_130','LGS_STRAP_45']
-    modes2   = ['NGS', 'NGS', 'NGS','NGS','NGS','','','','','']
-    linestyles = ['-','-','-','-','-','--','--','--','-.','-.']
-    colors   = ['m','b','orange','gray','g','r','c','b','gray','black']
-    widths   = [1, 1.5,  1,    1, 1.5,2, 1.5,1.5,  1, 1]
+    modes    = ['80J','80H','100K','SH','LGS_100H_130','LGS_100J_130','LGS_100J_45','LGS_STRAP_130','LGS_STRAP_45']
+    modes2   = [ 'NGS', 'NGS','NGS','NGS','','','','','']
+    linestyles = ['-','-','-','-','--','--','--','-.','-.']
+    colors   = ['b','orange','gray','g','r','c','b','gray','black']
+    widths   = [1.5,  1,    1, 1.5,2, 1.5,1.5,  1, 1]
     rawmags  = f['mag'].values.T[0]
     wfes     = []
     tts      = []
@@ -78,7 +104,6 @@ def plot_wfe():
         onemag          = get_band_mag(so,'Johnson',band,so.stel.factor_0) # get magnitude of star in appropriate band
         color           = so.stel.mag - onemag
         mags.append(rawmags + color)
-        #strehl.append(calc_strehl(wfes,so.filt.center_wavelength))
 
     fig, ax = plt.subplots(2,figsize=(7,6),sharex=True)
     for i,mode in enumerate(modes):
@@ -90,7 +115,7 @@ def plot_wfe():
 
     ax[0].set_xlim(0,17.5)
     ax[0].set_ylim(0,20)
-    #ax[0].legend(loc='best',fontsize=10,bbox_to_anchor=(1,1))
+    ax[0].legend(loc='best',fontsize=10,bbox_to_anchor=(1,1))
     ax[0].grid(True)
     ax[0].set_ylabel('Tip Tilt Resid. (mas)')
     ax[1].set_xlabel('%s Mag' %so.filt.band)
@@ -100,6 +125,58 @@ def plot_wfe():
     ax[1].grid(True)
     plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.75)
     ax[0].set_title('%sK Star HAKA WFE Estimate'%int(so.stel.teff))
+
+    plt.savefig('output/ao_modes/AO_modes_Teff_%s.png'%so.stel.teff)
+    #plt.savefig('output/ao_modes/AO_modes_Teff_%s.pdf'%so.stel.teff)
+
+
+def plot_strehl():
+    """
+    """
+    configfile = 'hispec_tracking_camera.cfg'
+    so         = load_object(configfile)
+    cload      = fill_data(so)
+
+    f = pd.read_csv(so.ao.ho_wfe_set,header=[0,1])
+    ftt = pd.read_csv(so.ao.ttdynamic_set,header=[0,1])
+    #modes    = [''LGS_100H_130','LGS_100J_130']
+    modes    = ['80J','80H','100K','SH','LGS_100H_130','LGS_100J_130','LGS_100J_45','LGS_STRAP_130','LGS_STRAP_45']
+    modes2   = [ 'NGS', 'NGS','NGS','NGS','','','','','']
+    linestyles = ['-','-','-','-','--','--','--','-.','-.']
+    colors   = ['b','orange','gray','g','r','c','b','gray','black']
+    widths   = [1.5,  1,    1, 1.5,2, 1.5,1.5,  1, 1]
+    rawmags  = f['mag'].values.T[0]
+    wfes     = []
+    tts      = []
+    mags     = []
+    strehl   = []
+    for mode in modes:
+        wfes.append(f[mode].values.T[0])
+        tts.append(ftt[mode].values.T[0])
+        band            = f[mode].columns[0] # this is the mag band wfe is defined in, must be more readable way..
+        onemag          = get_band_mag(so,'Johnson',band,so.stel.factor_0) # get magnitude of star in appropriate band
+        color           = so.stel.mag - onemag
+        mags.append(rawmags + color)
+        strehl_ho = calc_strehl(f[mode].values.T[0],so.filt.center_wavelength)
+        strehl_tt = tt_to_strehl(ftt[mode].values.T[0],so.filt.center_wavelength,so.inst.tel_diam)
+        strehl.append(strehl_tt*strehl_ho)
+
+    fig, ax = plt.subplots(1,figsize=(7,5),sharex=True)
+    for i,mode in enumerate(modes):
+        iplot = np.where(np.array(wfes[i]) < 500)[0]
+        ax.plot(mags[i][iplot],strehl[i][iplot],label=(modes2[i] + ' ' + mode),linestyle=linestyles[i],lw=widths[i],c=colors[i])
+
+    ax.set_xlim(0,17.5)
+    ax.set_ylim(0,1.1)
+    ax.legend(loc='best',fontsize=10,bbox_to_anchor=(1.5,1))
+    ax.grid(True)
+    ax.set_ylabel('%s Strehl'%so.filt.band)
+    ax.set_xlabel('%s Mag' %so.filt.band)
+
+    plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.7)
+    ax.set_title('%sK Star HAKA Strehl Estimate'%int(so.stel.teff))
+
+    plt.savefig('output/ao_modes/strehl_ao_modes_Teff_%s.png'%so.stel.teff)
 
 
 def get_wfe_landscape():
@@ -119,8 +196,8 @@ def get_wfe_landscape():
         for j,mag in enumerate(magarr):
             print('mag=%s'%mag)
             factor_0 = so.stel.factor_0 * 10**(-0.4*(mag - so.stel.mag))
-            ao_modes = ['SH','LGS_100H_130']
-            #ao_modes = ['SH','80J','LGS_100H_130']
+            ao_modes = ['SH','80J','LGS_100J_130']
+            #ao_modes = ['SH','80J','LGS_100J_130']
             coupling = np.zeros(len(ao_modes))
             for k,ao_mode in enumerate(ao_modes):
                 so.ao.mode=ao_mode
@@ -143,8 +220,8 @@ def get_wfe_landscape():
                 f_ttdynamic     =  interpolate.interp1d(mags,tts, bounds_error=False,fill_value=10000)
                 so.ao.tt_dynamic= float(f_ttdynamic(so.ao.ttdynamic_mag))
                 # get coupling
-                if so.ao.tt_dynamic>9.5:
-                    so.ao.tt_dynamic=9.5
+                if so.ao.tt_dynamic>20:
+                    so.ao.tt_dynamic=20
                 so.inst.coupling, so.inst.strehl = throughput_tools.pick_coupling(so.stel.v,so.ao.ho_wfe,so.ao.tt_static,so.ao.tt_dynamic,points=so.inst.grid_points,values=so.inst.grid_values,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,transmission_path=so.inst.transmission_path) # includes PIAA and HO term
                 coupling[k] = np.median(so.inst.coupling)
             if np.max(coupling)==0: 
@@ -155,8 +232,8 @@ def get_wfe_landscape():
                 best_ao_coupling[i,j] = coupling[np.argmax(coupling)]
                 print('best_mode: %s'%ao_modes[best_ao_mode_arr[i,j]])
 
-    np.save('./output/ao_modes/best2_ao_mode_%smag_[1,15,2]_temps_1000,1500,2300,3000,3600,4200,5800'%so.filt.band,best_ao_mode_arr)
-    np.save('./output/ao_modes/best2_ao_coupling_%smag_[1,15,2]_temps_1000,1500,2300,3000,3600,4200,5800'%so.filt.band,best_ao_coupling)
+    np.save('./output/ao_modes/best_ao_mode_%smag_[1,15,2]_temps_1000,1500,2300,3000,3600,4200,5800'%so.filt.band,best_ao_mode_arr)
+    np.save('./output/ao_modes/best_ao_coupling_%smag_[1,15,2]_temps_1000,1500,2300,3000,3600,4200,5800'%so.filt.band,best_ao_coupling)
 
 
 def plot_planets_ao_modes():

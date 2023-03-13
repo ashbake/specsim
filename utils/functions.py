@@ -171,5 +171,17 @@ def resample(x,y,sig=0.3, dx=0, eta=1,mode='variable'):
             int_lam.append(xcent)
             i += 1
 
+    if mode=='pixels':
+        """
+        reample by binning pixels, sig in pixels now
+        """
+        nsamp = int(sig)
+        tophat  = eta * np.ones(int(nsamp)) # do i need to pad this?
+
+        int_spec_oversample    = signal.fftconvolve(y,tophat,mode='same') # dlam integrating factor
+        
+        int_lam  = x[int(nsamp//2):][::nsamp] # shift over by dx/dlam (npoints) before taking every nsamp point
+        int_spec =  int_spec_oversample[int(nsamp//2):][::nsamp]
+
     return int_lam, int_spec
 

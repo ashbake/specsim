@@ -289,68 +289,109 @@ def plot_rv_grid_2d():
 	"""
 	"""
 	def fmt(x):
-		return str(int(x))
+		return str(float(x)) + 'm/s'
 
 	teffs = [2300,2500, 3000, 3600,4200,5800,6600,8000,9600]
-	magarr = np.arange(0,17,2)
-	ao_modes = ['SH','LGS_STRAP_45','LGS_100J_130']# assuming 100J mean JHgap
+	magarr = np.arange(4,17,1)
+	ao_modes = ['SH','LGS_100J_130']# assuming 100J mean JHgap
+	texp=900.0
 
-	savename_1 = './output/rv_precision/rv_grid_data/rv_error_texp_%ss_ao_%s_teff_%s_%smag.npy' %(900.0,ao_modes[0],teffs,magarr)
-	savename_2 = './output/rv_precision/rv_grid_data/rv_error_texp_%ss_ao_%s_teff_%s_%smag.npy' %(900.0,ao_modes[1],teffs,magarr)
-	savename_3 = './output/rv_precision/rv_grid_data/rv_error_texp_%ss_ao_%s_teff_%s_%smag.npy' %(900.0,ao_modes[2],teffs,magarr)
+	savename_1 = './output/rv_precision/rv_grid_data/rv_error_texp_%ss_ao_%s_teff_%s_%smag.npy' %(texp,ao_modes[0],teffs,magarr)
+	savename_2 = './output/rv_precision/rv_grid_data/rv_error_texp_%ss_ao_%s_teff_%s_%smag.npy' %(texp,ao_modes[1],teffs,magarr)
 	rv_grid_1 = np.load(savename_1)
 	rv_grid_2 = np.load(savename_2)
-	rv_grid_3 = np.load(savename_3)
 
 	# pick max
 	rv_err_grid  = np.zeros((len(teffs), len(magarr))) #best of all ao modes
+	ao_mode_grid  = np.zeros((len(teffs), len(magarr))) #best of all ao modes
 	for ii,teff in enumerate(teffs):
 		for jj,mag in enumerate(magarr): # this is the magnitude in filter band
-			rv_err_grid[ii,jj] = np.min((rv_grid_1[ii,jj],rv_grid_2[ii,jj],rv_grid_3[ii,jj]))
+			rv_err_grid[ii,jj] = np.min((rv_grid_1[ii,jj],rv_grid_2[ii,jj]))
+			ao_mode_grid[ii,jj] = np.argmin((rv_grid_1[ii,jj],rv_grid_2[ii,jj]))
 
 	# resample onto regular grid for imshow
 	rv_err_grid= rv_err_grid.T
+	ao_mode_grid = ao_mode_grid.T
 	rv_err_grid[0,-1] = 0.86
 	extent = (np.min(teffs),np.max(teffs),np.min(magarr),np.max(magarr))
 	rv_err_grid = np.sqrt(rv_err_grid**2 - .25)
 
-	fig, ax = plt.subplots(1,1, figsize=(12,8))	
+	################
+	fig, ax = plt.subplots(1,1, figsize=(11,8))	
 	ax.imshow(rv_err_grid,aspect='auto',origin='lower',\
 				interpolation='quadric',cmap='nipy_spectral',\
-				extent=extent,vmax=100,vmin=.4)
-	cs = ax.contour(rv_err_grid, levels=[1,3,5,10,50] ,\
-				colors=['r'],origin='lower',\
+				extent=extent,norm=matplotlib.colors.LogNorm(vmin=0.5,vmax=300))
+	cs = ax.contour(rv_err_grid, levels=[0.5,1,3,5,10,50,100,200] ,\
+				colors=['w','w','w','w','w','w','w','w'],origin='lower',\
 				extent=extent)
 	ax.invert_yaxis()
 	ax.clabel(cs, cs.levels, inline=True,fmt=fmt,fontsize=10,\
-		colors=['r','r','r','r'],zorder=101)
+		colors=['w','w','w','w','w','w','w','w'],zorder=101)
 
-	c3_1   = cs.collections[1].get_paths()[0].vertices # extract rv 3 curve
-	c3_2   = cs.collections[1].get_paths()[1].vertices # extract rv 3 curve
+	c3_1   = cs.collections[2].get_paths()[0].vertices # extract rv 3 curve
+	c3_2   = cs.collections[2].get_paths()[1].vertices # extract rv 3 curve
 	c3 = np.concatenate((c3_1,c3_2))
 
-	ax.set_ylim(0,16)
+	ax.set_ylim(4,16)
 	ax.set_ylabel('%s Magnitude'%so.filt.band)
-	ax.set_xlabel('Wavelength (nm)')
+	ax.set_xlabel('Temperature (K)')
 
-	ax.set_title('AO Mode: %s, %sband, Teff:%s, t=4hr'%(so.ao.mode,so.filt.band,so.stel.teff))
-	figname = 'snr2d_%s_band_%s_teff_%s_texp_%ss.png' %(so.ao.mode,so.filt.band,so.stel.teff,so.obs.texp)
+	ax.set_title('RV Precision in t=%ss'%(int(texp)))
+	figname = 'snr2d_band_%s_texp_%ss.png' %(so.filt.band,texp)
 	# duplicate axis to plot filter response
-	plt.savefig('./output/snrplots/' + figname)
+
+	# now plot ao_mode_grid
+	def fmt2(x):
+		return 'NGS - LGS Boundary'
+
+	#plt.imshow(ao_mode_grid)
+	cs = ax.contour(ao_mode_grid, levels=[0.5],origin='lower',colors=['r'],\
+				extent=extent)
+	ax.clabel(cs, cs.levels, inline=True,fmt=fmt2,fontsize=10,\
+		colors=['r'],zorder=101)
+	if plot_planets:
+		pl_hmags, pl_teffs,method,rvamps  = load_planets()
+		ax.plot(pl_teffs,pl_hmags,'o',alpha=0.4,c='gray')
+
+		ax.set_xlim(np.min(teffs),np.max(teffs))
+		plt.savefig('./output/rv_precision/plots/planets_ms_' + figname)
+	else:
+		ax.set_xlim(np.min(teffs),np.max(teffs))
+		plt.savefig('./output/rv_precision/plots/' + figname)
 
 	return c3
 
-def run_rv_error_grids(rv_floor=1):
+def load_planets():
+    planets_filename = './data/populations/confirmed_uncontroversial_planets_2023.03.08_14.19.56.csv'
+    planets_filename = './data/populations/rv_less2earthrad_less380Teq_less4000Teff_planets_.csv'
+    planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
+    # add brown dwarfs!
+    hmags = planet_data['sy_hmag']
+    teffs = planet_data['st_teff']
+    rvamps = planet_data['pl_rvamp']
+    method = planet_data['discoverymethod']
+    return hmags,teffs,method,rvamps
+
+
+def load_confirmed_planets():
+	planets_filename = './data/populations/confirmed_planets_PS_2023.01.12_16.07.07.csv'
+	planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
+	# add brown dwarfs!
+	hmags = planet_data['sy_hmag']
+	teffs = planet_data['st_teff']
+	return hmags,teffs
+
+def run_rv_error_grids(rv_floor=0.5):
 	"""
 	run RV grids!
 
 	step through temperature and J mag
 	"""
 	teffs = [2300,2500, 3000, 3600,4200,5800,6600,8000,9600]
-	vsini = [1,2,2.5,2,1,1,2,10,20] # https://aa.oma.be/stellar_rotation but take low end distribution
+	vsini = [1,2,2,2,1,1,2,20,30] # https://aa.oma.be/stellar_rotation but take low end distribution
 	telluric_mask	 = make_telluric_mask(so,cutoff=0.01,velocity_cutoff=10)
 	order_cens, order_inds  = get_order_bounds(so)
-	magarr = np.arange(0,17,2)
+	magarr = np.arange(4,17,1)
 
 	rv_err_grid  = np.zeros((len(teffs), len(magarr)))
 	for ii,teff in enumerate(teffs):
@@ -413,6 +454,8 @@ def plot_temperate_planets_MRI(c3):
 	"""
 	inputs:
 	c3 - contour of rv=3m/s 
+
+	add spirou, ilocater (assume 2 8.4m and combine rvs)
 	"""
 	planets_filename = './data/populations/rv_less2earthrad_less380Teq_less4000Teff_planets_.csv'
 	planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
@@ -436,8 +479,6 @@ def plot_temperate_planets_MRI(c3):
 	# get masses through mass - rad relation
 	mass_est = 0.00314558 * radii**1.81 # 0.003 to jupiter mass , https://www.aanda.org/articles/aa/pdf/2017/08/aa29922-16.pdf  1.81= 1/.55
 	rv_est = 203 * period**(-1/3) * mass_est/(starmass + 9.548*10**-4 * mass_est)**(2/3) #https://exoplanetarchive.ipac.caltech.edu/docs/poet_calculations.html
-
-
 
 	fig, ax = plt.subplots()
 	s = ax.scatter(teffs[itransit],hmags[itransit],c=teq[itransit],s=30*radii[itransit]**2,cmap='RdYlBu_r',ec='k')
@@ -471,9 +512,9 @@ def plot_temperate_planets_MRI(c3):
 	#c3 = plot_rv_grid_2d()
 	#c3 = np.concatenate((np.array([[2300,11.9]]),c3))
 
-	#plt.fill_between(c3[:,0],np.min(magarr),c3[:,1],fc='red',alpha=0.3)
-	plt.fill_between([3000,3800],np.min(magarr),[12,10],fc='red',alpha=0.3)
-	plt.fill_between([2500,3000],np.min(magarr),[12,12],fc='red',alpha=0.3)
+	plt.fill_between(c3[:,0],np.min(magarr),c3[:,1],fc='red',alpha=0.3)
+	#plt.fill_between([3000,3800],np.min(magarr),[12,10],fc='red',alpha=0.3)
+	#plt.fill_between([2500,3000],np.min(magarr),[12,12],fc='red',alpha=0.3)
 	# fill kpf
 
 	#c3_kpf = load_kpf_3ms_line()
@@ -485,126 +526,100 @@ def plot_temperate_planets_MRI(c3):
 	ax.set_ylim(7.8,14)
 	ax.set_xlim(2500,4000)
 
+def get_order_bounds(so):
+	"""
+	given array, return max and mean of snr per order
+	"""
+	order_peaks	  = signal.find_peaks(so.inst.base_throughput,height=0.055,distance=2e4,prominence=0.01)
+	order_cen_lam	= so.stel.v[order_peaks[0]]
+	blaze_angle	  =  76
+	order_indices	=[]
+	for i,lam_cen in enumerate(order_cen_lam):
+		line_spacing = 0.02 if lam_cen < 1475 else 0.01
+		m = np.sin(blaze_angle*np.pi/180) * 2 * (1/line_spacing)/(lam_cen/1000)
+		fsr  = lam_cen/m
+		isub_test= np.where((so.stel.v> (lam_cen - fsr/2)) & (so.stel.v < (lam_cen+fsr/2))) #FINISH THIS
+		#plt.plot(so.stel.v[isub_test],total_throughput[isub_test],'k--')
+		order_indices.append(np.where((so.obs.v > (lam_cen - fsr/2)) & (so.obs.v  < (lam_cen+fsr/2)))[0])
+
+	return order_cen_lam,order_indices
+
+def make_telluric_mask(so,cutoff=0.01,velocity_cutoff=5):
+	telluric_spec = np.abs(so.tel.s/so.tel.rayleigh)**so.tel.airmass
+	telluric_spec[np.where(np.isnan(telluric_spec))] = 0
+	telluric_spec_lores = degrade_spec(so.stel.v, telluric_spec, so.inst.res)
+	# resample onto v array
+	filt_interp	 = interpolate.interp1d(so.stel.v, telluric_spec_lores, bounds_error=False,fill_value=0)
+	s_tel		   = filt_interp(so.obs.v)/np.max(filt_interp(so.obs.v))	# filter profile resampled to phoenix times phoenix flux density
+
+	#cutoff = 0.01 # reject lines greater than 1% depth
+	telluric_mask = np.ones_like(s_tel)
+	telluric_mask[np.where(s_tel < (1-cutoff))[0]] = 0
+	# avoid +/-5km/s  (5pix) around telluric
+	for iroll in range(velocity_cutoff):
+		telluric_mask[np.where(np.roll(s_tel,iroll) < (1-cutoff))[0]] = 0
+		telluric_mask[np.where(np.roll(s_tel,-1*iroll) < (1-cutoff))[0]] = 0
+
+	return telluric_mask
+
+def get_rv_content(v,s,n):
+	"""
+	"""
+	flux_interp = interpolate.InterpolatedUnivariateSpline(v,s, k=1)
+	dflux = flux_interp.derivative()
+	spec_deriv = dflux(v)
+	sigma_ord = np.abs(n) #np.abs(s) ** 0.5 # np.abs(n)
+	sigma_ord[np.where(sigma_ord ==0)] = 1e10
+	all_w = (v ** 2.) * (spec_deriv ** 2.) / sigma_ord ** 2. # include read noise and dark here!!
+	
+	return all_w
+
+def get_rv_precision(all_w,order_cens,order_inds,noise_floor=0.5,mask=None):
+	if np.any(mask==None):
+		mask = np.ones_like(all_w)
+	dv_vals = np.zeros_like(order_cens)
+	for i,lam_cen in enumerate(order_cens):
+		w_ord = all_w[order_inds[i]] * mask[order_inds[i]]
+		dv_order  = SPEEDOFLIGHT / (np.nansum(w_ord[1:-1])**0.5) # m/s
+		dv_vals[i]  = dv_order
+	
+	dv_tot  = np.sqrt(dv_vals**2 + noise_floor**2)
+	dv_spec  = 1. / (np.nansum(1./dv_vals**2.))**0.5
+
+	return dv_tot,dv_spec,dv_tot
 
 
 if __name__=='__main__':
 	#load inputs
-	configfile = 'modhis_rv_err.cfg'
+	configfile = 'hispec_snr_hd189733.cfg'
 	so	= load_object(configfile)
 	cload = fill_data(so) # put coupling files in load and wfe stuff too
 
-	def get_order_bounds(so):
-		"""
-		given array, return max and mean of snr per order
-		"""
-		order_peaks	  = signal.find_peaks(so.inst.base_throughput,height=0.055,distance=2e4,prominence=0.01)
-		order_cen_lam	= so.stel.v[order_peaks[0]]
-		blaze_angle	  =  76
-		order_indices	=[]
-		for i,lam_cen in enumerate(order_cen_lam):
-			line_spacing = 0.02 if lam_cen < 1475 else 0.01
-			m = np.sin(blaze_angle*np.pi/180) * 2 * (1/line_spacing)/(lam_cen/1000)
-			fsr  = lam_cen/m
-			isub_test= np.where((so.stel.v> (lam_cen - fsr/2)) & (so.stel.v < (lam_cen+fsr/2))) #FINISH THIS
-			#plt.plot(so.stel.v[isub_test],total_throughput[isub_test],'k--')
-			order_indices.append(np.where((so.obs.v > (lam_cen - 1.3*fsr/2)) & (so.obs.v  < (lam_cen+1.3*fsr/2)))[0])
-
-		return order_cen_lam,order_indices
-
-	def make_telluric_mask(so,cutoff=0.01,velocity_cutoff=5):
-		telluric_spec = np.abs(so.tel.s/so.tel.rayleigh)**so.tel.airmass
-		telluric_spec[np.where(np.isnan(telluric_spec))] = 0
-		telluric_spec_lores = degrade_spec(so.stel.v, telluric_spec, so.inst.res)
-		# resample onto v array
-		filt_interp	 = interpolate.interp1d(so.stel.v, telluric_spec_lores, bounds_error=False,fill_value=0)
-		s_tel		   = filt_interp(so.obs.v)/np.max(filt_interp(so.obs.v))	# filter profile resampled to phoenix times phoenix flux density
-
-		#cutoff = 0.01 # reject lines greater than 1% depth
-		telluric_mask = np.ones_like(s_tel)
-		telluric_mask[np.where(s_tel < (1-cutoff))[0]] = 0
-		# avoid +/-5km/s  (5pix) around telluric
-		for iroll in range(velocity_cutoff):
-			telluric_mask[np.where(np.roll(s_tel,iroll) < (1-cutoff))[0]] = 0
-			telluric_mask[np.where(np.roll(s_tel,-1*iroll) < (1-cutoff))[0]] = 0
-
-		return telluric_mask
-
-	def get_rv_content(v,s,n):
-		"""
-		"""
-		flux_interp = interpolate.InterpolatedUnivariateSpline(v,s, k=1)
-		dflux = flux_interp.derivative()
-		spec_deriv = dflux(v)
-		sigma_ord = np.abs(n) #np.abs(s) ** 0.5 # np.abs(n)
-		sigma_ord[np.where(sigma_ord ==0)] = 1e10
-		all_w = (v ** 2.) * (spec_deriv ** 2.) / sigma_ord ** 2. # include read noise and dark here!!
-		
-		return all_w
-
-	def get_rv_precision(all_w,order_cens,order_inds,noise_floor=0.5,mask=None):
-		if np.any(mask==None):
-			mask = np.ones_like(all_w)
-		dv_vals = np.zeros_like(order_cens)
-		for i,lam_cen in enumerate(order_cens):
-			w_ord = all_w[order_inds[i]] * mask[order_inds[i]]
-			dv_order  = SPEEDOFLIGHT / (np.nansum(w_ord[1:-1])**0.5) # m/s
-			dv_vals[i]  = dv_order
-		
-		dv_tot  = np.sqrt(dv_vals**2 + noise_floor**2)
-		dv_spec  = 1. / (np.nansum(1./dv_vals**2.))**0.5
-
-		return dv_tot,dv_spec,dv_vals
-
-	# change to use spec_rv_noise_calc in ccd_tools.py
+	# change to use spec_rv_noise_calc in ccf_tools.py
 	order_cens, order_inds  = get_order_bounds(so)
 	telluric_mask		    = make_telluric_mask(so,cutoff=0.01,velocity_cutoff=10)
 	all_w				    = get_rv_content(so.obs.v,so.obs.s,so.obs.noise)
-	dv_tot,dv_spec,dv_vals	= get_rv_precision(all_w,order_cens,order_inds,noise_floor=1,mask=telluric_mask)
+	dv_tot,dv_spec,dv_vals	= get_rv_precision(all_w,order_cens,order_inds,noise_floor=0.5,mask=telluric_mask)
 
 	fig,axs = plot_rv_err(so, order_cens, dv_vals)
-	plot_rv_err_HKonly(so, order_cens, dv_vals,savefig=True)
+	#plot_rv_err_HKonly(so, order_cens, dv_vals,savefig=True)
+
+	#run_rv_error_grids(rv_floor=0.5)
 
 
-	############
-	# LFC!!
-	# make LFC spectrum
-	wvl  = so.obs.v[order_inds[-1]]
-	dlam = 8
-	dfreq = 16 # 16GHz : LFC, 30GhZ etalon
-	dx    = [16,30,5]
-	modes =['freq', 'freq','lam']
 
-	# mask spectrum
-	if mode=='freq':
-		flo,fhi    = SPEEDOFLIGHT/(np.max(wvl)), SPEEDOFLIGHT/(np.min(wvl)) # GHz
-		line_freqs = np.arange(flo,fhi,dfreq)
-		line_wvls  = SPEEDOFLIGHT/line_freqs 
-	if mode=='lam': 
-		line_wvls  = np.arange(np.min(wvl),np.max(wvl),dlam)
-	
-	# make spectrum
-	weights    = np.ones_like(line_wvls)
-	fwhms      = so.inst.sig * so.inst.res_samp
-	spectrum   = 1 - ccf_tools.spec_make(wvl, weights, line_wvls, fwhms)
 
-	# step through snr arr
-	snr_arr = np.array([5.,10,30,50,80,100,500,1000.])
-	rv_arr = np.zeros_like(snr_arr)
-	for i,snr in enumerate(snr_arr):
-		spectrum_phot = spectrum * snr**2
-		#all_w                  = get_rv_content(so.obs.v,spectrum_phot,spectrum_phot**0.5)
-		#dv_tot,dv_spec,dv_vals = get_rv_precision(all_w,order_cens,order_inds,noise_floor=0.5,mask=None)
-		#rv_arr[i] = dv_spec
-		sigma_spec = np.sqrt(spectrum_phot + so.inst.pix_vert * so.inst.readnoise**2)
-		rv_arr[i]  = ccf_tools.spec_rv_noise_calc(wvl, spectrum_phot,sigma_spec) #dv_spec
 
-	# combine orders
-	norders=13
-	rv_arr_norders  = 1. / (norders/(rv_arr**2.))**0.5
+	##########
+	# read noise dependence
+	dv_rn = []
+	rn_arr = np.arange(0,20)
+	for rn in rn_arr:
+		noise = np.sqrt(so.obs.s + rn**2 * so.inst.pix_vert)
+		all_w				    = get_rv_content(so.obs.v,so.obs.s,noise)
+		dv_tot,dv_spec,dv_vals	= get_rv_precision(all_w,order_cens,order_inds,noise_floor=1,mask=telluric_mask)
+		dv_rn.append(dv_spec)
 
-	#ax = plot_rv_err_lfc(snr_arr,rv_arr_norders,ax=None,label=str(dfreq) + 'GHz line spacing')
-	ax = plot_rv_err_lfc(snr_arr,rv_arr_norders,ax=ax,label=str(dfreq) + 'GHz line spacing, 13 orders')
-	#ax = plot_rv_err_lfc(snr_arr,rv_arr_norders,ax=None,label=str(dlam) + 'nm line spacing')
 
 
 

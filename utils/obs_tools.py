@@ -64,18 +64,15 @@ def get_tracking_cam(camera='h2rg',x=None):
     return rn, pixel_pitch, qe_mod, dark, saturation
 
 
-def get_tracking_optics_aberrations(field_x,field_y,camera,ploton=False):
+def get_tracking_optics_aberrations(field_r,camera,ploton=False):
     """
     loads PSF size of tracking optics 
 
     intputs:
     --------
-    field_x (float, 0-3) [arcsec]
-        x position of tracking star on guide camera field
+    field_r (float, 0-3) [arcsec]
+        field radius position of tracking star on guide camera field
     
-    field_y (float, 0-3) [arcsec]
-        y position of tracking star on guide camera field
-
     camera (str, 'h2rg' or 'cred2')
         camera to assume for converting um to pixels
 
@@ -84,7 +81,7 @@ def get_tracking_optics_aberrations(field_x,field_y,camera,ploton=False):
 
     returns:
     -------
-    RMS of the PSF due to optical aberrations in pixels
+    RMS of the PSF due to optical aberrations in pixels (radius rms)
     """
     f = np.loadtxt('./data/WFE/trackingcamera_optics/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt')
     field, rmstot, rms900,rms1000,rms1200,rms1400,rms1600,rms2200  = f.T #field [deg], rms [um]
@@ -92,20 +89,20 @@ def get_tracking_optics_aberrations(field_x,field_y,camera,ploton=False):
 
     # should interpolate across wavelength but theyre not so different so just use 1400nm
     # multiply rms by 2 to get diameter (closer to FWHM)
-    f = interpolate.interp1d(field * 3600, 2*rms1400/pixel_pitch,bounds_error=False,fill_value='extrapolate')
+    f = interpolate.interp1d(field * 3600, rms1400/pixel_pitch,bounds_error=False,fill_value='extrapolate')
 
     if ploton:
         plt.figure()
         # multiply rms by sqrt (2) to get a diagonal cut, multiple by 2 to get diameter
-        plt.plot(field*3600,np.sqrt(2) * 2*rmstot/pixel_pitch,label='total') 
-        plt.plot(field*3600,np.sqrt(2) * 2*rms900/pixel_pitch,label='900nm')
-        plt.plot(field*3600,np.sqrt(2) * 2*rms2200/pixel_pitch,label='2200nm')
+        plt.plot(field*3600,np.sqrt(2) * rmstot/pixel_pitch,label='total') 
+        plt.plot(field*3600,np.sqrt(2) * rms900/pixel_pitch,label='900nm')
+        plt.plot(field*3600,np.sqrt(2) * rms2200/pixel_pitch,label='2200nm')
         plt.xlabel('Field [arcsec]')
-        plt.ylabel('RMS Diameter [pix]')
+        plt.ylabel('RMS Radius [pix]')
         plt.title('Tracking Camera Spot RMS')
         plt.legend()
 
-    return np.sqrt(f(field_x)**2 +f(field_y)**2)#
+    return f(field_r)
 
 
 def get_tracking_band(wave,band):
@@ -157,7 +154,7 @@ def get_tracking_band(wave,band):
 
     return bandpass, center_wavelength
 
-def get_fwhm(wfe,tt_resid,wavelength,diam,platescale,field = [0,0],camera='h2rg',getall=False):
+def get_fwhm(wfe,tt_resid,wavelength,diam,platescale,field_r=0,camera='h2rg',getall=False):
     """
     combine DL by strehlt and tip/tilt error and off axis
 
@@ -168,7 +165,10 @@ def get_fwhm(wfe,tt_resid,wavelength,diam,platescale,field = [0,0],camera='h2rg'
 
     to do:
     update fwhm_tt and fwhm_offaxis
+    check how RMS relates to FWHM
     """
+    rms_to_fwhm = 1/0.44 # from KAON, not too off from gaussian 1sig to FWHM factor
+    radius_to_diam = 2
     # get WFE
     strehl = np.exp(-(2*np.pi*wfe/wavelength)**2)
 
@@ -178,14 +178,10 @@ def get_fwhm(wfe,tt_resid,wavelength,diam,platescale,field = [0,0],camera='h2rg'
     fwhm_ho = diffraction_spot_pix / strehl**(1/4) # 1/strehl**.25 from dimitri, to account for broadening deviation from diffraction limit
 
     # Tip Tilt FWHM in pixels
-    fwhm_tt = tt_resid*1e-3/platescale 
+    fwhm_tt = rms_to_fwhm * tt_resid*1e-3/platescale 
 
     # FWHM from off axis aberrations in camera optics
-    #fwhm_offaxis=np.max([0.5,offaxis *4]) # [pix] if off axis input is 1, assume at edge of field where RMS is 4 pix
-    field_x,field_y  = field
-    fwhm_offaxis     = get_tracking_optics_aberrations(field_x,field_y,camera)
-    # ^ need to use mm instead of 4pix, and load camera pixel pitch
-    # ^ also should just load the curve from Mitsuko of RMS diameter vs field angle
+    fwhm_offaxis     = radius_to_diam * get_tracking_optics_aberrations(field_r,camera) # times to to get radius
     
     fwhm = np.sqrt(fwhm_tt**2 + fwhm_ho**2 + fwhm_offaxis**2)
 
@@ -210,4 +206,15 @@ def compute_band_photon_counts():
     get_band_mag(so,'SLOAN','uprime_filter',so.stel.factor_0)
 
 
+def air_index_refraction(lam,p,t):
+    """
+    https://iopscience.iop.org/article/10.1088/0026-1394/30/3/004/pdf
+    edlen https://iopscience.iop.org/article/10.1088/0026-1394/2/2/002/pdf 
+    P: torr
+    t: celcius
+    """
+    sig = 10**7/lam * (1e-4) # 1e-4 cm/micron
+    ns = 1 + (1/1e8) * (8342.13 + 2406030*(130 - sig**2)**(-1) + 15997*(38.9 -sig**2)**-1)
+    n = 1 + (p * (ns -1)/ 720.775) * (1 + p*(0.817 - 0.0133*t)*(10**-6))/(1 + 0.0036610*t)
+    return n
 
