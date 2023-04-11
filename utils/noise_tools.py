@@ -15,7 +15,7 @@ all = {'get_sky_bg','get_inst_bg','sum_total_noise','plot_noise_components'}
 
 def get_sky_bg(x,airmass=1.5,pwv=1.5,npix=3,lam0=2000,R=100000,diam=10,area=76,skypath = '../../../../_DATA/sky/'):
     """
-    generate sky background per pixel, default to HIPSEC. Source: DMawet jup. notebook
+    generate sky background per reduced pixel, default to HIPSEC. Source: DMawet jup. notebook
 
     inputs:
     -------
@@ -42,7 +42,7 @@ def get_sky_bg(x,airmass=1.5,pwv=1.5,npix=3,lam0=2000,R=100000,diam=10,area=76,s
 
 def get_inst_bg(x,npix=3,lam0=2000,R=100000,diam=10,area=76):
     """
-    generate sky background per pixel, default to HIPSEC. Source: DMawet jup. notebook
+    generate sky background per reduced pixel, default to HIPSEC. Source: DMawet jup. notebook
 
     inputs:
     -------
@@ -188,14 +188,14 @@ def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg,darknoise,readnoise,npix,n
     sig_flux = np.sqrt(flux)
 
     # background (instrument and sky) - array w/ wavelength matching flux array sampling or integrated over band
-    total_bg = (inst_bg + sky_bg)
+    total_bg = (inst_bg + sky_bg) # per reduced pixel already so dont need to include vertical pixel extent
     sig_bg   = np.sqrt(inst_bg + sky_bg) 
 
-    # read noise  - reduces by number of ramps
+    # read noise  - reduces by number of ramps, limit to 6 at best
     sig_read = np.max((6,(readnoise/np.sqrt(nsamp))))
     
     # dark current - times time and pixels
-    sig_dark = np.sqrt(nsamp * darknoise * npix) #* get dark noise every sample
+    sig_dark = np.sqrt(darknoise * npix * texp) #* get dark noise every sample
     
     noise = np.sqrt(sig_flux **2 + sig_bg**2 + sig_read**2 + sig_dark**2)
 
@@ -204,8 +204,6 @@ def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg,darknoise,readnoise,npix,n
         noise[np.where(noise < noisecap)] = noisecap * flux # noisecap is fraction of flux, 1/noisecap gives max SNR
 
     return noise
-
-
 
 def read_noise(rn,npix):
     """
@@ -218,15 +216,12 @@ def read_noise(rn,npix):
     """
     return np.sqrt(npix * rn**2)
 
-
-
 def plot_noise_components(so):
     """
     plot spectra and transmission so know what we're dealing with
     """
     plt.figure()
     plt.plot(so.stel.v,so.hispec.ytransmit)
-
 
 def plot_bg(so, v,instbg,skybg):
     fig, ax = plt.subplots(1,1, figsize=(8,5))  

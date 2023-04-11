@@ -4,4 +4,5 @@
 ./data/sams_comp_spec.png
 ./output
 ./references
-
+./data/
+utils/__pycache__/

@@ -197,7 +197,7 @@ class fill_data():
 		# define x array to carry everywhere
 		self.x = np.arange(so.inst.l0,so.inst.l1,0.0005)
 		# define bands here
-		so.inst.y=[980,1070]
+		so.inst.y=[980,1100]
 		so.inst.J=[1170,1327]
 		so.inst.H=[1490,1780]
 		so.inst.K=[1990,2460]
@@ -273,7 +273,6 @@ class fill_data():
 			vsini_kernel,_ = _lsf_rotate(dvel_mean,so.stel.vsini,epsilon=0.6)
 			flux_vsini     = convolve(so.stel.s,vsini_kernel,normalize_kernel=True)  # photons / second / Ang
 			so.stel.s      = flux_vsini
-			#****TODO****
 	
 	def telluric(self,so):
 		"""
@@ -292,6 +291,9 @@ class fill_data():
 
 		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['Rayleigh'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
 		so.tel.rayleigh = interpolate.splev(self.x,tck_tel,der=0,ext=1)
+
+		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['O3'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
+		so.tel.o3 = interpolate.splev(self.x,tck_tel,der=0,ext=1)
 
 	def ao(self,so):
 		"""
@@ -330,7 +332,6 @@ class fill_data():
 		else:
 			so.ao.tt_dynamic = so.ao.ttdynamic_set
 
-
 		print('AO mode: %s'%so.ao.mode)
 
 		#so.ao.ho_wfe = get_HO_WFE(so.ao.v_mag,so.ao.mode) #old
@@ -366,22 +367,31 @@ class fill_data():
 		so.inst.sig=sig
 
 		# THROUGHPUT
-		so.inst.base_throughput  = get_base_throughput(x=self.x,datapath=so.inst.transmission_path) # everything except coupling
-		
-		# interp grid
-		try: so.inst.points
-		except AttributeError: 
-			out = grid_interp_coupling(int(so.inst.pl_on),path=so.inst.transmission_path)
-			so.inst.grid_points, so.inst.grid_values = out[0],out[1:] #if PL, three values
-		try:
-			so.inst.coupling, so.inst.strehl = pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,so.ao.tt_dynamic,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values,transmission_path=so.inst.transmission_path) # includes PIAA and HO term
-		except ValueError:
-			# hack here bc tt dynamic often is out of bounds
-			so.inst.coupling, so.inst.strehl = pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,20,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values,transmission_path=so.inst.transmission_path) # includes PIAA and HO term
-			so.inst.notes = 'tt dynamic out of bounds! %smas' %so.ao.tt_dynamic
+		try: # if config has transmission file, use it, otherwise load HISPEC version
+			thput_x, thput_y = np.loadtxt(so.inst.transmission_file,delimiter=',').T
+			if np.max(thput_x) < 5: thput_x*=1000
+			tck_thput   = interpolate.splrep(thput_x,thput_y, k=2, s=0)
+			so.inst.xtransmit   = self.x
+			so.inst.ytransmit   = interpolate.splev(self.x,tck_thput,der=0,ext=1)
+			so.inst.base_throughput = so.inst.ytransmit.copy() # store this here bc ya
+			#add airmass calc for strehl for seeing limited instrument
+		except:
+			so.inst.base_throughput  = get_base_throughput(x=self.x,datapath=so.inst.transmission_path) # everything except coupling
+			
+			# interp grid
+			try: so.inst.points
+			except AttributeError: 
+				out = grid_interp_coupling(int(so.inst.pl_on),path=so.inst.transmission_path)
+				so.inst.grid_points, so.inst.grid_values = out[0],out[1:] #if PL, three values
+			try:
+				so.inst.coupling, so.inst.strehl = pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,so.ao.tt_dynamic,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values,transmission_path=so.inst.transmission_path) # includes PIAA and HO term
+			except ValueError:
+				# hack here bc tt dynamic often is out of bounds
+				so.inst.coupling, so.inst.strehl = pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,20,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values,transmission_path=so.inst.transmission_path) # includes PIAA and HO term
+				so.inst.notes = 'tt dynamic out of bounds! %smas' %so.ao.tt_dynamic
 
-		so.inst.xtransmit = self.x
-		so.inst.ytransmit = so.inst.base_throughput* so.inst.coupling * so.ao.pywfs_dichroic
+			so.inst.xtransmit = self.x
+			so.inst.ytransmit = so.inst.base_throughput* so.inst.coupling * so.ao.pywfs_dichroic
 
 	def observe(self,so):
 		"""
@@ -412,15 +422,25 @@ class fill_data():
 		so.obs.s_frame *=so.inst.extraction_frac # extraction fraction, reduce photons
 		so.obs.s =  so.obs.s_frame * so.obs.nframes
 
-		# load background! spectrum
-		so.obs.sky_bg_ph    = noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
+		# resample throughput for applying to sky background
+		base_throughput_interp= interpolate.interp1d(so.inst.xtransmit,so.inst.base_throughput)
+
+		# load background spectrum - sky is top of telescope and will be reduced by inst BASE throughput. Coupling already accounted for in solid angle of fiber. Does inst bkg need throughput applied?
+		so.obs.sky_bg_ph    = base_throughput_interp(so.obs.v) * noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
 		so.obs.inst_bg_ph   = noise_tools.get_inst_bg(so.obs.v,npix=so.inst.pix_vert,lam0=2000,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area)
 
 		# calc noise
-		noise_frame  = noise_tools.sum_total_noise(so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
+		if so.inst.pl_on: # 3 port lantern hack
+			noise_frame_yJ  = np.sqrt(3) * noise_tools.sum_total_noise(so.obs.s_frame/3,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
+			noise_frame     = noise_tools.sum_total_noise(so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
+			yJ_sub          = np.where(so.obs.v < 1400)[0]
+			noise_frame[yJ_sub] = noise_frame_yJ[yJ_sub] # fill in yj with sqrt(3) times noise in PL case
+		else:
+			noise_frame  = noise_tools.sum_total_noise(so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
+		
 		noise_frame[np.where(np.isnan(noise_frame))] = np.inf
 		noise_frame[np.where(noise_frame==0)] = np.inf
-
+		
 		so.obs.noise_frame = noise_frame
 		so.obs.noise = np.sqrt(so.obs.nframes)*noise_frame
 
@@ -455,37 +475,42 @@ class fill_data():
 		so.track.fwhm = float(obs_tools.get_fwhm(so.ao.ho_wfe,so.ao.tt_dynamic,so.track.center_wavelength,so.inst.tel_diam,so.track.platescale,field_r=so.track.field_r,camera=so.track.camera,getall=False))
 		so.track.fwhm_units = 'pixel'
 		print('Tracking FWHM=%spix'%so.track.fwhm)
+		
+		so.track.strehl = np.exp(-(2*np.pi*so.ao.ho_wfe/so.track.center_wavelength)**2)
 
 		# get sky background and instrument background, spec is ph/nm/s, fwhm must be in arcsec
 		so.track.sky_bg_spec = noise_tools.get_sky_bg_tracking(self.x,so.track.fwhm*so.track.platescale,airmass=so.tel.airmass,pwv=so.tel.pwv,area=so.inst.tel_area,skypath=so.tel.skypath)
-		so.track.sky_bg_ph   = so.track.texp * np.trapz(so.track.sky_bg_spec * so.track.bandpass,self.x)
+		so.track.sky_bg_ph   = so.track.texp * np.trapz(so.track.sky_bg_spec * so.track.bandpass * so.track.ytransmit,self.x) # sky bkg needs mult by throughput and bandpass profile
 
 		so.track.inst_bg_spec = noise_tools.get_inst_bg_tracking(self.x,so.track.fwhm * so.track.platescale,area=76)
-		so.track.inst_bg_ph   = so.track.texp * np.trapz(so.track.inst_bg_spec * so.track.bandpass,self.x)
+		so.track.inst_bg_ph   = so.track.texp * np.trapz(so.track.inst_bg_spec * so.track.bandpass,self.x) # inst background needs multiplied by bandpass, inst throughput included in emissivities (i think)
 
 		# get photons in band
 		so.track.signal_spec = so.stel.s * so.track.texp *\
 		 			so.inst.tel_area * so.track.ytransmit*\
-		 			np.abs(so.tel.s)**so.tel.airmass
+		 			np.abs(so.tel.s)
 	
 		so.track.nphot = np.trapz(so.track.signal_spec * so.track.bandpass,so.stel.v)
 		print('Tracking photons: %s e-'%so.track.nphot)
 
 		# get noise
 		npix = np.pi * so.track.fwhm**2
-		so.track.noise = noise_tools.sum_total_noise(so.track.nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark*so.track.texp,so.track.rn,npix)
+		so.track.noise = noise_tools.sum_total_noise(so.track.nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,npix)
 		print('Tracking noise: %s e-'%so.track.noise)
 		so.track.snr = so.track.nphot/so.track.noise 
 		
-		so.track.strehl = np.exp(-(2*np.pi*so.ao.ho_wfe/so.track.center_wavelength)**2)
-		so.track.centroid_err = (1/np.pi) * so.track.fwhm/(so.track.strehl* so.track.snr) 
 
-		if so.track.strehl*so.track.nphot/npix > 0.9*so.track.saturation:
-			nphot_capped = 0.8*so.inst.saturation * npix/so.track.strehl # cap nphot
-			noise_capped = 		so.track.noise = noise_tools.sum_total_noise(nphot_capped,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark*so.track.texp,so.track.rn,npix)
-			snr_capped = nphot_capped/noise_capped
+		# get centroid error, cap if saturated
+		if so.track.strehl*so.track.nphot/npix > so.track.saturation:
+			nphot_capped = so.inst.saturation * npix/so.track.strehl # cap nphot
+			noise_capped = noise_tools.sum_total_noise(nphot_capped,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,npix)
+			snr_capped   = nphot_capped/noise_capped
 			so.track.centroid_err = (1/np.pi) * so.track.fwhm/(so.track.strehl* snr_capped)  # same fwhm but snr is reduced to not saturate like if used an ND filter
-			so.track.notes = 'saturated! nphot capped at %s'%round(nphot_capped)
+			so.track.noise  = noise_capped
+			so.track.snr    = snr_capped
+			so.track.signal = nphot_capped
+		else:
+			so.track.centroid_err = (1/np.pi) * so.track.fwhm/(so.track.strehl* so.track.snr) 
 
 	def set_teff_aomode(self,so,temp,aomode,trackonly=False):
 		"""

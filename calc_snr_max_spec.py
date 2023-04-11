@@ -17,88 +17,11 @@ from functions import *
 from noise_tools import get_sky_bg, get_inst_bg, sum_total_noise
 from throughput_tools import pick_coupling, get_band_mag, get_base_throughput
 from wfe_tools import get_tip_tilt_resid, get_HO_WFE
+import plot_tools,obs_tools
 
 plt.ion()
 
-def get_order_snrs(so,v,snr):
-	"""
-	given array, return max and mean of snr per order
-	"""
-	order_peaks      = signal.find_peaks(so.inst.base_throughput,height=0.055,distance=2e4,prominence=0.01)
-	order_cen_lam    = so.stel.v[order_peaks[0]]
-	blaze_angle      =  76
-	snr_peaks = []
-	snr_means = []
-	for i,lam_cen in enumerate(order_cen_lam):
-		line_spacing = 0.02 if lam_cen < 1475 else 0.01
-		m = np.sin(blaze_angle*np.pi/180) * 2 * (1/line_spacing)/(lam_cen/1000)
-		fsr  = lam_cen/m
-		isub_test= np.where((so.stel.v> (lam_cen - fsr/2)) & (so.stel.v < (lam_cen+fsr/2))) #FINISH THIS
-		#plt.plot(so.stel.v[isub_test],total_throughput[isub_test],'k--')
-		sub_snr = snr[np.where((v > (lam_cen - 1.3*fsr/2)) & (v < (lam_cen+1.3*fsr/2)))[0]] #FINISH THIS]
-		snr_peaks.append(np.nanmax(sub_snr))
-		snr_means.append(np.nanmean(sub_snr))
-
-	return np.array(order_cen_lam), np.array(snr_peaks), np.array(snr_means)
-
-def plot_snr_one(so):
-	"""
-	"""
-	fig, ax = plt.subplots(1,1, figsize=(10,8))	
-	ax.plot(so.obs.v,so.obs.snr)
-	ax.set_ylabel('SNR')
-	ax.set_xlabel('Wavelength (nm)')
-	ax.set_title('AO Mode: %s, %s=%s, t=4hr'%(so.ao.mode,so.filt.band,int(so.stel.mag)))
-	ax.axhline(y=30,color='k',ls='--')
-	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.stel.mag,so.obs.texp,so.inst.darknoise)
-	plt.legend()
-	# duplicate axis to plot filter response
-	ax2 = ax.twinx()
-	#ax2.fill_between(so.filt.v,so.filt.s,facecolor='gray',edgecolor='black',alpha=0.2)
-	#ax2.set_ylabel('Filter Response')
-	# plot band
-	ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.1)
-	ax2.text(20+np.min(so.inst.y),0.9, 'y')
-	ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.1)
-	ax2.text(50+np.min(so.inst.J),0.9, 'J')
-	ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.1)
-	ax2.text(50+np.min(so.inst.H),0.9, 'H')
-	ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.1)
-	ax2.text(50+np.min(so.inst.K),0.9, 'K')
-	ax2.set_ylim(0,1)
-	ax.set_xlim(970,2500)
-	plt.savefig('./output/snrplots/' + figname)
-
-def plot_snr_peaks(so):
-	"""
-	"""
-	cen_lam, snr_peaks,snr_means = get_order_snrs(so,so.obs.v_resamp,so.obs.snr_reselement)
-
-	fig, ax = plt.subplots(1,1, figsize=(8,6))	
-	ax.plot(cen_lam, snr_peaks,lw=2)
-	ax.set_ylabel('SNR')
-	ax.set_xlabel('Wavelength (nm)')
-	ax.set_title('AO Mode: %s, T$_{eff}$=%sK, %s=%s, t=%shr'%(so.ao.mode,so.stel.teff,so.filt.band,so.stel.mag,round(so.obs.texp/3600,2)))
-	#ax.axhline(y=30,color='k',ls='--')
-	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.stel.mag,so.obs.texp,so.inst.darknoise)
-
-	# duplicate axis to plot filter response
-	# plot band
-	ax.fill_between(so.inst.y,0,np.max(snr_peaks)+10,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(20+np.min(so.inst.y),9, 'y')
-	ax.fill_between(so.inst.J,0,np.max(snr_peaks)+10,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.J),9, 'J')
-	ax.fill_between(so.inst.H,0,np.max(snr_peaks)+10,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.H),9, 'H')
-	ax.fill_between(so.inst.K,0,np.max(snr_peaks)+10,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.K),9, 'K')
-	ax.set_xlim(970,2500)
-	ax.set_ylim(0,np.max(snr_peaks)+10)
-	ax.fill_between([1333,1500],0,np.max(snr_peaks)+10,facecolor='white',zorder=100)
-
-	plt.savefig('./output/snrplots/' + figname)
-
-
+# PLOT FROM DATA RUN
 def plot_snr_teff(so, temp_arr,snr_arr):
 	"""
 	"""
@@ -134,7 +57,7 @@ def plot_snr_mag_peaks(so, mag_arr,v,snr_arr,mode='max'):
 	"""
 	fig, ax = plt.subplots(1,1, figsize=(10,8))	
 	for i,mag in enumerate(mag_arr):
-		cen_lam, snr_peaks,snr_means = get_order_snrs(so,v,snr_arr[i])
+		cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so,v,snr_arr[i])
 		if mode=='max':
 			ax.semilogy(cen_lam,snr_peaks,'-o',label='m=%s'%mag)
 		elif mode=='mean':
@@ -171,7 +94,7 @@ def plot_snr_mag_peaks_2d(so, mag_arr,v,snr_arr,xextent=[980,2460],mode='max'):
 
 	snr_arr_order= []
 	for i,mag in enumerate(mag_arr):
-		cen_lam, snr_peaks,snr_means = get_order_snrs(so,v,snr_arr[i])
+		cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so,v,snr_arr[i])
 		if mode=='max':
 			#ax.plot(cen_lam,snr_peaks,label='m=%s'%mag)
 			snr_arr_order.append(snr_peaks)
@@ -227,7 +150,7 @@ def plot_snr_teff_peaks(so, temp_arr,v,snr_arr,xextent=[980,2460],yextent=[0,100
 	"""
 	fig, ax = plt.subplots(1,1, figsize=(10,8))	
 	for i,temp in enumerate(temp_arr):
-		cen_lam, snr_peaks,snr_means = get_order_snrs(so,v,snr_arr[i])
+		cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so,v,snr_arr[i])
 		if mode=='max':
 			ax.plot(cen_lam,snr_peaks,label='T=%sK'%temp)
 		elif mode=='mean':
@@ -285,124 +208,52 @@ def plot_noise_teff(v,n_arr,temp_arr):
 	figname = 'throughput_%s_%smag_%s_Teff_%s_texp_%ss.png' %(mode,so.filt.band,so.stel.mag,so.stel.teff,int(so.obs.texp_frame*nframes))
 	#plt.savefig('./output/snrplots/' + figname)
 
-def plot_cool_stars():
-	planets_filename = './data/populations/rv_less2earthrad_less360Teq_less4000Teff_planets_.csv'
-	planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
-
-	hmags = planet_data['sy_hmag']
-	teffs = planet_data['st_teff']
-	mass = planet_data['pl_bmassj']
-	teq  = planet_data['pl_eqt']
-	names = planet_data['pl_name']
-	hostnames = planet_data['hostname']
-	rvamps = planet_data['pl_rvamp']
-
-	plt.scatter(teffs,hmags)
-
-def plot_brown_dwarfs():
+def plot_median_bin_snr(so):
 	"""
+	need so to make this work bc need so.obs.v
 	"""
-	bd_filename = './data/populations/UltracoolSheetMain.csv'
-	bd_data =  pd.read_csv(bd_filename,delimiter=',',comment='#')
-
-	#sp_type = bd_data['spt_opt']
-	sp_type = bd_data['spt_ir']
-	hmags = bd_data['H_MKO']
-	#jmags = bd_data['J_2MASS']
-	jmags = bd_data['J_MKO']
-	W1    = bd_data['W1']
-	W2    = bd_data['W2']
-	sp  =[]
-	for x in sp_type.values:
-		if type(x)==str: 
-			sp.append(x[0:2])
-		else:
-			sp.append(0)
-
-	teffs = np.zeros_like(sp_type,dtype=float)
-	teffs[np.where(sp_type.values=='M6')[0]] = 2600
-	teffs[np.where(sp_type.values=='M7')[0]] = 2400
-	teffs[np.where(sp_type.values=='M8')[0]] = 2200
-	teffs[np.where(sp_type.values=='M9')[0]] = 2100
-	teffs[np.where(sp_type.values=='L0')[0]] = 2000
-	teffs[np.where(sp_type.values=='L1')[0]] = 1950
-	teffs[np.where(sp_type.values=='L2')[0]] = 1900
-	teffs[np.where(sp_type.values=='L3')[0]] = 1850
-	teffs[np.where(sp_type.values=='L4')[0]] = 1800
-	teffs[np.where(sp_type.values=='L5')[0]] = 1750
-	teffs[np.where(sp_type.values=='L6')[0]] = 1700
-	teffs[np.where(sp_type.values=='L7')[0]] = 1600
-	teffs[np.where(sp_type.values=='L8')[0]] = 1500
-	teffs[np.where(sp_type.values=='T1')[0]] = 1300
-	teffs[np.where(sp_type.values=='T2')[0]] = 1200
-	teffs[np.where(sp_type.values=='T3')[0]] = 1100
-	teffs[np.where(sp_type.values=='T4')[0]] = 1000
-	teffs[np.where(sp_type.values=='T5')[0]] = 900
-	teffs[np.where(sp_type.values=='T6')[0]] = 800
+	#temps were 3600 for this
+	mag_arr = np.arange(5,16,1)
+	bands = ['y','J','H','K']
+	xextents= [so.inst.y,so.inst.J,so.inst.H,so.inst.K]
 
 	plt.figure()
-	plt.hist(hmags,bins=100,alpha=0.7)
+	for i,band in enumerate(bands):
+		f = np.load('./output/snr/snr_arr_mag_teff_%s_band_%s.npy'%(3600,band))
+		new_f = []
+		for j,mag in enumerate(mag_arr): 
+			new_v, temp_f, _ = obs_tools.get_order_value(so,so.obs.v,f[j])
+			new_f.append(temp_f)
+		new_f = np.array(new_f)
+		iband = np.where((new_v > xextents[i][0]) & (new_v <xextents[i][1]))[0]
+		plt.semilogy(mag_arr,np.sqrt(3)*np.median(new_f[:,iband],axis=1),label=band)
+	plt.plot(mag_arr,mag_arr*0 + 30,'k--')
+	plt.legend()
+	plt.xlabel('Magnitude')
+	plt.ylabel('SNR per Resolution Element')
+
 
 	plt.figure()
-	plt.plot(hmags,teffs,'o',alpha=0.8)
-	plt.xlabel('H Mag')
-	plt.ylabel('T$_{eff}$ (K)')
-	plt.subplots_adjust(left=0.15)
+	for i,band in enumerate(bands):
+		f = np.load('./output/snr/snr_arr_mag_teff_%s_band_%s.npy'%(3600,band))
+		iband = np.where((so.obs.v > xextents[i][0]) & (so.obs.v <xextents[i][1]))[0]
+		plt.semilogy(mag_arr,np.sqrt(3)*np.median(f[:,iband],axis=1),label=band)
+	plt.plot(mag_arr,mag_arr*0 + 30,'k--')
+	plt.legend()
+	plt.xlabel('Magnitude')
+	plt.ylabel('Median bin SNR')
 
-def plot_basethroughput(so):
-	"""
-	"""
-	fig, ax = plt.subplots(1,1, figsize=(10,8))	
-	ax.plot(so.inst.xtransmit,so.inst.base_throughput)
-	peak = np.max(so.inst.base_throughput)
+	my_xticks = mag_arr
+	plt.xticks(mag_arr, mag_arr)
 
-	ax.set_ylabel('Base Throughput')
-	ax.set_xlabel('Wavelength (nm)')
-	ax.axhline(y=30,color='k',ls='--')
-	figname = 'base_throughput.png' 
-	# duplicate axis to plot filter response
-	# plot band
-	ax.fill_between(so.inst.y,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(20+np.min(so.inst.y),9, 'y')
-	ax.fill_between(so.inst.J,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.J),9, 'J')
-	ax.fill_between(so.inst.H,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.H),9, 'H')
-	ax.fill_between(so.inst.K,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.K),9, 'K')
-	ax.set_xlim(970,2500)
+	my_yticks = [10,100,1000]
+	plt.yticks(my_yticks,my_yticks)
+	plt.subplots_adjust(left=0.15,bottom=0.15)
 	plt.grid()
-	ax.set_ylim(0,peak)
-	#plt.savefig('./output/throughput/' + figname)
+	plt.text(6,33,'SNR=30')
+	plt.savefig('./output/snr/median_bin_snr_per_band.png')
 
-def plot_throughput(so):
-	"""
-	"""
-	fig, ax = plt.subplots(1,1, figsize=(10,8))	
-	ax.plot(so.inst.xtransmit,so.inst.ytransmit)
-	ax.plot(so.inst.xtransmit,so.inst.coupling)
-	peak = np.max(so.inst.coupling)
-
-	ax.set_ylabel('Base Throughput')
-	ax.set_xlabel('Wavelength (nm)')
-	ax.axhline(y=30,color='k',ls='--')
-	figname = 'total_throughput.png' 
-	# duplicate axis to plot filter response
-	# plot band
-	ax.fill_between(so.inst.y,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(20+np.min(so.inst.y),9, 'y')
-	ax.fill_between(so.inst.J,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.J),9, 'J')
-	ax.fill_between(so.inst.H,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.H),9, 'H')
-	ax.fill_between(so.inst.K,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.K),9, 'K')
-	ax.set_xlim(970,2500)
-	plt.grid()
-	ax.set_ylim(0,peak)
-	#plt.savefig('./output/throughput/' + figname)
-
-
+###############
 def run_snr_v_mag(teff=3600):
 	"""
 	"""
@@ -461,73 +312,19 @@ def run_snr_v_teff(mag=15):
 	#plot_noise(so.obs.v,n_arr,temp_arr)
 	return temp_arr,snr_arr,s_arr,n_arr,c_arr,snr_reselement
 
-
-def median_bin_snr(so):
-	"""
-	need so to make this work bc need so.obs.v
-	"""
-	#temps were 3600 for this
-	mag_arr = np.arange(5,16,1)
-	bands = ['y','J','H','K']
-	xextents= [so.inst.y,so.inst.J,so.inst.H,so.inst.K]
-
-	plt.figure()
-	for i,band in enumerate(bands):
-		f = np.load('./output/snr/snr_arr_mag_teff_%s_band_%s.npy'%(3600,band))
-		new_f = []
-		for j,mag in enumerate(mag_arr): 
-			new_v, temp_f, _ = get_order_snrs(so,so.obs.v,f[j])
-			new_f.append(temp_f)
-		new_f = np.array(new_f)
-		iband = np.where((new_v > xextents[i][0]) & (new_v <xextents[i][1]))[0]
-		plt.semilogy(mag_arr,np.sqrt(3)*np.median(new_f[:,iband],axis=1),label=band)
-	plt.plot(mag_arr,mag_arr*0 + 30,'k--')
-	plt.legend()
-	plt.xlabel('Magnitude')
-	plt.ylabel('SNR per Resolution Element')
-
-
-	plt.figure()
-	for i,band in enumerate(bands):
-		f = np.load('./output/snr/snr_arr_mag_teff_%s_band_%s.npy'%(3600,band))
-		iband = np.where((so.obs.v > xextents[i][0]) & (so.obs.v <xextents[i][1]))[0]
-		plt.semilogy(mag_arr,np.sqrt(3)*np.median(f[:,iband],axis=1),label=band)
-	plt.plot(mag_arr,mag_arr*0 + 30,'k--')
-	plt.legend()
-	plt.xlabel('Magnitude')
-	plt.ylabel('Median bin SNR')
-
-	my_xticks = mag_arr
-	plt.xticks(mag_arr, mag_arr)
-
-	my_yticks = [10,100,1000]
-	plt.yticks(my_yticks,my_yticks)
-	plt.subplots_adjust(left=0.15,bottom=0.15)
-	plt.grid()
-	plt.text(6,33,'SNR=30')
-	plt.savefig('./output/snr/median_bin_snr_per_band.png')
-
-
 if __name__=='__main__':
 	#load inputs
-	configfile = 'hispec_snr.cfg'
+	configfile = './configs/hispec_snr_bspec.cfg'
 	so    = load_object(configfile)
 	cload = fill_data(so) # put coupling files in load and wfe stuff too
-	#plot_throughput(so)
 
-	plot_snr_peaks(so)
+	plot_tools.plot_snr_orders(so,snrtype=1,mode='peak')
 
-
-def run_arrays():
-	"""
-	dumb fnct so these dont run
-	"""
-
-	mag_arr,snr_arr,s_arr,n_arr,c_arr,snr_reselement= run_snr_v_mag(teff=3600)
-	#np.save('./output/snr/snr_arr_mag_teff_%s_band_%s'%(so.stel.teff,so.filt.band),snr_arr)
+	# mag_arr,snr_arr,s_arr,n_arr,c_arr,snr_reselement= run_snr_v_mag(teff=3600)
+	# np.save('./output/snr/snr_arr_mag_teff_%s_band_%s'%(so.stel.teff,so.filt.band),snr_arr)
 	
 
-	xextent = so.inst.y
+	#xextent = so.inst.y
 
 	#plot_snr_mag_peaks_2d(so, mag_arr,so.obs.v_resamp,snr_reselement,xextent=xextent,mode='max')
 	#temp_arr,snr_arr,s_arr,n_arr,c_arr,snr_reselement2 = run_snr_v_teff(mag=15)

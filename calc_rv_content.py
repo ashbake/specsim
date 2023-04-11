@@ -112,8 +112,8 @@ def plot_rv_err(so, lam_cen, dv_vals,savefig=True):
 	rvmed_hk = np.median(dv_vals[np.where((dv_vals!=np.inf) & (order_cens > 1400))[0]])
 	dv_yj = 1. / (np.nansum(1./sub_yj**2.))**0.5	# 
 	dv_hk = 1. / (np.nansum(1./sub_hk**2.))**0.5	# 
-	dv_yj_tot = (0.5**2 +dv_yj**2.)**0.5	# 
-	dv_hk_tot = (0.5**2 +dv_hk**2.)**0.5	# # 
+	dv_yj_tot = (so.inst.rv_floor**2 +dv_yj**2.)**0.5	# 
+	dv_hk_tot = (so.inst.rv_floor**2 +dv_hk**2.)**0.5	# # 
 
 	axs[1].text(1050,2*np.median(dv_vals),'$\sigma_{yJ}$=%sm/s'%round(dv_yj_tot,1),fontsize=12,zorder=101)
 	axs[1].text(1500,2*np.median(dv_vals),'$\sigma_{HK}$=%sm/s'%round(dv_hk_tot,1),fontsize=12,zorder=101)
@@ -122,6 +122,39 @@ def plot_rv_err(so, lam_cen, dv_vals,savefig=True):
 		plt.savefig('./output/rv_precision/RV_precision_%sK_%smag%s_%ss_vsini%skms.png'%(so.stel.teff,so.filt.band,so.stel.mag,so.obs.texp,so.stel.vsini))
 
 	return fig,axs
+
+def plot_rv_err_agnostic(so, lam_cen, dv_vals,savefig=True):
+	"""
+	not specific to hispec
+	"""
+	col_table = plt.get_cmap('Spectral_r')
+	fig, axs = plt.subplots(2,figsize=(7,7),sharex=True)
+	plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.85,top=0.85)
+
+	axs[1].grid('True')
+	#axs[1].set_ylim(-0,3*np.median(dv_vals))
+	axs[1].set_ylabel('$\sigma_{RV}$ [m/s]')
+	axs[1].set_xlabel('Wavelength [nm]')
+
+	axs[0].set_ylabel('SNR')
+	axs[0].set_title('M$_%s$=%s, T$_{eff}$=%sK,\n ($t_{exp}$=%ss), vsini=%skm/s'%(so.filt.band,so.stel.mag,int(so.stel.teff),int(so.obs.texp),so.stel.vsini))
+
+	axs[0].grid('True')
+	ax2 = axs[0].twinx() 
+	ax2.plot(so.tel.v,so.tel.s,'gray',alpha=0.5,zorder=-100,label='Telluric Absorption')
+	ax2.plot(so.stel.v,so.inst.ytransmit,'k',alpha=0.5,zorder=-100,label='Total Throughput')
+	ax2.set_ylabel('Transmission',fontsize=12)
+	for i,lam_cen in enumerate(order_cens):
+		wvl_norm = (lam_cen - so.inst.l0) / (so.inst.l1 - so.inst.l0)
+		axs[0].plot(so.obs.v[order_inds[i]],so.obs.s[order_inds[i]]/so.obs.noise[order_inds[i]],zorder=200,color=col_table(wvl_norm))
+		axs[1].plot(lam_cen,dv_vals[i],'o',zorder=100,color=col_table(wvl_norm),markeredgecolor='k')
+	
+	ax2.legend(fontsize=8,loc=1)
+	if savefig:
+		plt.savefig('./output/rv_precision/RV_precision_%sK_%smag%s_%ss_vsini%skms.png'%(so.stel.teff,so.filt.band,so.stel.mag,so.obs.texp,so.stel.vsini))
+
+	return fig,axs
+
 
 def plot_rv_err_HKonly(so, lam_cen, dv_vals,savefig=True):
 	"""
@@ -328,16 +361,16 @@ def plot_rv_grid_2d():
 	ax.clabel(cs, cs.levels, inline=True,fmt=fmt,fontsize=10,\
 		colors=['w','w','w','w','w','w','w','w'],zorder=101)
 
-	c3_1   = cs.collections[2].get_paths()[0].vertices # extract rv 3 curve
-	c3_2   = cs.collections[2].get_paths()[1].vertices # extract rv 3 curve
+	contour_index=4
+	c3_1   = cs.collections[contour_index].get_paths()[0].vertices # extract rv 3 curve
+	c3_2   = cs.collections[contour_index].get_paths()[1].vertices # extract rv 3 curve
 	c3 = np.concatenate((c3_1,c3_2))
 
 	ax.set_ylim(4,16)
-	ax.set_ylabel('%s Magnitude'%so.filt.band)
+	ax.set_ylabel('%s Magnitude'%'H')
 	ax.set_xlabel('Temperature (K)')
 
 	ax.set_title('RV Precision in t=%ss'%(int(texp)))
-	figname = 'snr2d_band_%s_texp_%ss.png' %(so.filt.band,texp)
 	# duplicate axis to plot filter response
 
 	# now plot ao_mode_grid
@@ -345,33 +378,73 @@ def plot_rv_grid_2d():
 		return 'NGS - LGS Boundary'
 
 	#plt.imshow(ao_mode_grid)
-	cs = ax.contour(ao_mode_grid, levels=[0.5],origin='lower',colors=['r'],\
-				extent=extent)
-	ax.clabel(cs, cs.levels, inline=True,fmt=fmt2,fontsize=10,\
-		colors=['r'],zorder=101)
+	temp_ao_trans = []
+	for i in np.arange(len(magarr)):
+		i_teff_ao = np.where(ao_mode_grid[i]==1)[0]
+		try: temp_ao_trans.append(teffs[i_teff_ao[-1]])
+		except: temp_ao_trans.append(np.min(teffs))
+
+	ax.plot(temp_ao_trans,magarr,'r')
+
 	if plot_planets:
 		pl_hmags, pl_teffs,method,rvamps  = load_planets()
 		ax.plot(pl_teffs,pl_hmags,'o',alpha=0.4,c='gray')
-
 		ax.set_xlim(np.min(teffs),np.max(teffs))
-		plt.savefig('./output/rv_precision/plots/planets_ms_' + figname)
+		#figname = 'snr2d_band_%s_texp_%ss_confirmedplanets.png' %('H',texp)
+		#plt.savefig('./output/rv_precision/plots/planets_ms_' + figname)
+	#if plot_tois:
+		pl_tmags, pl_teff = load_TOIs()
+		icold = np.where(pl_teff<4000)[0]
+		tessfunc = get_tess_to_hmag()
+		ax.plot(pl_teff[icold],pl_tmags[icold] + tessfunc(pl_teff[icold]),'s',mec='brown',alpha=0.4,c='brown')
+		ax.set_xlim(np.min(teffs),np.max(teffs))
+		figname = 'snr2d_band_%s_texp_%ss_tois.png' %('H',texp)
+		plt.savefig('./output/rv_precision/plots/' + figname)
 	else:
+		figname = 'snr2d_band_%s_texp_%ss.png' %('H',texp)
 		ax.set_xlim(np.min(teffs),np.max(teffs))
 		plt.savefig('./output/rv_precision/plots/' + figname)
 
 	return c3
 
 def load_planets():
-    planets_filename = './data/populations/confirmed_uncontroversial_planets_2023.03.08_14.19.56.csv'
-    planets_filename = './data/populations/rv_less2earthrad_less380Teq_less4000Teff_planets_.csv'
-    planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
-    # add brown dwarfs!
-    hmags = planet_data['sy_hmag']
-    teffs = planet_data['st_teff']
-    rvamps = planet_data['pl_rvamp']
-    method = planet_data['discoverymethod']
-    return hmags,teffs,method,rvamps
+	planets_filename = './data/populations/confirmed_uncontroversial_planets_2023.03.08_14.19.56.csv'
+	#planets_filename = './data/populations/rv_less2earthrad_less380Teq_less4000Teff_planets_.csv'
+	planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
+	# add brown dwarfs!
+	hmags = planet_data['sy_hmag']
+	teffs = planet_data['st_teff']
+	rvamps = planet_data['pl_rvamp']
+	method = planet_data['discoverymethod']
 
+	# count number of planets below c3
+	decs = planet_data['dec']
+	test= np.where( ( decs>-10) & (hmags < 13))[0]
+	return hmags,teffs,method,rvamps
+
+def load_TOIs():
+	planets_filename = './data/populations/TOI_2023.02.08_13.32.46.csv'
+	planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
+
+	tmags = planet_data['st_tmag']
+	teffs = planet_data['st_teff']
+	decs = planet_data['dec']
+
+	return tmags,teffs
+
+def get_tess_to_hmag():	
+	planets_filename = './data/populations/confirmed_planets_PS_2023.01.12_16.07.07.csv'
+	planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
+
+	hmags = planet_data['sy_hmag']
+	tmags = planet_data['sy_tmag']
+	teffs = planet_data['st_teff']
+	good = np.where(~np.isnan(teffs))[0]
+
+	coeffs = np.polyfit(teffs[good],hmags[good] - tmags[good],2)
+	f = np.poly1d(coeffs)
+
+	return f
 
 def load_confirmed_planets():
 	planets_filename = './data/populations/confirmed_planets_PS_2023.01.12_16.07.07.csv'
@@ -526,31 +599,36 @@ def plot_temperate_planets_MRI(c3):
 	ax.set_ylim(7.8,14)
 	ax.set_xlim(2500,4000)
 
-def get_order_bounds(so):
+def get_order_bounds(so,line_spacing=0.02,peak_spacing=1e3,height=0.055):
 	"""
 	given array, return max and mean of snr per order
 	"""
-	order_peaks	  = signal.find_peaks(so.inst.base_throughput,height=0.055,distance=2e4,prominence=0.01)
+	order_peaks	  = signal.find_peaks(so.inst.base_throughput,height=height,distance=peak_spacing,prominence=0.01)
 	order_cen_lam	= so.stel.v[order_peaks[0]]
 	blaze_angle	  =  76
 	order_indices	=[]
 	for i,lam_cen in enumerate(order_cen_lam):
-		line_spacing = 0.02 if lam_cen < 1475 else 0.01
-		m = np.sin(blaze_angle*np.pi/180) * 2 * (1/line_spacing)/(lam_cen/1000)
+		if line_spacing == None: line_spacing_now = 0.02 if lam_cen < 1475 else 0.01
+		else: line_spacing_now=line_spacing
+		m = np.sin(blaze_angle*np.pi/180) * 2 * (1/line_spacing_now)/(lam_cen/1000)
 		fsr  = lam_cen/m
 		isub_test= np.where((so.stel.v> (lam_cen - fsr/2)) & (so.stel.v < (lam_cen+fsr/2))) #FINISH THIS
-		#plt.plot(so.stel.v[isub_test],total_throughput[isub_test],'k--')
-		order_indices.append(np.where((so.obs.v > (lam_cen - fsr/2)) & (so.obs.v  < (lam_cen+fsr/2)))[0])
+		#plt.plot(so.stel.v[isub_test],so.inst.ytransmit[isub_test],'k--')
+		order_indices.append(np.where((so.obs.v > (lam_cen - 0.9*fsr/2)) & (so.obs.v  < (lam_cen+0.9*fsr/2)))[0])
 
 	return order_cen_lam,order_indices
 
-def make_telluric_mask(so,cutoff=0.01,velocity_cutoff=5):
+
+def make_telluric_mask(so,cutoff=0.01,velocity_cutoff=5,water_only=False):
+	"""
+	"""
 	telluric_spec = np.abs(so.tel.s/so.tel.rayleigh)**so.tel.airmass
+	if water_only: telluric_spec = np.abs(so.tel.h2o)**so.tel.airmass #h2o only
 	telluric_spec[np.where(np.isnan(telluric_spec))] = 0
 	telluric_spec_lores = degrade_spec(so.stel.v, telluric_spec, so.inst.res)
 	# resample onto v array
 	filt_interp	 = interpolate.interp1d(so.stel.v, telluric_spec_lores, bounds_error=False,fill_value=0)
-	s_tel		   = filt_interp(so.obs.v)/np.max(filt_interp(so.obs.v))	# filter profile resampled to phoenix times phoenix flux density
+	s_tel		 = filt_interp(so.obs.v)/np.max(filt_interp(so.obs.v))	# filter profile resampled to phoenix times phoenix flux density
 
 	#cutoff = 0.01 # reject lines greater than 1% depth
 	telluric_mask = np.ones_like(s_tel)
@@ -560,7 +638,7 @@ def make_telluric_mask(so,cutoff=0.01,velocity_cutoff=5):
 		telluric_mask[np.where(np.roll(s_tel,iroll) < (1-cutoff))[0]] = 0
 		telluric_mask[np.where(np.roll(s_tel,-1*iroll) < (1-cutoff))[0]] = 0
 
-	return telluric_mask
+	return telluric_mask,s_tel
 
 def get_rv_content(v,s,n):
 	"""
@@ -585,33 +663,47 @@ def get_rv_precision(all_w,order_cens,order_inds,noise_floor=0.5,mask=None):
 	
 	dv_tot  = np.sqrt(dv_vals**2 + noise_floor**2)
 	dv_spec  = 1. / (np.nansum(1./dv_vals**2.))**0.5
+	dv_spec_floor  = 1. / (np.nansum(1./dv_tot**2.))**0.5
 
-	return dv_tot,dv_spec,dv_tot
+	return dv_tot,dv_spec,dv_vals
 
 
 if __name__=='__main__':
-	#load inputs
-	configfile = 'hispec_snr_hd189733.cfg'
-	so	= load_object(configfile)
+	# load inputs
+	#configfile = './configs/hispec_sun.cfg'; water_only=False;line_spacing=None; peak_spacing=2e4;height=0.055
+	configfile = './configs/kpf_wasp39.cfg'; water_only=True;line_spacing=0.031; peak_spacing=1e3;height=0.04
+	so	  = load_object(configfile)
 	cload = fill_data(so) # put coupling files in load and wfe stuff too
 
 	# change to use spec_rv_noise_calc in ccf_tools.py
-	order_cens, order_inds  = get_order_bounds(so)
-	telluric_mask		    = make_telluric_mask(so,cutoff=0.01,velocity_cutoff=10)
+	order_cens, order_inds  = get_order_bounds(so,line_spacing=line_spacing,peak_spacing=peak_spacing,height=height) # None and 2e4 for hispec
+	telluric_mask,s_tel     = make_telluric_mask(so,cutoff=0.01,velocity_cutoff=10,water_only=water_only)
 	all_w				    = get_rv_content(so.obs.v,so.obs.s,so.obs.noise)
-	dv_tot,dv_spec,dv_vals	= get_rv_precision(all_w,order_cens,order_inds,noise_floor=0.5,mask=telluric_mask)
+	dv_tot,dv_spec,dv_vals	= get_rv_precision(all_w,order_cens,order_inds,noise_floor=so.inst.rv_floor,mask=telluric_mask)
 
-	fig,axs = plot_rv_err(so, order_cens, dv_vals)
+	fig,axs = plot_rv_err_agnostic(so, order_cens, dv_vals, savefig=False)
+	#fig,axs = plot_rv_err(so, order_cens, dv_vals, savefig=False)
 	#plot_rv_err_HKonly(so, order_cens, dv_vals,savefig=True)
 
 	#run_rv_error_grids(rv_floor=0.5)
 
 
-
-
+	# plot telluric mask
+def plot_telluric_mask(telluric_mask):
+	plt.figure()
+	plt.fill_between(so.obs.v,1-telluric_mask,facecolor='k',alpha=0.8,label='Masked')
+	plt.plot(so.obs.v,s_tel,label='Telluric')
+	plt.plot(so.obs.v,20*all_w/np.max(all_w),label='IC')
+	plt.plot(so.obs.v,so.obs.s/np.max(so.obs.s),'k',label='Stellar')
+	plt.xlim(2192,2198)
+	plt.legend()
+	plt.xlabel('Wavelength (nm)')
+	plt.subplots_adjust(bottom=0.15)
+	plt.ylabel('Flux (arb. units)')
 
 	##########
 	# read noise dependence
+def calc_readnoise_dependence():
 	dv_rn = []
 	rn_arr = np.arange(0,20)
 	for rn in rn_arr:

@@ -179,11 +179,10 @@ def plot_strehl():
     plt.savefig('output/ao_modes/strehl_ao_modes_Teff_%s.png'%so.stel.teff)
 
 
-def get_wfe_landscape():
+def get_wfe_landscape(configfile = '../configs/hispec_tracking_camera.cfg'):
     """
     figure out which AO mode is best for which temperature and mag star
     """
-    configfile = 'hispec_tracking_camera.cfg'
     so         = load_object(configfile)
     cload      = fill_data(so)
   
@@ -301,8 +300,17 @@ def plot_planets_ao_modes():
     plt.subplots_adjust(bottom=0.15,hspace=0,left=0.15)
 
 
+def get_AO_plot_scheme():
+    """
+    define colors and linestyles for AO modes
+    """
+    modes    = ['100JH','80J','80H','100K','SH','LGS_100H_130','LGS_100J_130','LGS_100J_45','LGS_STRAP_130','LGS_STRAP_45']
+    modes2   = ['NGS', 'NGS', 'NGS','NGS','NGS','','','','','']
+    linestyles = ['-','-','-','-','-','--','--','--','-.','-.']
+    colors   = ['m','b','orange','gray','g','r','c','b','gray','black']
+    widths   = [1, 1.5,  1,    1, 1.5,2, 1.5,1.5,  1, 1]
 
-
+    return modes, modes2, linestyles, colors, widths
 
 
 

@@ -31,6 +31,9 @@ def calc_plate_scale(pixel_pitch, D=10, fratio=35):
 def get_tracking_cam(camera='h2rg',x=None):
     """
     gary assumes 0.9 for the QE of the H2RG, so modify throughput accordingly
+
+    this function is fed an x array which is used only in the cred2 selection because the QE profile
+    is different from the h2rg
     """
     if camera=='h2rg':
         rn = 12 #e-
@@ -39,19 +42,13 @@ def get_tracking_cam(camera='h2rg',x=None):
         dark=0.8 #e-/s
         saturation = 80000
 
-    if camera=='alladin':
-        pass
-
     if camera=='cred2':
-        rn = 40 #e- 
+        rn = 40 #e- Calvin measured 40e-, spec is 30e
         pixel_pitch = 15 #um https://www.axiomoptics.com/products/c-red-2/
         if np.any(x==None): qe_mod=1
         else: qe_mod = tophat(x,980,1650,1) # scale  
-        dark=600 #e-/s liquid cooling mode -40
+        dark=600 #e-/s liquid cooling mode -40, calvin measured 450e-, spec sheet is 600e-
         saturation = 33000
-
-    if camera=='geosnap':
-        pass
 
     if camera=='cred2_xswir':
         #extended NIR
@@ -137,8 +134,13 @@ def get_tracking_band(wave,band):
         center_wavelength =  (l0+lf)/2
         bandpass = tophat(wave,l0,lf,1)
 
+    if band=='Jplus':
+        l0,lf= 1130,1490 #might help cred2
+        center_wavelength =  (l0+lf)/2
+        bandpass = tophat(wave,l0,lf,1)
+
     if band=='Hplus':
-        l0,lf= 1450,1950 #1450 cuts into jh gap a little, 1950 before instrument bkg turn on
+        l0,lf= 1330,1780 #1450 cuts into jh gap a little, 1950 before instrument bkg turn on
         center_wavelength =  (l0+lf)/2
         bandpass = tophat(wave,l0,lf,1)
 
@@ -146,6 +148,20 @@ def get_tracking_band(wave,band):
         l0,lf= 1490,1780
         center_wavelength =  (l0+lf)/2
         bandpass = tophat(wave,l0,lf,1)
+
+    if band=='Hplus50':
+        # for consideration for c-red2
+        l0,lf= 1330,1780
+        center_wavelength =  (l0+lf)/2
+        bandpass = tophat(wave,l0,lf,0.5)
+        #bandpass[np.where(wave >1490)]*=0.5 # could make jhgap 1 but would make filter more difficult maybe to make
+
+    if band=='JHplus20':
+        # for consideration for c-red2 ....meh
+        l0,lf= 1170,1780
+        center_wavelength =  (l0+lf)/2
+        bandpass = tophat(wave,l0,lf,0.2)
+        #bandpass[np.where(wave >1490)]=1 # could make jhgap 1 but would make filter more difficult maybe to make
 
     if band=='K':
         l0,lf= 1950,2460
@@ -169,6 +185,7 @@ def get_fwhm(wfe,tt_resid,wavelength,diam,platescale,field_r=0,camera='h2rg',get
     """
     rms_to_fwhm = 1/0.44 # from KAON, not too off from gaussian 1sig to FWHM factor
     radius_to_diam = 2
+    
     # get WFE
     strehl = np.exp(-(2*np.pi*wfe/wavelength)**2)
 
@@ -206,6 +223,49 @@ def compute_band_photon_counts():
     get_band_mag(so,'SLOAN','uprime_filter',so.stel.factor_0)
 
 
+def get_order_value(so,v,snr):
+    """
+    given array, return max and mean of snr per order
+    """
+    order_peaks      = signal.find_peaks(so.inst.base_throughput,height=0.055,distance=2e4,prominence=0.01)
+    order_cen_lam    = so.stel.v[order_peaks[0]]
+    blaze_angle      =  76
+    snr_peaks = []
+    snr_means = []
+    for i,lam_cen in enumerate(order_cen_lam):
+        line_spacing = 0.02 if lam_cen < 1475 else 0.01
+        m = np.sin(blaze_angle*np.pi/180) * 2 * (1/line_spacing)/(lam_cen/1000)
+        fsr  = lam_cen/m
+        isub_test= np.where((so.stel.v> (lam_cen - fsr/2)) & (so.stel.v < (lam_cen+fsr/2))) #FINISH THIS
+        #plt.plot(so.stel.v[isub_test],total_throughput[isub_test],'k--')
+        sub_snr = snr[np.where((v > (lam_cen - 1.3*fsr/2)) & (v < (lam_cen+1.3*fsr/2)))[0]] #FINISH THIS]
+        snr_peaks.append(np.nanmax(sub_snr))
+        snr_means.append(np.nanmean(sub_snr))
+
+    return np.array(order_cen_lam), np.array(snr_peaks), np.array(snr_means)
+
+def get_order_value2(v,base_throughput,x,y):
+    """
+    given array, return max and mean of snr per order
+    """
+    order_peaks      = signal.find_peaks(base_throughput,height=0.055,distance=2e4,prominence=0.01)
+    order_cen_lam    = v[order_peaks[0]]
+    blaze_angle      =  76
+    snr_peaks = []
+    snr_means = []
+    for i,lam_cen in enumerate(order_cen_lam):
+        line_spacing = 0.02 if lam_cen < 1475 else 0.01
+        m = np.sin(blaze_angle*np.pi/180) * 2 * (1/line_spacing)/(lam_cen/1000)
+        fsr  = lam_cen/m
+        isub_test= np.where((v> (lam_cen - fsr/2)) & (v < (lam_cen+fsr/2))) #FINISH THIS
+        #plt.plot(so.stel.v[isub_test],total_throughput[isub_test],'k--')
+        sub_snr = y[np.where((x > (lam_cen - 1.3*fsr/2)) & (x < (lam_cen+1.3*fsr/2)))[0]] #FINISH THIS]
+        snr_peaks.append(np.nanmax(sub_snr))
+        snr_means.append(np.nanmean(sub_snr))
+
+    return np.array(order_cen_lam), np.array(snr_peaks), np.array(snr_means)
+
+
 def air_index_refraction(lam,p,t):
     """
     https://iopscience.iop.org/article/10.1088/0026-1394/30/3/004/pdf
@@ -217,4 +277,14 @@ def air_index_refraction(lam,p,t):
     ns = 1 + (1/1e8) * (8342.13 + 2406030*(130 - sig**2)**(-1) + 15997*(38.9 -sig**2)**-1)
     n = 1 + (p * (ns -1)/ 720.775) * (1 + p*(0.817 - 0.0133*t)*(10**-6))/(1 + 0.0036610*t)
     return n
+
+
+def load_confirmed_planets():
+    planets_filename = './data/populations/confirmed_planets_PS_2023.01.12_16.07.07.csv'
+    planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
+    # add brown dwarfs!
+    hmags = planet_data['sy_hmag']
+    teffs = planet_data['st_teff']
+    return hmags,teffs
+
 
