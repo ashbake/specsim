@@ -26,13 +26,16 @@ def get_band_mag(so,family,band,factor_0):
     dl_l         = np.mean(integrate(x,y)/x) # dlambda/lambda to account for spectral fraction
     
     # load stellar the multiply by scaling factor, factor_0, and filter. integrate
-    #if so.stel.model=='phoenix':
-    #    vraw,sraw = load_inputs.load_phoenix(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
-    #elif so.stel.model=='sonora':
-    #    vraw,sraw = load_inputs.load_sonora(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
-    
-    filtered_stel = factor_0 * so.stel.sraw * filt_interp(so.stel.vraw)
-    flux = integrate(so.stel.vraw,filtered_stel)    #phot/m2/s
+    if (np.min(x) < so.inst.l0) or (np.max(x) > so.inst.l1):
+        if so.stel.model=='phoenix':
+            vraw,sraw = load_inputs.load_phoenix(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
+        elif so.stel.model=='sonora':
+            vraw,sraw = load_inputs.load_sonora(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
+    else:
+        vraw,sraw = so.stel.vraw, so.stel.sraw
+
+    filtered_stel = factor_0 * sraw * filt_interp(vraw)
+    flux = integrate(vraw,filtered_stel)    #phot/m2/s
 
     phot_per_s_m2_per_Jy = 1.51*10**7 # convert to phot/s/m2 from Jansky
     
@@ -46,6 +49,7 @@ def get_band_mag(so,family,band,factor_0):
     mag = -2.5*np.log10(flux_Jy/zp)
 
     return mag
+
 
 def pick_coupling(waves,dynwfe,ttStatic,ttDynamic,LO=30,PLon=0,piaa_boost=1.3,points=None,values=None,transmission_path='/Users/ashbake/Documents/Research/Projects/HISPEC/SNR_calcs/data/throughput/hispec_subsystems_11032022/'):
     """

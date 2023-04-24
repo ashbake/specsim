@@ -43,11 +43,11 @@ def get_tracking_cam(camera='h2rg',x=None):
         saturation = 80000
 
     if camera=='cred2':
-        rn = 40 #e- Calvin measured 40e-, spec is 30e
+        rn = 40 #e- Calvin measured 40e-, spec is 30e-, ashley measured 35 cds without 8th column noise
         pixel_pitch = 15 #um https://www.axiomoptics.com/products/c-red-2/
         if np.any(x==None): qe_mod=1
         else: qe_mod = tophat(x,980,1650,1) # scale  
-        dark=600 #e-/s liquid cooling mode -40, calvin measured 450e-, spec sheet is 600e-
+        dark=315 #e-/s liquid cooling mode -40, calvin measured 450e-, spec sheet is 600e-,measured 315e- from KPIC C-RED2
         saturation = 33000
 
     if camera=='cred2_xswir':
@@ -168,6 +168,11 @@ def get_tracking_band(wave,band):
         center_wavelength = (l0+lf)/2
         bandpass = tophat(wave,l0,lf,1)
 
+    if band=='Hkpic':
+        l0,lf= 1500,1650
+        center_wavelength = (l0+lf)/2
+        bandpass = tophat(wave,l0,lf,1)
+
     return bandpass, center_wavelength
 
 def get_fwhm(wfe,tt_resid,wavelength,diam,platescale,field_r=0,camera='h2rg',getall=False):
@@ -180,7 +185,6 @@ def get_fwhm(wfe,tt_resid,wavelength,diam,platescale,field_r=0,camera='h2rg',get
         plate scale of image
 
     to do:
-    update fwhm_tt and fwhm_offaxis
     check how RMS relates to FWHM
     """
     rms_to_fwhm = 1/0.44 # from KAON, not too off from gaussian 1sig to FWHM factor
@@ -279,8 +283,7 @@ def air_index_refraction(lam,p,t):
     return n
 
 
-def load_confirmed_planets():
-    planets_filename = './data/populations/confirmed_planets_PS_2023.01.12_16.07.07.csv'
+def load_confirmed_planets(planets_filename = './data/populations/confirmed_planets_PS_2023.01.12_16.07.07.csv'):
     planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
     # add brown dwarfs!
     hmags = planet_data['sy_hmag']

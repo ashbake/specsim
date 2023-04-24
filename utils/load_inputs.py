@@ -459,9 +459,12 @@ class fill_data():
 		so.track.saturation  = saturation  # to switch cameras, wont need this later bc qe will match throughput model
 
 		# load and store tracking camera throughput - file structure hard coded
-		xtemp, ytemp  = np.loadtxt(so.track.transmission_file,delimiter=',').T #microns!
-		f = interp1d(xtemp*1000,ytemp,kind='linear', bounds_error=False, fill_value=0)
-		so.track.xtransmit, so.track.ytransmit = self.x, f(self.x) * so.track.qe_mod 
+		if type(so.track.transmission_file)==float:
+			so.track.xtransmit,so.track.ytransmit = self.x, np.ones_like(self.x)*so.track.transmission_file * so.track.qe_mod
+		else:
+			xtemp, ytemp  = np.loadtxt(so.track.transmission_file,delimiter=',').T #microns!
+			f = interp1d(xtemp*1000,ytemp,kind='linear', bounds_error=False, fill_value=0)
+			so.track.xtransmit, so.track.ytransmit = self.x, f(self.x) * so.track.qe_mod 
 	
 		# get plate scale
 		so.track.platescale = obs_tools.calc_plate_scale(so.track.pixel_pitch, D=so.inst.tel_diam, fratio=so.track.fratio)

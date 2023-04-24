@@ -43,7 +43,7 @@ def plot_results_byfield(teff,ao_mode,filt_band='H'):
 	magarr   = np.arange(1,20,2) # in band of interest
 	tracking_requirement_pixel  = get_track_req(so)
 
-	field_x=[0.,0.,3.]
+	field_x = [0.,0.,3.]
 	field_y = [0.,2.,3.]
 	camera='h2rg'
 	linestyles=['-','--','-.']
@@ -108,6 +108,7 @@ def plot_results_var_final(var,teff,datapath,camera,track_bands=['y','z','JHgap'
 	modes, modes2, linestyles, colors, widths = wfe_tools.get_AO_plot_scheme()
 	#teff     = 4200
 	filt_band='H' # matches the run
+
 	fig, axs = plt.subplots(3,2,figsize=(7,7),sharex=True,sharey=True)
 
 	for itexp in np.arange(len(exptimes)):
@@ -520,19 +521,19 @@ if __name__=='__main__':
 	#datapath = './output/trackingcamera/centroid_arrs/_run_20230313/'
 	datestr  = date.today().strftime("%Y%m%d")#'20230406' #date.today().strftime("%Y%m%d")
 	datapath = './output/trackingcamera/centroid_arrs/_run_%s_%s/'%(datestr,so.track.camera)
-	track_bands = ['y','J','Jplus','JHgap','H']
+	track_bands = ['J','Jplus','JHgap','H']
 	run_all(so,datapath,track_bands=track_bands)
 	os.system('cp %s %s' %(configfile, datapath)) # copy config file used to data path for record
 
 	#########
 	# plot
-	datapath   = './output/trackingcamera/centroid_arrs/_run_20230410_h2rg/'
+	datapath   = './output/trackingcamera/centroid_arrs/_run_20230406_cred2_opt/'
 	configfile = datapath + 'hispec_tracking_camera.cfg'
 	so         = load_object(configfile)
 	cload      = fill_data(so)
-	teff       = 1500
-	ao_mode = 'LGS_STRAP_130' if teff>3000 else 'LGS_100%s_130'#'LGS_STRAP_130'#
-	plot_results_var_final('fwhm',teff,datapath,so.track.camera,track_bands=track_bands)
+	teff       = 3000
+	ao_mode = 'LGS_STRAP_130' if teff>=3000 else 'LGS_100%s_130'#'LGS_STRAP_130'#
+	#plot_results_var_final('fwhm',teff,datapath,so.track.camera,track_bands=track_bands)
 	#plot_results_mag_req_final(teff,so.track.camera,filt_band='H',track_bands=track_bands,datapath=datapath)
 	plot_frame_rates_magnitude(teff,ao_mode,maglimits=[11.9,12.9,13.9,14.9,15.9],filt_band='H',camera=so.track.camera,track_bands=track_bands,datapath=datapath)
 

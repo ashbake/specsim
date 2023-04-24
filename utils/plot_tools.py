@@ -351,7 +351,7 @@ def plot_bg_noise(so):
 def plot_tracking_bands(so):
 	"""
 	"""
-	trackbands=['Hplus50','Jplus']#['y','J','JHgap','H']
+	trackbands=['y','Jplus','H','K'] #['J','JHgap','H'] #'Hplus50','Jplus']#['y',
 
 	spectrum = so.track.ytransmit * so.tel.s * so.stel.s/np.max(so.stel.s) / 1.5
 	spec_lores = degrade_spec(so.stel.v[::10], spectrum[::10], 2000)

@@ -133,7 +133,7 @@ def plot_planets_ao_modes():
     ax.imshow(best_ao_mode_arr,aspect='auto',origin='lower',\
             interpolation='None',cmap='nipy_spectral',\
             extent=extent)
-    cs = ax.contour(best_ao_coupling ,\
+    cs = ax.contour(best_ao_coupling_arr ,\
                 colors=['r'],origin='lower',\
                 extent=extent)
     ax.clabel(cs, cs.levels, inline=True,fmt=fmt,fontsize=10,\
@@ -150,6 +150,7 @@ def plot_planets_ao_modes():
     ax.legend(fontsize=12)
     plt.subplots_adjust(bottom=0.15,hspace=0,left=0.15)
 
+    #plt.savefig('./output/')
 
 def load_planets():
     planets_filename = './data/populations/confirmed_uncontroversial_planets_2023.03.08_14.19.56.csv'
@@ -306,16 +307,33 @@ def plot_planets_ao_modes_strehl():
 
     ax.scatter(teffs,hmags,marker='.',s=65,c='m',ec='purple',alpha=0.8,label='Confirmed Planet Hosts')
     #ax.scatter(teffs[i_image],hmags[i_image],marker='s',s=40,c='brown',ec='k',alpha=1,label='Imaged Planets')
-    ax.scatter(teffs_bd,hmags_bd,marker='d',s=35,c='c',ec='c',alpha=0.5,label='Brown Dwarfs')
+    ax.scatter(teffs_bd,hmags_bd,marker='d',s=32,c='darkcyan',ec='b',alpha=1,label='Brown Dwarfs')
     #ax.scatter(hmags_bd,teffs_bd,marker='.',c='c',alpha=0.5,label='Brown Dwarfs')
     ax.set_ylabel('H Mag')
-    ax.set_xlabel('T$_{eff}$')
+    ax.set_xlabel('T$_{eff}$ (K)')
     ax.set_title('HISPEC AO Mode Landscape')
     ax.set_ylim(0,16)
     ax.set_xlim(1000,5800)
     #ax.legend(fontsize=10,loc=1)
     plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.85)
-    plt.savefig('./output/ao_modes/ao_mode_landscape_brown_dwarfs.png')
+
+    # add region for cred2 interrupted science region
+    if True:
+        mag_limit_jhgap_cred2  = [13.5,13.7,14.3,15,15]
+        mag_limit_jhgap_h2rg   = [14.3,14.5,15,15,15]
+        teff_limit_jhgap = [1000,1500,2300,3000,6000]
+        ax.plot(teff_limit_jhgap,mag_limit_jhgap_h2rg,'cyan',lw=2,label='H2RG')
+        ax.plot(teff_limit_jhgap,mag_limit_jhgap_cred2,'--',c='red',lw=2,label='C-RED2')
+        ax.set_title('Uninterrupted Science Limits')
+        ax.set_ylim(5,15)
+        ax.legend(fontsize=10)
+        ntotal_bd = len(np.where((hmags_bd < 15) & (teffs_bd >1000) & (teffs_bd < 5800))[0])
+        ntotal_pl = len(np.where((hmags < 15) & (teffs >1000) & (teffs < 5800))[0])
+
+        plt.savefig('./output/trackingcamera/ao_mode_landscape_brown_dwarfs_trackingcutoff.png',dpi=300)
+    else:
+        plt.savefig('./output/ao_modes/ao_mode_landscape_brown_dwarfs.png')
+
 
 def get_order_snrs(so,v,snr):
     """
