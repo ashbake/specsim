@@ -73,8 +73,8 @@ class FILTER():
         self.zp_unit = 'Jy'
         self.band='J' # band to pick
         self.family = 'Johnson' # family of filter band, see zeropoints file
-        zps    = np.loadtxt(self.zp_file,dtype=str).T
-        self.options =[zps[0],zps[1]] # returns options for bands to pick
+        #zps    = np.loadtxt(self.zp_file,dtype=str).T
+        #self.options =[zps[0],zps[1]] # returns options for bands to pick
 
 class STELLAR():
     "star info and spectrum"

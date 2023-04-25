@@ -497,23 +497,23 @@ class fill_data():
 		print('Tracking photons: %s e-'%so.track.nphot)
 
 		# get noise
-		npix = np.pi * so.track.fwhm**2
-		so.track.noise = noise_tools.sum_total_noise(so.track.nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,npix)
+		so.track.npix  = np.pi * so.track.fwhm**2 # could consider capping radius at 4 pixels as per fritz et al 2010s analysis
+		so.track.noise = noise_tools.sum_total_noise(so.track.nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix)
 		print('Tracking noise: %s e-'%so.track.noise)
-		so.track.snr = so.track.nphot/so.track.noise 
+		so.track.snr = so.track.strehl*so.track.nphot/so.track.noise 
 		
 
 		# get centroid error, cap if saturated
-		if so.track.strehl*so.track.nphot/npix > so.track.saturation:
-			nphot_capped = so.inst.saturation * npix/so.track.strehl # cap nphot
-			noise_capped = noise_tools.sum_total_noise(nphot_capped,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,npix)
+		if so.track.strehl*so.track.nphot/so.track.npix > so.track.saturation:
+			nphot_capped = so.inst.saturation * so.track.npix/so.track.strehl # cap nphot
+			noise_capped = noise_tools.sum_total_noise(nphot_capped,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix)
 			snr_capped   = nphot_capped/noise_capped
 			so.track.centroid_err = (1/np.pi) * so.track.fwhm/(so.track.strehl* snr_capped)  # same fwhm but snr is reduced to not saturate like if used an ND filter
 			so.track.noise  = noise_capped
 			so.track.snr    = snr_capped
 			so.track.signal = nphot_capped
 		else:
-			so.track.centroid_err = (1/np.pi) * so.track.fwhm/(so.track.strehl* so.track.snr) 
+			so.track.centroid_err = (1/np.pi) * so.track.fwhm/so.track.snr
 
 	def set_teff_aomode(self,so,temp,aomode,trackonly=False):
 		"""

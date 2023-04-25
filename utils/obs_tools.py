@@ -42,8 +42,24 @@ def get_tracking_cam(camera='h2rg',x=None):
         dark=0.8 #e-/s
         saturation = 80000
 
+    if camera=='cred2_kpic':
+        rn = 45 #e- Calvin measured 40e-, spec is 30e-, ashley measured 35 cds without 8th column noise
+        pixel_pitch = 15 #um https://www.axiomoptics.com/products/c-red-2/
+        if np.any(x==None): qe_mod=1
+        else: qe_mod = tophat(x,980,1650,1) # scale  
+        dark=315 #e-/s liquid cooling mode -40, calvin measured 450e-, spec sheet is 600e-,measured 315e- from KPIC C-RED2
+        saturation = 33000
+
     if camera=='cred2':
-        rn = 40 #e- Calvin measured 40e-, spec is 30e-, ashley measured 35 cds without 8th column noise
+        rn = 30 #e- Calvin measured 40e-, spec is 30e-, ashley measured 35 cds without 8th column noise
+        pixel_pitch = 15 #um https://www.axiomoptics.com/products/c-red-2/
+        if np.any(x==None): qe_mod=1
+        else: qe_mod = tophat(x,980,1650,1) # scale  
+        dark=315 #e-/s liquid cooling mode -40, calvin measured 450e-, spec sheet is 600e-,measured 315e- from KPIC C-RED2
+        saturation = 33000
+
+    if camera=='cred2_ndr':
+        rn = 25 #e- spie paper for 20 reads which is max for 27 FPS integration time
         pixel_pitch = 15 #um https://www.axiomoptics.com/products/c-red-2/
         if np.any(x==None): qe_mod=1
         else: qe_mod = tophat(x,980,1650,1) # scale  
@@ -163,6 +179,13 @@ def get_tracking_band(wave,band):
         bandpass = tophat(wave,l0,lf,0.2)
         #bandpass[np.where(wave >1490)]=1 # could make jhgap 1 but would make filter more difficult maybe to make
 
+    if band=='JHplus':
+        # for consideration for c-red2 ....meh
+        l0,lf= 1170,1780
+        center_wavelength =  (l0+lf)/2
+        bandpass = tophat(wave,l0,lf,1)
+        #bandpass[np.where(wave >1490)]=1 # could make jhgap 1 but would make filter more difficult maybe to make
+        
     if band=='K':
         l0,lf= 1950,2460
         center_wavelength = (l0+lf)/2
