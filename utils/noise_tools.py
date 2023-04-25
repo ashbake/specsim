@@ -216,6 +216,20 @@ def read_noise(rn,npix):
     """
     return np.sqrt(npix * rn**2)
 
+def dark_noise(darknoise,npix,texp):
+    """
+    input:
+    ------
+    darknoise: [e-/pix/s]
+        read noise
+    npix [pix]
+        number of pixels
+    texp [s]
+        exposure time in seconds
+    """
+    sig_dark = np.sqrt(darknoise * npix * texp)
+    return sig_dark
+
 def plot_noise_components(so):
     """
     plot spectra and transmission so know what we're dealing with
