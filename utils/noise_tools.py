@@ -197,7 +197,7 @@ def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg,darknoise,readnoise,npix,n
     # dark current - times time and pixels
     sig_dark = np.sqrt(darknoise * npix * texp) #* get dark noise every sample
     
-    noise = np.sqrt(sig_flux **2 + sig_bg**2 + sig_read**2 + sig_dark**2)
+    noise = np.sqrt(sig_flux **2 + sig_bg**2 + npix * sig_read**2 + sig_dark**2)
 
     # cap the noise if a number is provided
     if noisecap is not None:

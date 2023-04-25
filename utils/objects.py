@@ -1,5 +1,7 @@
 import configparser
 import numpy as np
+import os
+
 from distutils.util import strtobool
 
 all = {'storage_object','load_object'}
@@ -73,8 +75,8 @@ class FILTER():
         self.zp_unit = 'Jy'
         self.band='J' # band to pick
         self.family = 'Johnson' # family of filter band, see zeropoints file
-        zps    = np.loadtxt(self.zp_file,dtype=str).T
-        self.options =[zps[0],zps[1]] # returns options for bands to pick
+        #zps    = np.loadtxt(self.zp_file,dtype=str).T
+        #self.options =[zps[0],zps[1]] # returns options for bands to pick
 
 class STELLAR():
     "star info and spectrum"
@@ -133,6 +135,7 @@ def load_object(configfile):
     Then loads stoar_object and fills in user-defined
     quantities
     """
+    if not os.path.isfile(configfile): raise Exception("Config File is Not Found!")
     config = LoadConfig(configfile)
     so = storage_object()
 
