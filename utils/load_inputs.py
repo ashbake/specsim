@@ -8,11 +8,11 @@ from scipy.interpolate import interp1d
 from scipy.integrate import trapz
 from astropy.io import fits
 from scipy import interpolate
-import sys,glob
+import sys,glob,os
 import pandas as pd
 from astropy.convolution import Gaussian1DKernel, convolve
 
-from throughput_tools import pick_coupling, get_band_mag, get_base_throughput,grid_interp_coupling
+import throughput_tools# import pick_coupling, get_band_mag, get_base_throughput,grid_interp_coupling
 from wfe_tools import get_tip_tilt_resid, get_HO_WFE
 import obs_tools
 import noise_tools
@@ -41,8 +41,9 @@ def load_phoenix(stelname,wav_start=750,wav_end=780):
 	f.close()
 	
 	path = stelname.split('/')
-	f = fits.open(path[0] + '/' + path[1] + '/' + path[2] +'/' + \
-					 'WAVE_PHOENIX-ACES-AGSS-COND-2011.fits')
+	wave_file = '/' + os.path.join(*stelname.split('/')[0:-1]) + '/' + \
+					'WAVE_PHOENIX-ACES-AGSS-COND-2011.fits' #assume wave in same folder
+	f = fits.open(wave_file)
 	lam = f[0].data # angstroms
 	f.close()
 	
@@ -133,6 +134,41 @@ def scale_stellar(so, mag):
 	nphot_phoenix      = integrate(stelv,filtered_stellar)            # what's the integrated flux now? in same units as ^
 	
 	return nphot_expected_0/nphot_phoenix
+
+
+def get_band_mag(so,family,band,factor_0):
+    """
+    factor_0: scaling model to photons
+    """
+    x,y          = load_filter(so.filt.filter_path,family,band)
+    filt_interp  = interpolate.interp1d(x, y, bounds_error=False,fill_value=0)
+    dl_l         = np.mean(integrate(x,y)/x) # dlambda/lambda to account for spectral fraction
+    
+    # load stellar the multiply by scaling factor, factor_0, and filter. integrate
+    if (np.min(x) < so.inst.l0) or (np.max(x) > so.inst.l1):
+        if so.stel.model=='phoenix':
+            vraw,sraw = load_phoenix(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
+        elif so.stel.model=='sonora':
+            vraw,sraw = load_sonora(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
+    else:
+        vraw,sraw = so.stel.vraw, so.stel.sraw
+
+    filtered_stel = factor_0 * sraw * filt_interp(vraw)
+    flux = integrate(vraw,filtered_stel)    #phot/m2/s
+
+    phot_per_s_m2_per_Jy = 1.51*10**7 # convert to phot/s/m2 from Jansky
+    
+    flux_Jy = flux/phot_per_s_m2_per_Jy/dl_l
+    
+    # get zps
+    zps                     = np.loadtxt(so.filt.zp_file,dtype=str).T
+    izp                     = np.where((zps[0]==family) & (zps[1]==band))[0]
+    zp                      = np.float(zps[2][izp])
+
+    mag = -2.5*np.log10(flux_Jy/zp)
+
+    return mag
+
 
 def _lsf_rotate(deltav,vsini,epsilon=0.6):
     '''
@@ -262,7 +298,7 @@ class fill_data():
 
 		# apply scaling factor to match filter zeropoint
 		so.stel.factor_0   = scale_stellar(so, so.stel.mag) 
-		so.stel.s   *= so.stel.factor_0 
+		so.stel.s   *= so.stel.factor_0
 		so.stel.units = 'photons/s/m2/nm' # stellar spec is in photons/s/m2/nm
 
 		# broaden star spectrum with rotation kernal
@@ -376,18 +412,18 @@ class fill_data():
 			so.inst.base_throughput = so.inst.ytransmit.copy() # store this here bc ya
 			#add airmass calc for strehl for seeing limited instrument
 		except:
-			so.inst.base_throughput  = get_base_throughput(x=self.x,datapath=so.inst.transmission_path) # everything except coupling
+			so.inst.base_throughput  = throughput_tools.get_base_throughput(self.x,datapath=so.inst.transmission_path) # everything except coupling
 			
 			# interp grid
 			try: so.inst.points
 			except AttributeError: 
-				out = grid_interp_coupling(int(so.inst.pl_on),path=so.inst.transmission_path)
+				out = throughput_tools.grid_interp_coupling(int(so.inst.pl_on),path=so.inst.transmission_path + 'coupling/',atm=int(so.inst.atm),adc=int(so.inst.adc))
 				so.inst.grid_points, so.inst.grid_values = out[0],out[1:] #if PL, three values
 			try:
-				so.inst.coupling, so.inst.strehl = pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,so.ao.tt_dynamic,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values,transmission_path=so.inst.transmission_path) # includes PIAA and HO term
+				so.inst.coupling, so.inst.strehl = throughput_tools.pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,so.ao.tt_dynamic,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values)
 			except ValueError:
 				# hack here bc tt dynamic often is out of bounds
-				so.inst.coupling, so.inst.strehl = pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,20,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values,transmission_path=so.inst.transmission_path) # includes PIAA and HO term
+				so.inst.coupling, so.inst.strehl = throughput_tools.pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,20,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values)
 				so.inst.notes = 'tt dynamic out of bounds! %smas' %so.ao.tt_dynamic
 
 			so.inst.xtransmit = self.x
@@ -427,7 +463,7 @@ class fill_data():
 
 		# load background spectrum - sky is top of telescope and will be reduced by inst BASE throughput. Coupling already accounted for in solid angle of fiber. Does inst bkg need throughput applied?
 		so.obs.sky_bg_ph    = base_throughput_interp(so.obs.v) * noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
-		so.obs.inst_bg_ph   = noise_tools.get_inst_bg(so.obs.v,npix=so.inst.pix_vert,lam0=2000,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area)
+		so.obs.inst_bg_ph   = noise_tools.get_inst_bg(so.obs.v,npix=so.inst.pix_vert,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area,datapath=so.inst.transmission_path)
 
 		# calc noise
 		if so.inst.pl_on: # 3 port lantern hack
@@ -485,7 +521,7 @@ class fill_data():
 		so.track.sky_bg_spec = noise_tools.get_sky_bg_tracking(self.x,so.track.fwhm*so.track.platescale,airmass=so.tel.airmass,pwv=so.tel.pwv,area=so.inst.tel_area,skypath=so.tel.skypath)
 		so.track.sky_bg_ph   = so.track.texp * np.trapz(so.track.sky_bg_spec * so.track.bandpass * so.track.ytransmit,self.x) # sky bkg needs mult by throughput and bandpass profile
 
-		so.track.inst_bg_spec = noise_tools.get_inst_bg_tracking(self.x,so.track.fwhm * so.track.platescale,area=76)
+		so.track.inst_bg_spec = noise_tools.get_inst_bg_tracking(self.x,so.track.fwhm * so.track.platescale,area=76,datapath=so.inst.transmission_path)
 		so.track.inst_bg_ph   = so.track.texp * np.trapz(so.track.inst_bg_spec * so.track.bandpass,self.x) # inst background needs multiplied by bandpass, inst throughput included in emissivities (i think)
 
 		# get photons in band
@@ -493,22 +529,22 @@ class fill_data():
 		 			so.inst.tel_area * so.track.ytransmit*\
 		 			np.abs(so.tel.s)
 	
-		so.track.nphot = np.trapz(so.track.signal_spec * so.track.bandpass,so.stel.v)
+		fac = 0.8 # amount of light approx under gaussian FWHM
+		so.track.nphot = fac * so.track.strehl * np.trapz(so.track.signal_spec * so.track.bandpass,so.stel.v)
 		print('Tracking photons: %s e-'%so.track.nphot)
 
 		# get noise
-		so.track.npix  = np.pi * so.track.fwhm**2 # could consider capping radius at 4 pixels as per fritz et al 2010s analysis
+		so.track.npix  = np.pi* (so.track.fwhm/2)**2 # only take noise in circle of diameter FWHM 
 		so.track.noise = noise_tools.sum_total_noise(so.track.nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix)
 		print('Tracking noise: %s e-'%so.track.noise)
-		so.track.snr = so.track.strehl*so.track.nphot/so.track.noise 
+		so.track.snr = so.track.nphot/so.track.noise 
 		
-
 		# get centroid error, cap if saturated
-		if so.track.strehl*so.track.nphot/so.track.npix > so.track.saturation:
-			nphot_capped = so.inst.saturation * so.track.npix/so.track.strehl # cap nphot
+		if so.track.nphot/so.track.npix > so.track.saturation:
+			nphot_capped = so.inst.saturation * so.track.npix # cap nphot
 			noise_capped = noise_tools.sum_total_noise(nphot_capped,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix)
 			snr_capped   = nphot_capped/noise_capped
-			so.track.centroid_err = (1/np.pi) * so.track.fwhm/(so.track.strehl* snr_capped)  # same fwhm but snr is reduced to not saturate like if used an ND filter
+			so.track.centroid_err = (1/np.pi) * so.track.fwhm/snr_capped # same fwhm but snr is reduced to not saturate like if used an ND filter
 			so.track.noise  = noise_capped
 			so.track.snr    = snr_capped
 			so.track.signal = nphot_capped

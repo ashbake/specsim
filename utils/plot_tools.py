@@ -59,15 +59,17 @@ def plot_tracking_cam_spot_rms(camera='h2rg'):
 	"""
 	"""
 	#f = np.loadtxt('./data/WFE/trackingcamera_optics/OAP1_HISPEC_FEI_RMS_SpotRvsField.txt')
-	f = np.loadtxt(DATAPATH + 'WFE/trackingcamera_optics/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt')
+	#f = np.loadtxt(DATAPATH + 'WFE/trackingcamera_optics/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt')
+	f = np.loadtxt('/Users/ashbake/Documents/Research/Projects/HISPEC/SNR_calcs/data/WFE/trackingcamera_optics/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt')
 	field, rmstot, rms900,rms1000,rms1200,rms1400,rms1600,rms2200  = f.T #field [deg], rms [um]
-	_,pixel_pitch,_,_ = select_tracking_cam(camera=camera)
+	#_,pixel_pitch,_,_ = select_tracking_cam(camera=camera)
+	pixel_pitch=18
 	plt.figure()
 	# multiply rms by sqrt (2) to get a diagonal cut, multiple by 2 to get diameter
 	plt.plot(field*3600,np.sqrt(2) * 2*rmstot/pixel_pitch,label='total') 
 	plt.plot(field*3600,np.sqrt(2) * 2*rms900/pixel_pitch,label='900nm')
 	plt.plot(field*3600,np.sqrt(2) * 2*rms2200/pixel_pitch,label='2200nm')
-	plt.xlabel('Field [arcsec]')
+	plt.xlabel('Field Radius [arcsec]')
 	plt.ylabel('RMS Diameter [pix]')
 	plt.title('Tracking Camera Spot RMS')
 	plt.legend()
@@ -217,7 +219,7 @@ def plot_snr(so,snrtype=0):
 	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.stel.mag,so.obs.texp,so.inst.darknoise)
 	plt.savefig(SAVEPATH + 'snrplots/' + figname)
 
-def plot_snr_orders(so,snrtype=0,mode='mean'):
+def plot_snr_orders(so,snrtype=0,mode='mean',height=0.055):
 	"""
 	snrtype: 0 or 1
 		0 selects per pixel SNR
@@ -226,8 +228,8 @@ def plot_snr_orders(so,snrtype=0,mode='mean'):
 		plots SNR as either the average ('mean') or the peak ('peak') of each order
 
 	"""
-	if snrtype==0: cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so,so.obs.v,so.obs.snr)
-	if snrtype==1: cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so,so.obs.v_resamp,so.obs.snr_reselement)
+	if snrtype==0: cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so,so.obs.v,so.obs.snr,height=height)
+	if snrtype==1: cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so,so.obs.v_resamp,so.obs.snr_reselement,height=height)
 
 	fig, ax = plt.subplots(1,1, figsize=(8,6))	
 	if mode=='peak': ax.plot(cen_lam, snr_peaks,lw=2)

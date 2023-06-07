@@ -40,7 +40,7 @@ def get_sky_bg(x,airmass=1.5,pwv=1.5,npix=3,lam0=2000,R=100000,diam=10,area=76,s
 
     return sky_background_interp.value # ph/s
 
-def get_inst_bg(x,npix=3,lam0=2000,R=100000,diam=10,area=76):
+def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hispec_subsystems_11032022/'):
     """
     generate sky background per reduced pixel, default to HIPSEC. Source: DMawet jup. notebook
 
@@ -52,12 +52,11 @@ def get_inst_bg(x,npix=3,lam0=2000,R=100000,diam=10,area=76):
     sky background (photons/s) already considering PSF sampling
 
     """
-    em_red,em_blue, temps = get_emissivity(x)
+    em_red,em_blue, temps = get_emissivity(x,datapath=datapath)
 
     # telescope
     diam *= u.m
     area *= u.m * u.m
-    lam0 *= u.nm
     wave = x*u.nm
 
     fwhm = ((wave  / diam) * u.radian).to(u.arcsec)
@@ -118,7 +117,7 @@ def get_sky_bg_tracking(x,fwhm,airmass=1.5,pwv=1.5,area=76,skypath = '../../../.
     
     return sky_background_interp.value # ph/s/nm
 
-def get_inst_bg_tracking(x,fwhm,area=76):
+def get_inst_bg_tracking(x,fwhm,area=76,datapath='./data/throughput/hispec_subsystems_11032022/'):
     """
     generate sky background per pixel, default to HIPSEC. Source: DMawet jup. notebook
     change this to take emissivities and temps as inputs so dont
@@ -133,7 +132,7 @@ def get_inst_bg_tracking(x,fwhm,area=76):
 
     """
     temps = [276,276,276]
-    em = get_emissivities(x,surfaces=['tel','ao','feicom'])
+    em = get_emissivities(x,surfaces=['tel','ao','feicom'],datapath=datapath)
 
     # telescope
     area *= u.m * u.m
@@ -192,7 +191,7 @@ def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg,darknoise,readnoise,npix,n
     sig_bg   = np.sqrt(inst_bg + sky_bg) 
 
     # read noise  - reduces by number of ramps, limit to 6 at best
-    sig_read = np.max((6,(readnoise/np.sqrt(nsamp))))
+    sig_read = np.max((3,(readnoise/np.sqrt(nsamp))))
     
     # dark current - times time and pixels
     sig_dark = np.sqrt(darknoise * npix * texp) #* get dark noise every sample
