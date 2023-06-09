@@ -28,8 +28,7 @@ class storage_object():
 class RUN():
     "star info and spectrum"
     def __init__(self):
-        self.plot_prefix   = None       # stellar spec file name
-        self.savename      = None # wavelength like normal (should match exoplanet and be in standard wavelength)
+        self.outpath      = './' # stellar spec file name
 
 class AO():
     "float values"
@@ -37,7 +36,7 @@ class AO():
         self.mode   = 'SH'     # AO mode corresponding to ao wfe load fxn
         self.tt_static   = 0    # mas, static tip tilt error
         self.tt_dynamic  = 'default' # mas or 'default', dynamic tip tilt error, default: takes from file based on stellar magnitdue
-        self.lo_wfe = 50    # nm, low order 
+        self.lo_wfe = 50  # nm, low order 
         self.defocus = 25 #nm, low order
         self.v_mag   = 'default' # magnitude or 'defaul't, magnitude of AO star, default: uses Vmag of target star
         self.ho_wfe  = 'default' # nm or 'default', high order wave front error, default: loads from file
@@ -67,13 +66,13 @@ class OBSERVATION():
 class FILTER():
     "float values"
     def __init__(self):
-        self.x    = None
-        self.y    = None
-        self.zp   = None # will be loaded http://astroweb.case.edu/ssm/ASTR620/mags.html
+        self.x    = None # wavelength array
+        self.y    = None # filter transmission (fraction)
+        self.zp   = None # zeropoints storage object - will be loaded
         self.filter_file=None
-        self.zp_file = './data/filters/zeropoints.txt'
+        self.zp_file = './data/filters/zeropoints.txt' #http://astroweb.case.edu/ssm/ASTR620/mags.html
         self.zp_unit = 'Jy'
-        self.band='J' # band to pick
+        self.band   = 'J' # band to pick
         self.family = 'Johnson' # family of filter band, see zeropoints file
         #zps    = np.loadtxt(self.zp_file,dtype=str).T
         #self.options =[zps[0],zps[1]] # returns options for bands to pick

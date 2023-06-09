@@ -163,7 +163,7 @@ def get_band_mag(so,family,band,factor_0):
     # get zps
     zps                     = np.loadtxt(so.filt.zp_file,dtype=str).T
     izp                     = np.where((zps[0]==family) & (zps[1]==band))[0]
-    zp                      = np.float(zps[2][izp])
+    zp                      = float(zps[2][izp])
 
     mag = -2.5*np.log10(flux_Jy/zp)
 
@@ -254,7 +254,7 @@ class fill_data():
 		# read zeropoint file, get zp
 		zps                     = np.loadtxt(so.filt.zp_file,dtype=str).T
 		izp                     = np.where((zps[0]==so.filt.family) & (zps[1]==so.filt.band))[0]
-		so.filt.zp              = np.float(zps[2][izp])
+		so.filt.zp              = float(zps[2][izp])
 
 		# find filter file and load filter
 		so.filt.filter_file         = glob.glob(so.filt.filter_path + '*' + so.filt.family + '*' +so.filt.band + '.dat')[0]

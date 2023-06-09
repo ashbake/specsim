@@ -5,7 +5,8 @@
 import numpy as np
 from scipy import interpolate
 
-from astropy.modeling.blackbody import blackbody_lambda, blackbody_nu
+#from astropy.modeling.blackbody import blackbody_lambda, blackbody_nu
+from astropy.modeling.models import BlackBody
 from astropy import units as u
 from astropy import constants as c 
 
@@ -66,7 +67,9 @@ def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hi
     # step through temperatures and emissivities for red and blue
     # red
     for i,temp in enumerate(temps):
-        bbtemp = blackbody_lambda(wave, temp).to(u.erg/(u.micron * u.s * u.cm**2 * u.arcsec**2)) * area.to(u.cm**2) * solidangle
+        bbtemp_fxn  = BlackBody(temp * u.K, scale=1.0 * u.erg / (u.micron * u.s * u.cm**2 * u.arcsec**2)) 
+        bbtemp = bbtemp_fxn(wave) *  area.to(u.cm**2) * solidangle
+        #bbtemp = blackbody_lambda(wave, temp).to(u.erg/(u.micron * u.s * u.cm**2 * u.arcsec**2)) * area.to(u.cm**2) * solidangle
         if i==0:
             tel_thermal_red  = em_red[i] * bbtemp.to(u.photon/u.s/u.micron, equivalencies=u.spectral_density(wave)) * pix_width_nm
             tel_thermal_blue = em_blue[i] * bbtemp.to(u.photon/u.s/u.micron, equivalencies=u.spectral_density(wave)) * pix_width_nm
@@ -144,7 +147,9 @@ def get_inst_bg_tracking(x,fwhm,area=76,datapath='./data/throughput/hispec_subsy
     # step through temperatures and emissivities for red and blue
     # red
     for i,temp in enumerate(temps):
-        bbtemp = solidangle * blackbody_lambda(wave, temp).to(u.erg/(u.nm * u.s * u.cm**2 * u.arcsec**2)) * area.to(u.cm**2) 
+        bbtemp_fxn  = BlackBody(temp * u.K, scale=1.0 * u.erg / (u.micron * u.s * u.cm**2 * u.arcsec**2)) 
+        bbtemp = bbtemp_fxn(wave) *  area.to(u.cm**2) * solidangle
+        #bbtemp = solidangle * blackbody_lambda(wave, temp).to(u.erg/(u.nm * u.s * u.cm**2 * u.arcsec**2)) * area.to(u.cm**2) 
         if i==0:
             tel_thermal = em[i] * bbtemp.to(u.photon/u.s/u.nm, equivalencies=u.spectral_density(wave)) 
         else:
