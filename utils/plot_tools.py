@@ -20,6 +20,54 @@ DATAPATH = '../data/'
 SAVEPATH  = '../output/'
 
 
+# MONEY MAKER PLOTS
+def plot_doppler_spectrographs(so,cload):
+	"""
+	make figures to add to sam's cool rv landscape plot
+	"""	
+	configfile = './configs/hispec_snr.cfg'
+	so         = load_object(configfile)
+	so.inst.l0 = 370
+	so.inst.lf = 2650
+	cload = fill_data(so) # put coupling files in load and wfe stuff too
+
+	# plot m star and g star
+	cload.set_teff_mag(so,2500,10,star_only=True)
+	mstar = so.stel.s
+	cload.set_teff_mag(so,5800,10,star_only=True)
+	gstar = so.stel.s
+	
+	fig, ax = plt.subplots(1,1, figsize=(15,4),facecolor='black')	
+	ax.set_facecolor('black')
+	ax.plot(so.stel.v,mstar*2,'firebrick',lw=0.5)
+	ax.plot(so.stel.v,gstar,'royalblue',lw=0.5)	
+	ax.set_ylim(-10,5000)
+	ax.set_xlim(380,2650)
+
+	#tellurics
+	tel_nir = so.tel.s.copy()
+	data = fits.getdata('./data/telluric/psg_out_2015.06.17_l0_380nm_l1_900nm_res_0.002nm_lon_204.53_lat_19.82_pres_0.5826.fits')
+	_,ind     = np.unique(data['Wave/freq'],return_index=True)
+	tck_tel   = interpolate.splrep(data['Wave/freq'][ind],data['Total'][ind], k=2, s=0)
+	tel_vis = interpolate.splev(cload.x,tck_tel,der=0,ext=1)
+
+	fig, ax = plt.subplots(1,1, figsize=(15,4),facecolor='black')	
+	ax.set_facecolor('black')
+	ax.plot(so.stel.v[1000001:],tel_nir[1000001:],'gray',lw=0.5)
+	ax.plot(so.stel.v[0:1000001],tel_vis[0:1000001],'gray',lw=0.5)
+	ax.set_ylim(-2,2)
+	ax.set_xlim(380,2650)
+
+	# plot filters
+	families=['Johnson','cfht','2mass','2mass','2mass']
+	for i,band in enumerate(['R','y','J','H','K']):
+		so.filt.family=families[i]
+		so.filt.band=band
+		cload.filter(so)
+		ax.plot(so.filt.xraw,so.filt.yraw*.5,'darkgray',lw=0.8)
+
+
+
 # STAND ALONE PLOTTING FUNCTIONS
 def setup_plot_style():
 	"""
@@ -184,12 +232,12 @@ def plot_throughput_nice(telluric_file,datapath='./data/throughput/hispec_subsys
     plt.grid(axis='y',alpha=0.4)
     plt.subplots_adjust(bottom=0.17)
     plt.title('HISPEC yJ Throughput')
-    plt.savefig(outputdir + 'e2e_mri_plot_yJ.png')
-    plt.savefig(outputdir + 'e2e_mri_plot_yJ.pdf')
+    #plt.savefig(outputdir + 'e2e_mri_plot_yJ.png')
+    #plt.savefig(outputdir + 'e2e_mri_plot_yJ.pdf')
 
 
 # REQUIRES SO INSTANCE
-def plot_snr(so,snrtype=0):
+def plot_snr(so,snrtype=0,savepath=SAVEPATH):
 	"""
 	snrtype: 0 or 1
 		0 selects per pixel SNR
@@ -217,9 +265,9 @@ def plot_snr(so,snrtype=0):
 	ax2.set_ylim(0,1)
 	ax.set_xlim(970,2500)
 	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.stel.mag,so.obs.texp,so.inst.darknoise)
-	plt.savefig(SAVEPATH + 'snrplots/' + figname)
+	plt.savefig(savepath + figname)
 
-def plot_snr_orders(so,snrtype=0,mode='mean',height=0.055):
+def plot_snr_orders(so,snrtype=0,mode='mean',height=0.055,savepath=SAVEPATH):
 	"""
 	snrtype: 0 or 1
 		0 selects per pixel SNR
@@ -243,20 +291,20 @@ def plot_snr_orders(so,snrtype=0,mode='mean',height=0.055):
 	# duplicate axis to plot filter response
 	# plot band
 	ax.fill_between(so.inst.y,0,np.max(snr_peaks)+10,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(20+np.min(so.inst.y),9, 'y')
+	ax.text(20+np.min(so.inst.y),0.09, 'y')
 	ax.fill_between(so.inst.J,0,np.max(snr_peaks)+10,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.J),9, 'J')
+	ax.text(50+np.min(so.inst.J),0.09, 'J')
 	ax.fill_between(so.inst.H,0,np.max(snr_peaks)+10,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.H),9, 'H')
+	ax.text(50+np.min(so.inst.H),0.09, 'H')
 	ax.fill_between(so.inst.K,0,np.max(snr_peaks)+10,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.K),9, 'K')
+	ax.text(50+np.min(so.inst.K),0.09, 'K')
 	ax.set_xlim(970,2500)
 	ax.set_ylim(0,np.max(snr_peaks)+10)
 	ax.fill_between([1333,1500],0,np.max(snr_peaks)+10,facecolor='white',zorder=100)
 
-	plt.savefig('./output/snrplots/' + figname)
+	plt.savefig(savepath + figname)
 
-def plot_basethroughput(so):
+def plot_base_throughput(so,savepath=SAVEPATH):
 	"""
 	"""
 	fig, ax = plt.subplots(1,1, figsize=(10,8))	
@@ -270,19 +318,19 @@ def plot_basethroughput(so):
 	# duplicate axis to plot filter response
 	# plot band
 	ax.fill_between(so.inst.y,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(20+np.min(so.inst.y),9, 'y')
+	ax.text(20+np.min(so.inst.y),0.09, 'y')
 	ax.fill_between(so.inst.J,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.J),9, 'J')
+	ax.text(50+np.min(so.inst.J),0.09, 'J')
 	ax.fill_between(so.inst.H,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.H),9, 'H')
+	ax.text(50+np.min(so.inst.H),0.09, 'H')
 	ax.fill_between(so.inst.K,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.K),9, 'K')
+	ax.text(50+np.min(so.inst.K),0.09, 'K')
 	ax.set_xlim(970,2500)
 	plt.grid()
 	ax.set_ylim(0,peak)
-	plt.savefig(SAVEPATH + '/throughput/' + figname)
+	plt.savefig(savepath + figname)
 
-def plot_coupling(so):
+def plot_coupling(so,savepath=SAVEPATH):
 	"""
 	"""
 	fig, ax = plt.subplots(1,1, figsize=(10,8))	
@@ -290,27 +338,28 @@ def plot_coupling(so):
 	ax.plot(so.inst.xtransmit,so.inst.coupling)
 	peak = np.max(so.inst.coupling)
 
-	ax.set_ylabel('Base Throughput')
+	ax.set_ylabel('Coupling')
 	ax.set_xlabel('Wavelength (nm)')
 	ax.axhline(y=30,color='k',ls='--')
-	figname = 'total_throughput.png' 
+	figname = 'coupling_throughput.png' 
 	# duplicate axis to plot filter response
 	# plot band
 	ax.fill_between(so.inst.y,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(20+np.min(so.inst.y),9, 'y')
+	ax.text(20+np.min(so.inst.y),0.09, 'y')
 	ax.fill_between(so.inst.J,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.J),9, 'J')
+	ax.text(50+np.min(so.inst.J),0.09, 'J')
 	ax.fill_between(so.inst.H,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.H),9, 'H')
+	ax.text(50+np.min(so.inst.H),0.09, 'H')
 	ax.fill_between(so.inst.K,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
-	ax.text(50+np.min(so.inst.K),9, 'K')
+	ax.text(50+np.min(so.inst.K),0.09, 'K')
 	ax.set_xlim(970,2500)
 	plt.grid()
 	ax.set_ylim(0,peak)
-	plt.savefig(SAVEPATH + 'throughput/' + figname)
+	plt.savefig(savepath + figname)
 
-def plot_bg_noise(so):
+def plot_background_spectra(so,savepath=SAVEPATH):
 	"""
+	
 	"""
 	col_table = plt.get_cmap('Spectral_r')
 	fig, axs = plt.subplots(3,figsize=(7,9),sharex=True)
@@ -321,15 +370,15 @@ def plot_bg_noise(so):
 	axs[0].fill_between([980,1330],0,1000,facecolor='gray',alpha=0.2)
 	axs[0].grid('True')
 	axs[0].set_xlim(950,2400)
-	axs[0].set_ylabel('Sky Background \n(phot/nm/s)')
-	axs[1].set_ylabel('Instrument Background \n(phot/nm/s)')
-	axs[2].set_ylabel('Source Photon Noise \n (phot/nm/s)')
+	axs[0].set_ylabel('Sky Bkg \n(phot/nm/s)')
+	axs[1].set_ylabel('Instrument Bkg \n(phot/nm/s)')
+	axs[2].set_ylabel('Source Photons \n (phot/nm/s)')
 	axs[2].set_xlabel('Wavelength [nm]')
 	axs[0].set_ylim(-0,1000)
-	axs[1].set_ylim(-0,40)
+	axs[1].set_ylim(-0,20)
 	axs[0].plot(so.stel.v,so.track.sky_bg_spec,'b',alpha=0.5,zorder=100,label='Sky Background')
 	axs[1].plot(so.stel.v,so.track.inst_bg_spec,'m',lw=2,alpha=0.5,zorder=100,label='Instrument Background')
-	axs[2].plot(so.stel.v,np.sqrt(so.track.signal_spec/so.track.texp),'g',alpha=0.5,zorder=100,label='Instrument Background')
+	axs[2].plot(so.stel.v,so.track.signal_spec/so.track.texp,'g',alpha=0.5,zorder=100,label='Source Photons')
 
 	#ax2.fill_between(so.filt.v,so.filt.s,facecolor='gray',edgecolor='black',alpha=0.2)
 	#ax2.set_ylabel('Filter Response')
@@ -347,10 +396,10 @@ def plot_bg_noise(so):
 		ax2.set_ylim(0,1)
 
 	axs[0].set_title('Tracking Camera Noise \n  %s mag = %s, Teff=%sK '%(so.filt.band,so.stel.mag,int(so.stel.teff)))
-	plt.savefig('./output/trackingcamera/noise_flux_%sK_%s_%smag.pdf'%(so.stel.teff,so.filt.band,so.stel.mag))
-	plt.savefig('./output/trackingcamera/noise_flux_%sK_%s_%smag.png'%(so.stel.teff,so.filt.band,so.stel.mag))
+	#plt.savefig('./output/trackingcamera/noise_flux_%sK_%s_%smag.pdf'%(so.stel.teff,so.filt.band,so.stel.mag))
+	plt.savefig(savepath + 'noise_flux_%sK_%s_%smag.png'%(so.stel.teff,so.filt.band,so.stel.mag))
 
-def plot_tracking_bands(so):
+def plot_tracking_bands(so,trackbands=['J','JHgap','H'],savepath=SAVEPATH):
 	"""
 	"""
 	trackbands=['y','Jplus','H','K'] #['J','JHgap','H'] #'Hplus50','Jplus']#['y',
@@ -388,59 +437,12 @@ def plot_tracking_bands(so):
 	plt.ylabel('Relative Transmission')
 	plt.legend(fontsize=10,loc=7)
 
-	plt.savefig('output/trackingcamera/plots/filters/tracking_camera_filter_assumptions_%sK.png'%so.stel.teff,dpi=500)
+	plt.savefig(savepath + 'tracking_camera_filter_assumptions_%sK.png'%so.stel.teff,dpi=500)
 
 def plot_photonic_lantern_boost(so,cload):
 	"""
 	"""
 	pass
-
-# MONEY MAKER PLOTS
-def plot_doppler_spectrographs(so,cload):
-	"""
-	make figures to add to sam's cool rv landscape plot
-	"""	
-	configfile = './configs/hispec_snr.cfg'
-	so         = load_object(configfile)
-	so.inst.l0 = 370
-	so.inst.lf = 2650
-	cload = fill_data(so) # put coupling files in load and wfe stuff too
-
-	# plot m star and g star
-	cload.set_teff_mag(so,2500,10,star_only=True)
-	mstar = so.stel.s
-	cload.set_teff_mag(so,5800,10,star_only=True)
-	gstar = so.stel.s
-	
-	fig, ax = plt.subplots(1,1, figsize=(15,4),facecolor='black')	
-	ax.set_facecolor('black')
-	ax.plot(so.stel.v,mstar*2,'firebrick',lw=0.5)
-	ax.plot(so.stel.v,gstar,'royalblue',lw=0.5)	
-	ax.set_ylim(-10,5000)
-	ax.set_xlim(380,2650)
-
-	#tellurics
-	tel_nir = so.tel.s.copy()
-	data = fits.getdata('./data/telluric/psg_out_2015.06.17_l0_380nm_l1_900nm_res_0.002nm_lon_204.53_lat_19.82_pres_0.5826.fits')
-	_,ind     = np.unique(data['Wave/freq'],return_index=True)
-	tck_tel   = interpolate.splrep(data['Wave/freq'][ind],data['Total'][ind], k=2, s=0)
-	tel_vis = interpolate.splev(cload.x,tck_tel,der=0,ext=1)
-
-	fig, ax = plt.subplots(1,1, figsize=(15,4),facecolor='black')	
-	ax.set_facecolor('black')
-	ax.plot(so.stel.v[1000001:],tel_nir[1000001:],'gray',lw=0.5)
-	ax.plot(so.stel.v[0:1000001],tel_vis[0:1000001],'gray',lw=0.5)
-	ax.set_ylim(-2,2)
-	ax.set_xlim(380,2650)
-
-	# plot filters
-	families=['Johnson','cfht','2mass','2mass','2mass']
-	for i,band in enumerate(['R','y','J','H','K']):
-		so.filt.family=families[i]
-		so.filt.band=band
-		cload.filter(so)
-		ax.plot(so.filt.xraw,so.filt.yraw*.5,'darkgray',lw=0.8)
-
 
 
 if __name__=='__main__':

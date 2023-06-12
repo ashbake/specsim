@@ -1,23 +1,21 @@
 # calc signal to noise
-# max for the calcium H&K
-import sys
+import sys,os
 import matplotlib
 import numpy as np
 import matplotlib.pylab as plt
 from scipy import interpolate
-import pandas as pd
+from matplotlib.colors import LogNorm
+from datetime import date
 
 font = {'size'   : 14}
 matplotlib.rc('font', **font)
 
-sys.path.append('./utils/')
+sys.path.append('/Users/ashbake/Documents/Research/ToolBox/hispec_snr/utils/')
 from objects import load_object
-from load_inputs import fill_data, load_filter
+from load_inputs import fill_data
 from functions import *
-from noise_tools import get_sky_bg, get_inst_bg, sum_total_noise
-from throughput_tools import pick_coupling, get_band_mag, get_base_throughput
-from wfe_tools import get_tip_tilt_resid, get_HO_WFE
 import plot_tools,obs_tools
+
 
 plt.ion()
 
@@ -117,7 +115,7 @@ def plot_snr_mag_peaks_2d(so, mag_arr,v,snr_arr,xextent=[980,2460],mode='max'):
 	fig, ax = plt.subplots(1,1, figsize=(9,8))	
 	ax.imshow(snr_arr_order_regular,aspect='auto',origin='lower',\
 				interpolation='quadric',cmap='nipy_spectral',\
-				extent=extent,vmax=1000,vmin=0)
+				extent=extent,vmax=10000,vmin=1,norm=LogNorm())
 	cs = ax.contour(snr_arr_order_regular, levels=[30,50,100,200,500,1000] ,\
 				colors=['r','k','k','k','k','k'],origin='lower',\
 				extent=extent)
@@ -254,17 +252,13 @@ def plot_median_bin_snr(so):
 	plt.savefig('./output/snr/median_bin_snr_per_band.png')
 
 ###############
-def run_snr_v_mag(teff=3600):
+def run_snr_v_mag(so,teff='default',ao_mode='default'):
 	"""
 	"""
-	temp_arr   = [1000,1500,2300,3000,3600,4200,5800]
-	ao_modes   = ['LGS_100J_45','LGS_100J_45','LGS_100J_45','LGS_100J_45','LGS_100J_45','LGS_STRAP_45','LGS_STRAP_45','LGS_STRAP_45']
-	itemp = np.where(np.array(temp_arr) ==teff)[0][0]
-	ao_mode = np.array(ao_modes)[itemp]
+	if teff!='default':  so.stel.teff = teff
+	if ao_mode!='default':  so.ao.mode = ao_mode # load new ao mode
 
-	so.ao.mode = ao_mode
-
-	cload.set_teff_mag(so,3600,so.stel.mag,star_only=False)
+	cload.set_teff_mag(so,teff,so.stel.mag,star_only=False)
 	mag_arr= np.arange(5,16)
 	snr_arr = []
 	s_arr   = []
@@ -280,16 +274,14 @@ def run_snr_v_mag(teff=3600):
 		n_arr.append(so.obs.noise_frame)
 		c_arr.append(so.inst.coupling)
 	
-	#plot_snr_mag_peaks(so, mag_arr,so.obs.v_resamp,snr_reselement,mode='max')
-	#plot_snr_mag_peaks_2d(so, mag_arr,so.obs.v_resamp,snr_reselement,mode='max')
-
 	return mag_arr,snr_arr,s_arr,n_arr,c_arr,snr_reselement
 
-def run_snr_v_teff(mag=15):
+def run_snr_v_teff(so,mag=15,ao_sys='HAKA'):
 	"""
 	"""
 	temp_arr   = [1000,1500,2300,3000,3600,4200,5800]
-	ao_mode   = ['LGS_100J_45','LGS_100J_45','LGS_100J_45','LGS_100J_45','LGS_100J_45','LGS_STRAP_45','LGS_STRAP_45','LGS_STRAP_45']
+	if ao_sys=='HAKA': ao_mode   = ['LGS_100J_45','LGS_100J_45','LGS_100J_45','LGS_100J_45','LGS_100J_45','LGS_STRAP_45','LGS_STRAP_45','LGS_STRAP_45']
+	if ao_sys=='KAO':  ao_mode   = ['LGS_100J_KAO','LGS_100J_KAO','LGS_100J_KAO','LGS_100J_KAO','LGS_100J_KAO','LGS_100J_KAO','LGS_100J_KAO','LGS_100J_KAO']
 	snr_arr = []
 	s_arr   = []
 	n_arr   = []
@@ -298,7 +290,7 @@ def run_snr_v_teff(mag=15):
 
 	for i,temp in enumerate(temp_arr):
 		so.ao.mode=ao_mode[i]
-		cload.set_teff_mag(so,temp,mag,star_only=False) 
+		cload.set_teff_mag(so,temp,mag,star_only=False)  # this reloads ao, instrument, tracking, observe
 		snr_arr.append(so.obs.snr) # plot snr per res element
 		snr_reselement.append(so.obs.snr_reselement) # plot snr per res element
 		s_arr.append(so.obs.s_frame)
@@ -314,22 +306,39 @@ def run_snr_v_teff(mag=15):
 
 if __name__=='__main__':
 	#load inputs
-	configfile = './configs/hispec_snr_bspec.cfg'
+	configfile = './hispec_snr.cfg'
 	so    = load_object(configfile)
 	cload = fill_data(so) # put coupling files in load and wfe stuff too
 
 	plot_tools.plot_snr_orders(so,snrtype=1,mode='peak')
 
-	# mag_arr,snr_arr,s_arr,n_arr,c_arr,snr_reselement= run_snr_v_mag(teff=3600)
-	# np.save('./output/snr/snr_arr_mag_teff_%s_band_%s'%(so.stel.teff,so.filt.band),snr_arr)
-	
+	run_long=True
+	if run_long:
+		datestr  = date.today().strftime("%Y%m%d")#'20230406' #date.today().strftime("%Y%m%d")		
+		savepath = './output/snr_out/%s/' %datestr
+		if not os.path.isdir(savepath): os.makedirs(savepath)
+		for i in np.arange(4):
+			so.filt.band   = ['y','J','H','K'][i]
+			so.filt.family = ['cfht','2mass','2mass','2mass'][i]
+			xextent = [so.inst.y,so.inst.J,so.inst.H,so.inst.K][i]
 
-	#xextent = so.inst.y
+			# mag step
+			teff    = 3000
+			ao_mode = 'LGS_100H_KAO'
+			mag_arr,snr_arr,s_arr,n_arr,c_arr,snr_reselement = run_snr_v_mag(so,teff=teff,ao_mode=ao_mode)
+			np.save(savepath + 'snr_arr_mag_teff_%s_band_%s_aomode_%s'%(so.stel.teff,so.filt.band,ao_mode),snr_arr,ao_mode)		
+			plot_snr_mag_peaks_2d(so, mag_arr,so.obs.v_resamp,snr_reselement,xextent=xextent,mode='max')
+			plt.savefig(savepath + 'snr_arr_mag_teff_%s_band_%s_aomode_%s.png'%(so.stel.teff,so.filt.band,ao_mode))
+			#plot_snr_mag_peaks(so, mag_arr,so.obs.v_resamp,snr_reselement,mode='max')
 
-	#plot_snr_mag_peaks_2d(so, mag_arr,so.obs.v_resamp,snr_reselement,xextent=xextent,mode='max')
-	#temp_arr,snr_arr,s_arr,n_arr,c_arr,snr_reselement2 = run_snr_v_teff(mag=15)
-	#plot_snr_teff_peaks(so, temp_arr,so.obs.v_resamp,snr_reselement2,xextent=xextent,yextent=[0,150],mode='max')
+			# temperature step
+			mag = 15
+			ao_sys='KAO'
+			temp_arr,snr_arr2,s_arr2,n_arr2,c_arr2,snr_reselement2 = run_snr_v_teff(so,mag=mag)
+			np.save(savepath + 'KAO_snr_arr_teff_mag_%s_band_%s_aosys_%s'%(so.stel.mag,so.filt.band,ao_sys),snr_arr2)
+			plot_snr_teff_peaks(so, temp_arr,so.obs.v_resamp,snr_reselement2,xextent=xextent,yextent=[0,150],mode='max')
+			plt.savefig(savepath + 'KAO_snr_arr_teff_mag_%s_band_%s_aosys_%s.png'%(so.stel.mag,so.filt.band,ao_sys))
 
-	#plot_snr_mag_peaks(so, mag_arr,so.obs.v_resamp,snr_reselement,mode='max')
+
 
 
