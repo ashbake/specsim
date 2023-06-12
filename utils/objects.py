@@ -53,7 +53,7 @@ class INSTRUMENT():
         self.tel_diam = 10 #m ,telescope diameter,  mauna kea default
         self.res_samp = 3 #pixels, sampling of resolution element
         self.saturation = 100000 # electrons, saturation limit ofr detector
-        self.readnoise  = 12 # e-, read noise of detector
+        self.readnoise  = 12 # e-, CDS read noise of detector
         self.darknoise  = 0.01 # e-/pix/s, dark current to assume
 
 class OBSERVATION():
@@ -61,7 +61,7 @@ class OBSERVATION():
     def __init__(self):
         self.texp      = 900  # seconds, total integrated exposure time 
         self.texp_frame= 900  # seconds, maximum for a single exposure, 'max' will compute exposure to hit 50% full well 
-        self.nramp = 1        # number of up the ramp samples per frame exposure
+        self.nsamp = 1        # number of up the ramp samples per frame exposure
 
 class FILTER():
     "float values"
@@ -72,8 +72,8 @@ class FILTER():
         self.filter_file=None
         self.zp_file = './data/filters/zeropoints.txt' #http://astroweb.case.edu/ssm/ASTR620/mags.html
         self.zp_unit = 'Jy'
-        self.band   = 'J' # band to pick
-        self.family = 'Johnson' # family of filter band, see zeropoints file
+        self.band   = 'J' # band to pick, yJHK
+        self.family = '2mass' # family of filter band, see zeropoints file 'cfht', '2mass' for JHK
         #zps    = np.loadtxt(self.zp_file,dtype=str).T
         #self.options =[zps[0],zps[1]] # returns options for bands to pick
 
@@ -86,12 +86,15 @@ class STELLAR():
         self.vraw = None # wavelength like normal (should match exoplanet and be in standard wavelength)
         self.sraw = None #  spectrum
         self.vsini = 0 # km/s
+        self.mag = 10
         
 class TELLURIC():
     "telluric transmission file, static"
     def __init__(self):
         # User optional define:
         self.telluric_file   = None       # spec file name
+        self.airmass = 1.5
+        self.pwv     = 1.3
         # Filled in by code:
         self.v = None # wavelength 
         self.s = None #  spectrum

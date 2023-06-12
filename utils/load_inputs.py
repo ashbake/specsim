@@ -574,10 +574,14 @@ class fill_data():
 		so.stel.mag   = mag
 		self.stellar(so)
 		if not star_only:
-			self.ao(so)
-			self.instrument(so)
-			self.tracking(so)
-			self.observe(so)
+			if trackonly:
+				self.ao(so)
+				self.instrument(so)
+				self.tracking(so)
+			else:
+				self.ao(so)
+				self.instrument(so)
+				self.observe(so)
 
 	def set_mag(self,so,mag,trackonly=False):
 		"""
