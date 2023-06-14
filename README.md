@@ -6,7 +6,9 @@ Clone the repo
 ```
 > git clone https://github.com/ashbake/specsim.git
 ```
-Move into that directory and run the following to pip install psisim and its dependencies:
+Move into that directory and run the following to pip install specsim and its dependencies:
+
+**NOTE THIS ISNT WORKING YET- instead creade environment and install packages listed in requirements.txt**
 
 ```
 > pip install -e .
