@@ -27,7 +27,9 @@ Otherwise the code requires the `transmission_path` to point to the folder that 
 The coupling folder should contain the output to fiber coupling simulations e.g. couplingEff_atm1_adc1_PL0_defoc0nmRMS_LO0nmRMS_ttStatic1.5mas_ttDynamic5.5masRMS.csv. The coupling depends on the wavefront error and also takes parameters specifying where atmospheric refraction and ADC corrections were assumed, and if the photonic lantern (PL) was used. These paramteres are defined in the config file as adc, atm, PLon, respectively.
 
 #### Filter Files
-The filters used primarily here 
+The filters used primarily here are 2MASS J/H/K and CFHT y band, similar to PSISIM. These are provided in the examples/data/ folder. Other filters can be used, but the code relies on the file `zeropoints.txt`, which contains zero point information for each filter. This file must be updated if a new filter is added. The filter band and the family is specified in the config file. This filter profile is primarily used to correctly scale the magnitude of the stellar model.
+
+The [SVO service]{http://svo2.cab.inta-csic.es/theory/fps/index.php?mode=browse&gname=2MASS&asttype=} is a handy place to download filter profiles.
 
 #### Telluric File
 The telluric models loaded by specsim are PSG models, which should be high resolution and can be created using the psg wrapper called run_psg located [here](https://github.com/ashbake/run_psg). 
