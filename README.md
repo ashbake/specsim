@@ -34,7 +34,7 @@ The coupling folder should contain the output to fiber coupling simulations e.g.
 #### Filter Files
 The filters used primarily here are 2MASS J/H/K and CFHT y band, similar to PSISIM. These are provided in the examples/data/ folder. Other filters can be used, but the code relies on the file `zeropoints.txt`, which contains zero point information for each filter. This file must be updated if a new filter is added. The filter band and the family is specified in the config file. This filter profile is primarily used to correctly scale the magnitude of the stellar model.
 
-The [SVO service]{http://svo2.cab.inta-csic.es/theory/fps/index.php?mode=browse&gname=2MASS&asttype=} is a handy place to download filter profiles.
+The [SVO service](http://svo2.cab.inta-csic.es/theory/fps/index.php?mode=browse&gname=2MASS&asttype=) is a handy place to download filter profiles.
 
 #### Telluric File
 The telluric models loaded by specsim are assumed to be in the format of PSG models, which should be high resolution and can be created using the psg wrapper called run_psg located [here](https://github.com/ashbake/run_psg). 
