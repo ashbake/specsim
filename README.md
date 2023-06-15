@@ -51,3 +51,36 @@ We recommend downloading specific Phoenix models [here](http://phoenix.astro.phy
 [Sonora](https://zenodo.org/record/1309035#.XbtLtpNKhMA) files: 
 
 These should be unzipped into any directory, which should be specified as the variable ```sonora_folder``` under ```[spec]``` in the configuration files. 
+
+
+
+# Running specsim
+
+First import some key packages from specsim
+```
+> import sys
+
+> sys.path.append('/Users/ashbake/Documents/Research/ToolBox/specsim/utils/')
+> from objects import load_object
+> from load_inputs import fill_data
+> import plot_tools,obs_tools
+```
+
+Key parameters are stored in the configuration file "hispec.cfg". The function "load_object" loads the contents of this configuration file into a storage object "so'. The objects.py function is a useful reference for seeing what is contained in so, but it has class attributes like 'stel' for stellar properties and 'track' for tracking camera properties. For example, the stellar temperature defined in the config file will be loaded and stored in "so.stel.teff".
+
+The "fill_data" class takes the storage object and upon initiation, it fills the so object by running a bunch of things. As such, this process takes a little while - first it defines the wavelength grid (x) and yJHK filter bounds, then does the dirty work of loading, reinterpolating files, and calculating things in the correct order.
+
+```
+> configfile = './configs/modhis.cfg' # define our config file name and path
+> so    = load_object(configfile)     # Load the contents of the config file into the so "storage object"
+> cload = fill_data(so)               # Initiate the fill_data class which runs an observation and stores the results in so
+```
+
+We can then use some plotting tools to plot the snr
+```
+> plot_tools.plot_snr(so,snrtype=0,savepath=savepath)
+```
+
+
+
+
