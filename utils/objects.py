@@ -1,5 +1,7 @@
 import configparser
 import numpy as np
+import os
+
 from distutils.util import strtobool
 
 all = {'storage_object','load_object'}
@@ -26,8 +28,7 @@ class storage_object():
 class RUN():
     "star info and spectrum"
     def __init__(self):
-        self.plot_prefix   = None       # stellar spec file name
-        self.savename      = None # wavelength like normal (should match exoplanet and be in standard wavelength)
+        self.outpath      = './' # stellar spec file name
 
 class AO():
     "float values"
@@ -35,7 +36,7 @@ class AO():
         self.mode   = 'SH'     # AO mode corresponding to ao wfe load fxn
         self.tt_static   = 0    # mas, static tip tilt error
         self.tt_dynamic  = 'default' # mas or 'default', dynamic tip tilt error, default: takes from file based on stellar magnitdue
-        self.lo_wfe = 50    # nm, low order 
+        self.lo_wfe = 50  # nm, low order 
         self.defocus = 25 #nm, low order
         self.v_mag   = 'default' # magnitude or 'defaul't, magnitude of AO star, default: uses Vmag of target star
         self.ho_wfe  = 'default' # nm or 'default', high order wave front error, default: loads from file
@@ -52,7 +53,7 @@ class INSTRUMENT():
         self.tel_diam = 10 #m ,telescope diameter,  mauna kea default
         self.res_samp = 3 #pixels, sampling of resolution element
         self.saturation = 100000 # electrons, saturation limit ofr detector
-        self.readnoise  = 12 # e-, read noise of detector
+        self.readnoise  = 12 # e-, CDS read noise of detector
         self.darknoise  = 0.01 # e-/pix/s, dark current to assume
 
 class OBSERVATION():
@@ -60,21 +61,21 @@ class OBSERVATION():
     def __init__(self):
         self.texp      = 900  # seconds, total integrated exposure time 
         self.texp_frame= 900  # seconds, maximum for a single exposure, 'max' will compute exposure to hit 50% full well 
-        self.nramp = 1        # number of up the ramp samples per frame exposure
+        self.nsamp = 1        # number of up the ramp samples per frame exposure
 
 class FILTER():
     "float values"
     def __init__(self):
-        self.x    = None
-        self.y    = None
-        self.zp   = None # will be loaded http://astroweb.case.edu/ssm/ASTR620/mags.html
+        self.x    = None # wavelength array
+        self.y    = None # filter transmission (fraction)
+        self.zp   = None # zeropoints storage object - will be loaded
         self.filter_file=None
-        self.zp_file = './data/filters/zeropoints.txt'
+        self.zp_file = './data/filters/zeropoints.txt' #http://astroweb.case.edu/ssm/ASTR620/mags.html
         self.zp_unit = 'Jy'
-        self.band='J' # band to pick
-        self.family = 'Johnson' # family of filter band, see zeropoints file
-        zps    = np.loadtxt(self.zp_file,dtype=str).T
-        self.options =[zps[0],zps[1]] # returns options for bands to pick
+        self.band   = 'J' # band to pick, yJHK
+        self.family = '2mass' # family of filter band, see zeropoints file 'cfht', '2mass' for JHK
+        #zps    = np.loadtxt(self.zp_file,dtype=str).T
+        #self.options =[zps[0],zps[1]] # returns options for bands to pick
 
 class STELLAR():
     "star info and spectrum"
@@ -85,12 +86,15 @@ class STELLAR():
         self.vraw = None # wavelength like normal (should match exoplanet and be in standard wavelength)
         self.sraw = None #  spectrum
         self.vsini = 0 # km/s
+        self.mag = 10
         
 class TELLURIC():
     "telluric transmission file, static"
     def __init__(self):
         # User optional define:
         self.telluric_file   = None       # spec file name
+        self.airmass = 1.5
+        self.pwv     = 1.3
         # Filled in by code:
         self.v = None # wavelength 
         self.s = None #  spectrum
@@ -133,6 +137,7 @@ def load_object(configfile):
     Then loads stoar_object and fills in user-defined
     quantities
     """
+    if not os.path.isfile(configfile): raise Exception("Config File is Not Found!")
     config = LoadConfig(configfile)
     so = storage_object()
 

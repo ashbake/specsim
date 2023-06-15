@@ -8,7 +8,6 @@ from scipy import signal
 from scipy import signal, interpolate
 
 from functions import tophat
-from throughput_tools import get_band_mag
 import load_inputs
 
 all = {}
@@ -39,23 +38,54 @@ def get_tracking_cam(camera='h2rg',x=None):
         rn = 12 #e-
         pixel_pitch = 18 #um
         qe_mod = 1 # relative to what is assumed in the throughput model
-        dark=0.8 #e-/s
+        dark=0.8 #e-/s/pix
         saturation = 80000
 
-    if camera=='cred2':
-        rn = 40 #e- Calvin measured 40e-, spec is 30e-, ashley measured 35 cds without 8th column noise
+    if camera=='perfect':
+        rn = 0 #e-
+        pixel_pitch = 18 #um
+        qe_mod = 1 # relative to what is assumed in the throughput model
+        dark=0 #e-/s/pix
+        saturation = 80000
+
+    if camera=='cred2_kpic':
+        rn = 45 #e- Calvin measured 40e-, spec is 30e-, ashley measured 35 cds without 8th column noise
         pixel_pitch = 15 #um https://www.axiomoptics.com/products/c-red-2/
         if np.any(x==None): qe_mod=1
         else: qe_mod = tophat(x,980,1650,1) # scale  
         dark=315 #e-/s liquid cooling mode -40, calvin measured 450e-, spec sheet is 600e-,measured 315e- from KPIC C-RED2
         saturation = 33000
 
-    if camera=='cred2_xswir':
-        #extended NIR
-        rn = 50 #e-  what is claimed online
+    if camera=='cred2':
+        rn = 30 #e- Calvin measured 40e-, spec is 30e-, ashley measured 35 cds without 8th column noise
         pixel_pitch = 15 #um https://www.axiomoptics.com/products/c-red-2/
-        qe_mod = 0.8 /0.9 # 
-        dark=10000 #e-/s liquid cooling mode -40
+        if np.any(x==None): qe_mod=1
+        else: qe_mod = tophat(x,980,1650,1) # scale  
+        dark=315 #e-/s liquid cooling mode -40, calvin measured 450e-, spec sheet is 600e-,measured 315e- from KPIC C-RED2
+        saturation = 33000
+
+    if camera=='cred2_rn25':
+        rn = 25 #e- spie paper for 20 reads which is max for 27 FPS integration time
+        pixel_pitch = 15 #um https://www.axiomoptics.com/products/c-red-2/
+        if np.any(x==None): qe_mod=1
+        else: qe_mod = tophat(x,980,1650,1) # scale  
+        dark=315 #e-/s liquid cooling mode -40, calvin measured 450e-, spec sheet is 600e-,measured 315e- from KPIC C-RED2
+        saturation = 33000
+
+    if camera=='cred2_rn20':
+        rn = 20 #e- spie paper for 20 reads which is max for 27 FPS integration time
+        pixel_pitch = 15 #um https://www.axiomoptics.com/products/c-red-2/
+        if np.any(x==None): qe_mod=1
+        else: qe_mod = tophat(x,980,1650,1) # scale  
+        dark=315 #e-/s liquid cooling mode -40, calvin measured 450e-, spec sheet is 600e-,measured 315e- from KPIC C-RED2
+        saturation = 33000
+
+    if camera=='cred2_rn20':
+        rn = 20 #e- spie paper for 20 reads which is max for 27 FPS integration time
+        pixel_pitch = 15 #um https://www.axiomoptics.com/products/c-red-2/
+        if np.any(x==None): qe_mod=1
+        else: qe_mod = tophat(x,980,1650,1) # scale  
+        dark=315 #e-/s liquid cooling mode -40, calvin measured 450e-, spec sheet is 600e-,measured 315e- from KPIC C-RED2
         saturation = 33000
 
     return rn, pixel_pitch, qe_mod, dark, saturation
@@ -80,7 +110,7 @@ def get_tracking_optics_aberrations(field_r,camera,ploton=False):
     -------
     RMS of the PSF due to optical aberrations in pixels (radius rms)
     """
-    f = np.loadtxt('./data/WFE/trackingcamera_optics/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt')
+    f = np.loadtxt('/Users/ashbake/Documents/Research/Projects/HISPEC/SNR_calcs/data/WFE/trackingcamera_optics/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt')
     field, rmstot, rms900,rms1000,rms1200,rms1400,rms1600,rms2200  = f.T #field [deg], rms [um]
     _,pixel_pitch,_,_,_ = get_tracking_cam(camera=camera,x=None)
 
@@ -163,6 +193,13 @@ def get_tracking_band(wave,band):
         bandpass = tophat(wave,l0,lf,0.2)
         #bandpass[np.where(wave >1490)]=1 # could make jhgap 1 but would make filter more difficult maybe to make
 
+    if band=='JHplus':
+        # for consideration for c-red2 ....meh
+        l0,lf= 1170,1780
+        center_wavelength =  (l0+lf)/2
+        bandpass = tophat(wave,l0,lf,1)
+        #bandpass[np.where(wave >1490)]=1 # could make jhgap 1 but would make filter more difficult maybe to make
+        
     if band=='K':
         l0,lf= 1950,2460
         center_wavelength = (l0+lf)/2
@@ -170,6 +207,16 @@ def get_tracking_band(wave,band):
 
     if band=='Hkpic':
         l0,lf= 1500,1650
+        center_wavelength = (l0+lf)/2
+        bandpass = tophat(wave,l0,lf,1)
+
+    if band=='yJH':
+        l0,lf= 980,1780
+        center_wavelength = (l0+lf)/2
+        bandpass = tophat(wave,l0,lf,1)
+    
+    if band=='yJ':
+        l0,lf= 980,1490
         center_wavelength = (l0+lf)/2
         bandpass = tophat(wave,l0,lf,1)
 
@@ -218,20 +265,20 @@ def compute_band_photon_counts():
     all_bands = []
     Johnson_bands = ['U','B','V','R','I','J','H','K']
     for i,band in enumerate(Johnson_bands):
-        newmags.append(get_band_mag(so,'Johnson',band,so.stel.factor_0))
+        newmags.append(load_inputs.get_band_mag(so,'Johnson',band,so.stel.factor_0))
         all_bands.append(band)
 
-    #newmags.append(get_band_mag(so,'Sloan','uprime_filter',so.stel.factor_0))
+    #newmags.append(load_inputs.get_band_mag(so,'Sloan','uprime_filter',so.stel.factor_0))
     #all_bands.append('uprime_filter')
 
-    get_band_mag(so,'SLOAN','uprime_filter',so.stel.factor_0)
+    load_inputs.get_band_mag(so,'SLOAN','uprime_filter',so.stel.factor_0)
 
 
-def get_order_value(so,v,snr):
+def get_order_value(so,v,snr,height=0.055,distance=2e4,prominence=0.01):
     """
     given array, return max and mean of snr per order
     """
-    order_peaks      = signal.find_peaks(so.inst.base_throughput,height=0.055,distance=2e4,prominence=0.01)
+    order_peaks      = signal.find_peaks(so.inst.base_throughput,height=height,distance=distance,prominence=prominence)
     order_cen_lam    = so.stel.v[order_peaks[0]]
     blaze_angle      =  76
     snr_peaks = []

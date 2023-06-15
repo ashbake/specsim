@@ -10,12 +10,12 @@ import pandas as pd
 font = {'size'   : 14}
 matplotlib.rc('font', **font)
 
-sys.path.append('./utils/')
+sys.path.append('/Users/ashbake/Documents/Research/ToolBox/hispec_snr/utils/')
 from objects import load_object
-from load_inputs import fill_data, load_filter
+from load_inputs import fill_data, load_filter,get_band_mag
 from functions import *
 from noise_tools import get_sky_bg, get_inst_bg, sum_total_noise
-from throughput_tools import pick_coupling, get_band_mag, get_base_throughput
+from throughput_tools import pick_coupling, get_base_throughput
 from wfe_tools import get_tip_tilt_resid, get_HO_WFE
 import plot_tools,obs_tools
 
@@ -253,6 +253,7 @@ def plot_median_bin_snr(so):
 	plt.text(6,33,'SNR=30')
 	plt.savefig('./output/snr/median_bin_snr_per_band.png')
 
+
 ###############
 def run_snr_v_mag(teff=3600):
 	"""
@@ -312,13 +313,38 @@ def run_snr_v_teff(mag=15):
 	#plot_noise(so.obs.v,n_arr,temp_arr)
 	return temp_arr,snr_arr,s_arr,n_arr,c_arr,snr_reselement
 
+def check_AO_counts_match(so):
+	"""
+	lianqi assumes some flux for his AO models
+
+	make sure these magnitudes and flux values are consistent
+	with my magnitudes
+	"""
+	# lianqi values
+	texp =1/800.
+	ytransmit = 0.437
+	Rmag = [8,9,10,11,12,13,14,15,16]
+	pdes = [921.854, 366.997, 146.104, 58.1651, 23.1559, 9.21854, 3.66997, 1.46104, 0.581651] 
+	detector_size = 0.5 * 0.5 #m2 subaperture
+
+	l0,lf = 600,750 #nfiraos pyramid wave bandpass
+	center_wavelength = (l0+lf)/2
+	bandpass = tophat(so.stel.v,l0,lf,ytransmit) #make up fake band
+
+	total = detector_size * texp * np.trapz(so.stel.s * bandpass,x=so.stel.v) # phot to pyramid
+	print(total)
+
+	flux_top_atm = np.array(pdes) / detector_size / texp / ytransmit
+
+
+
 if __name__=='__main__':
 	#load inputs
-	configfile = './configs/hispec_snr_bspec.cfg'
+	configfile = './modhis_snr.cfg'
 	so    = load_object(configfile)
 	cload = fill_data(so) # put coupling files in load and wfe stuff too
 
-	plot_tools.plot_snr_orders(so,snrtype=1,mode='peak')
+	plot_tools.plot_snr_orders(so,snrtype=1,mode='peak',height=0.08,savepath='./output/snrplots/')
 
 	# mag_arr,snr_arr,s_arr,n_arr,c_arr,snr_reselement= run_snr_v_mag(teff=3600)
 	# np.save('./output/snr/snr_arr_mag_teff_%s_band_%s'%(so.stel.teff,so.filt.band),snr_arr)

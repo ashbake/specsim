@@ -5,7 +5,8 @@
 import numpy as np
 from scipy import interpolate
 
-from astropy.modeling.blackbody import blackbody_lambda, blackbody_nu
+#from astropy.modeling.blackbody import blackbody_lambda, blackbody_nu
+from astropy.modeling.models import BlackBody
 from astropy import units as u
 from astropy import constants as c 
 
@@ -40,7 +41,7 @@ def get_sky_bg(x,airmass=1.5,pwv=1.5,npix=3,lam0=2000,R=100000,diam=10,area=76,s
 
     return sky_background_interp.value # ph/s
 
-def get_inst_bg(x,npix=3,lam0=2000,R=100000,diam=10,area=76):
+def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hispec_subsystems_11032022/'):
     """
     generate sky background per reduced pixel, default to HIPSEC. Source: DMawet jup. notebook
 
@@ -52,12 +53,11 @@ def get_inst_bg(x,npix=3,lam0=2000,R=100000,diam=10,area=76):
     sky background (photons/s) already considering PSF sampling
 
     """
-    em_red,em_blue, temps = get_emissivity(x)
+    em_red,em_blue, temps = get_emissivity(x,datapath=datapath)
 
     # telescope
     diam *= u.m
     area *= u.m * u.m
-    lam0 *= u.nm
     wave = x*u.nm
 
     fwhm = ((wave  / diam) * u.radian).to(u.arcsec)
@@ -67,7 +67,9 @@ def get_inst_bg(x,npix=3,lam0=2000,R=100000,diam=10,area=76):
     # step through temperatures and emissivities for red and blue
     # red
     for i,temp in enumerate(temps):
-        bbtemp = blackbody_lambda(wave, temp).to(u.erg/(u.micron * u.s * u.cm**2 * u.arcsec**2)) * area.to(u.cm**2) * solidangle
+        bbtemp_fxn  = BlackBody(temp * u.K, scale=1.0 * u.erg / (u.micron * u.s * u.cm**2 * u.arcsec**2)) 
+        bbtemp = bbtemp_fxn(wave) *  area.to(u.cm**2) * solidangle
+        #bbtemp = blackbody_lambda(wave, temp).to(u.erg/(u.micron * u.s * u.cm**2 * u.arcsec**2)) * area.to(u.cm**2) * solidangle
         if i==0:
             tel_thermal_red  = em_red[i] * bbtemp.to(u.photon/u.s/u.micron, equivalencies=u.spectral_density(wave)) * pix_width_nm
             tel_thermal_blue = em_blue[i] * bbtemp.to(u.photon/u.s/u.micron, equivalencies=u.spectral_density(wave)) * pix_width_nm
@@ -118,7 +120,7 @@ def get_sky_bg_tracking(x,fwhm,airmass=1.5,pwv=1.5,area=76,skypath = '../../../.
     
     return sky_background_interp.value # ph/s/nm
 
-def get_inst_bg_tracking(x,fwhm,area=76):
+def get_inst_bg_tracking(x,fwhm,area=76,datapath='./data/throughput/hispec_subsystems_11032022/'):
     """
     generate sky background per pixel, default to HIPSEC. Source: DMawet jup. notebook
     change this to take emissivities and temps as inputs so dont
@@ -133,7 +135,7 @@ def get_inst_bg_tracking(x,fwhm,area=76):
 
     """
     temps = [276,276,276]
-    em = get_emissivities(x,surfaces=['tel','ao','feicom'])
+    em = get_emissivities(x,surfaces=['tel','ao','feicom'],datapath=datapath)
 
     # telescope
     area *= u.m * u.m
@@ -145,7 +147,9 @@ def get_inst_bg_tracking(x,fwhm,area=76):
     # step through temperatures and emissivities for red and blue
     # red
     for i,temp in enumerate(temps):
-        bbtemp = solidangle * blackbody_lambda(wave, temp).to(u.erg/(u.nm * u.s * u.cm**2 * u.arcsec**2)) * area.to(u.cm**2) 
+        bbtemp_fxn  = BlackBody(temp * u.K, scale=1.0 * u.erg / (u.micron * u.s * u.cm**2 * u.arcsec**2)) 
+        bbtemp = bbtemp_fxn(wave) *  area.to(u.cm**2) * solidangle
+        #bbtemp = solidangle * blackbody_lambda(wave, temp).to(u.erg/(u.nm * u.s * u.cm**2 * u.arcsec**2)) * area.to(u.cm**2) 
         if i==0:
             tel_thermal = em[i] * bbtemp.to(u.photon/u.s/u.nm, equivalencies=u.spectral_density(wave)) 
         else:
@@ -192,12 +196,12 @@ def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg,darknoise,readnoise,npix,n
     sig_bg   = np.sqrt(inst_bg + sky_bg) 
 
     # read noise  - reduces by number of ramps, limit to 6 at best
-    sig_read = np.max((6,(readnoise/np.sqrt(nsamp))))
+    sig_read = np.max((3,(readnoise/np.sqrt(nsamp))))
     
     # dark current - times time and pixels
     sig_dark = np.sqrt(darknoise * npix * texp) #* get dark noise every sample
     
-    noise = np.sqrt(sig_flux **2 + sig_bg**2 + sig_read**2 + sig_dark**2)
+    noise = np.sqrt(sig_flux **2 + sig_bg**2 + npix * sig_read**2 + sig_dark**2)
 
     # cap the noise if a number is provided
     if noisecap is not None:
@@ -215,6 +219,20 @@ def read_noise(rn,npix):
         number of pixels
     """
     return np.sqrt(npix * rn**2)
+
+def dark_noise(darknoise,npix,texp):
+    """
+    input:
+    ------
+    darknoise: [e-/pix/s]
+        read noise
+    npix [pix]
+        number of pixels
+    texp [s]
+        exposure time in seconds
+    """
+    sig_dark = np.sqrt(darknoise * npix * texp)
+    return sig_dark
 
 def plot_noise_components(so):
     """
