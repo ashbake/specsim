@@ -6,4 +6,5 @@
 ./references
 ./data
 utils/__pycache__/
+.DS_Store
 utils/__pycache__/*pyc
