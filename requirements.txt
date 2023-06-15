@@ -1,0 +1,7 @@
+astropy <= 4.2.1
+numpy
+scipy
+pandas
+matplotlib
+datetime
+configparser
