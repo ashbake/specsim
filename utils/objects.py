@@ -21,6 +21,8 @@ class storage_object():
         self.ao   = AO()
         self.obs  = OBSERVATION() 
         self.track= TRACK()       
+        self.coron= coron()
+        self.plan= plan()
         # non class things
         self.info = "see objects.py in utils/ for info"
 
@@ -40,6 +42,16 @@ class AO():
         self.defocus = 25 #nm, low order
         self.v_mag   = 'default' # magnitude or 'defaul't, magnitude of AO star, default: uses Vmag of target star
         self.ho_wfe  = 'default' # nm or 'default', high order wave front error, default: loads from file
+
+
+class coron():
+    "float values"
+    def __init__(self):
+        mode =None
+        p_law_dh =None
+        telescope_seeing=None
+        nactuators =None
+        fiber_contrast_gain =None
 
 
 class INSTRUMENT():
@@ -87,7 +99,19 @@ class STELLAR():
         self.sraw = None #  spectrum
         self.vsini = 0 # km/s
         self.mag = 10
-        
+
+class plan():
+    "planet info and spectrum"
+    def __init__(self):
+        # User optional define:
+        self.phoenix_file   = None       # stellar spec file name, **make this take temp value in future
+        # Filled in by code:
+        self.vraw = None # wavelength like normal (should match exoplanet and be in standard wavelength)
+        self.sraw = None #  spectrum
+        self.vsini = 0 # km/s
+        self.mag = 10
+
+
 class TELLURIC():
     "telluric transmission file, static"
     def __init__(self):

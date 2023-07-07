@@ -1,6 +1,6 @@
 ##############################################################
 # General functions for calc_snr_max
-###############################################################
+# ##############################################################
 
 import numpy as np
 from scipy import signal, interpolate
@@ -441,4 +441,7 @@ def plot_throughput_components_YJ(telluric_file='/Users/ashbake/Documents/Resear
     plt.savefig(outputdir + 'e2e_mri_plot_yJ.pdf')
 
 
+
+
+""
 

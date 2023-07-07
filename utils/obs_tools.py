@@ -1,6 +1,6 @@
 ##############################################################
 # General functions for calc_snr_max
-###############################################################
+# ##############################################################
 
 import numpy as np
 from scipy.integrate import trapz
@@ -110,7 +110,7 @@ def get_tracking_optics_aberrations(field_r,camera,ploton=False):
     -------
     RMS of the PSF due to optical aberrations in pixels (radius rms)
     """
-    f = np.loadtxt('/Users/ashbake/Documents/Research/Projects/HISPEC/SNR_calcs/data/WFE/trackingcamera_optics/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt')
+    f = np.loadtxt('/Users/huihaoz/Downloads/specsim-main 2/examples/data/track/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt')
     field, rmstot, rms900,rms1000,rms1200,rms1400,rms1600,rms2200  = f.T #field [deg], rms [um]
     _,pixel_pitch,_,_,_ = get_tracking_cam(camera=camera,x=None)
 
