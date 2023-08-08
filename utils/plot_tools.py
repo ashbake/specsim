@@ -1,6 +1,6 @@
 ##############################################################
 # General functions for calc_snr_max
-###############################################################
+# ##############################################################
 
 import numpy as np
 from scipy.interpolate import interp1d
@@ -248,7 +248,7 @@ def plot_snr(so,snrtype=0,savepath=SAVEPATH):
 	elif snrtype==1: ax.plot(so.obs.v_resamp,so.obs.snr_reselement)
 	ax.set_ylabel('SNR')
 	ax.set_xlabel('Wavelength (nm)')
-	ax.set_title('AO Mode: %s, %s=%s, t=4hr'%(so.ao.mode,so.filt.band,int(so.stel.mag)))
+	ax.set_title('SNR: AO Mode: %s, %s=%s, t=4hr'%(so.ao.mode,so.filt.band,int(so.stel.mag)))
 	ax.axhline(y=30,color='k',ls='--')
 	plt.legend()
 	# duplicate axis to plot filter response
@@ -266,6 +266,69 @@ def plot_snr(so,snrtype=0,savepath=SAVEPATH):
 	ax.set_xlim(970,2500)
 	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.stel.mag,so.obs.texp,so.inst.darknoise)
 	plt.savefig(savepath + figname)
+    
+    
+def plot_photon(so,snrtype=0,savepath=SAVEPATH):
+	"""
+	snrtype: 0 or 1
+		0 selects per pixel SNR
+		1 selects per resolution element SNR
+	"""
+	fig, ax = plt.subplots(1,1, figsize=(10,8))	
+	if snrtype ==0:  ax.plot(so.obs.v,so.obs.s)
+	elif snrtype==1: ax.plot(so.obs.v_resamp,so.obs.s_reselement)
+	ax.set_ylabel('ph')
+	ax.set_xlabel('Wavelength (nm)')
+	ax.set_title('Signal: AO Mode: %s, %s=%s'%(so.ao.mode,so.filt.band,int(so.stel.mag)))
+	#ax.axhline(y=30,color='k',ls='--')
+	plt.legend()
+	# duplicate axis to plot filter response
+	ax2 = ax.twinx()
+	# plot band
+	ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(20+np.min(so.inst.y),0.9, 'y')
+	ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.J),0.9, 'J')
+	ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.H),0.9, 'H')
+	ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.K),0.9, 'K')
+	ax2.set_ylim(0,1)
+	ax.set_xlim(970,2500)
+	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.stel.mag,so.obs.texp,so.inst.darknoise)
+	plt.savefig(savepath + figname)
+    
+def plot_noise(so,snrtype=0,savepath=SAVEPATH):
+	"""
+	snrtype: 0 or 1
+		0 selects per pixel SNR
+		1 selects per resolution element SNR
+	"""
+	fig, ax = plt.subplots(1,1, figsize=(10,8))	
+	if snrtype ==0:  ax.plot(so.obs.v,so.obs.noise)
+	elif snrtype==1: ax.plot(so.obs.v_resamp,so.obs.noise_reselement)
+	ax.set_ylabel('ph')
+	ax.set_xlabel('Wavelength (nm)')
+	ax.set_title('Noise: AO Mode: %s, %s=%s'%(so.ao.mode,so.filt.band,int(so.stel.mag)))
+	#ax.axhline(y=30,color='k',ls='--')
+	plt.legend()
+	# duplicate axis to plot filter response
+	ax2 = ax.twinx()
+	# plot band
+	ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(20+np.min(so.inst.y),0.9, 'y')
+	ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.J),0.9, 'J')
+	ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.H),0.9, 'H')
+	ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.K),0.9, 'K')
+	ax2.set_ylim(0,1)
+	ax.set_xlim(970,2500)
+	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.stel.mag,so.obs.texp,so.inst.darknoise)
+	plt.savefig(savepath + figname)
+    
+
 
 def plot_snr_orders(so,snrtype=0,mode='mean',height=0.055,savepath=SAVEPATH):
 	"""

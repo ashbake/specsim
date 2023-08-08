@@ -16,7 +16,7 @@ import throughput_tools# import pick_coupling, get_band_mag, get_base_throughput
 from wfe_tools import get_tip_tilt_resid, get_HO_WFE
 import obs_tools
 import noise_tools
-import astropy.units as u
+
 from functions import *
 
 __all__ = ['fill_data','load_phoenix']
@@ -244,15 +244,12 @@ class fill_data():
 
 		# order of these matter
 		self.filter(so)
-		self.planet(so)
 		self.stellar(so)
 		self.telluric(so)
 		self.ao(so)
 		self.instrument(so)
 		self.observe(so)
 		self.tracking(so)
-		self.get_speckle_noise(so)
-		self.observe_D(so)
 
 	def filter(self,so):
 		"""
@@ -275,48 +272,6 @@ class fill_data():
 		so.filt.dl_l                 = np.mean(integrate(so.filt.xraw, so.filt.yraw)/so.filt.xraw) # dlambda/lambda
 		so.filt.center_wavelength    = integrate(so.filt.xraw,so.filt.yraw*so.filt.xraw)/integrate(so.filt.xraw,so.filt.yraw)
 
-	def planet(self,so):
-		"""
-		loads planet spectrum
-		returns spectrum scaled to input V band mag 
-
-		everything in nm
-		"""
-		# Part 1: load raw spectrum
-		#
-		print('Planet Teff set to %s'%so.plan.teff)
-		print('Planet %s band mag set to %s'%(so.filt.band,so.plan.mag))
-	
-		if so.plan.teff < 2300: # sonora models arent sampled as well so use phoenix as low as can
-			g    = '316' # mks units, np.log10(316 * 100)=4.5 to match what im holding for phoenix models.
-			pteff = str(int(so.plan.teff))
-			so.stel.model             = 'sonora'
-			so.stel.stel_file         = so.stel.sonora_folder + 'sp_t%sg%snc_m0.0' %(pteff,g)
-			so.plan.vraw,so.plan.sraw = load_sonora(so.stel.stel_file,wav_start=so.inst.l0,wav_end=so.inst.l1)
-		else:
-			pteff = str(int(so.plan.teff)).zfill(5)
-			so.stel.model             = 'phoenix' 
-			so.stel.stel_file         = so.stel.phoenix_folder + 'lte%s-4.50-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'%(pteff)
-			so.plan.vraw,so.plan.sraw = load_phoenix(so.stel.stel_file,wav_start=so.inst.l0, wav_end=so.inst.l1) #phot/m2/s/nm
-		
-		so.plan.v   = self.x
-		tck_plan   = interpolate.splrep(so.plan.vraw,so.plan.sraw, k=2, s=0)
-		so.plan.s   = interpolate.splev(self.x,tck_plan,der=0,ext=1)
-
-		# apply scaling factor to match filter zeropoint
-		so.plan.factor_0   = scale_stellar(so, so.plan.mag) 
-		so.plan.s   *= so.plan.factor_0
-		so.plan.units = 'photons/s/m2/nm' # stellar spec is in photons/s/m2/nm
-
-		# broaden star spectrum with rotation kernal
-		if so.plan.vsini > 0:
-			dwvl_mean = np.abs(np.nanmean(np.diff(self.x)))
-			SPEEDOFLIGHT = 2.998e8 # m/s
-			dvel_mean = (dwvl_mean / np.nanmean(self.x)) * SPEEDOFLIGHT / 1e3 # average sampling in km/s
-			vsini_kernel,_ = _lsf_rotate(dvel_mean,so.plan.vsini,epsilon=0.6)
-			flux_vsini     = convolve(so.plan.s,vsini_kernel,normalize_kernel=True)  # photons / second / Ang
-			so.plan.s      = flux_vsini        
-
 	def stellar(self,so):
 		"""
 		loads stellar spectrum
@@ -326,8 +281,8 @@ class fill_data():
 		"""
 		# Part 1: load raw spectrum
 		#
-		print('Star Teff set to %s'%so.stel.teff)
-		print('Star %s band mag set to %s'%(so.filt.band,so.stel.mag))
+		print('Teff set to %s'%so.stel.teff)
+		print('%s band mag set to %s'%(so.filt.band,so.stel.mag))
 	
 		if so.stel.teff < 2300: # sonora models arent sampled as well so use phoenix as low as can
 			g    = '316' # mks units, np.log10(316 * 100)=4.5 to match what im holding for phoenix models.
@@ -358,91 +313,7 @@ class fill_data():
 			vsini_kernel,_ = _lsf_rotate(dvel_mean,so.stel.vsini,epsilon=0.6)
 			flux_vsini     = convolve(so.stel.s,vsini_kernel,normalize_kernel=True)  # photons / second / Ang
 			so.stel.s      = flux_vsini
-            
-
-            
-	def get_speckle_noise(self,so):
-		'''
-		Returns the contrast for a given list of separations.
-
-		Inputs: 
-		separations  - A list of separations at which to calculate the speckle noise in arcseconds [float list length n]. Assumes these are sorted. 
-		ao_mag       - The magnitude in the ao band, here assumed to be I-band
-		wvs          - A list of wavelengths in microns [float length m]
-		telescope    - A psisim telescope object.
-
-		Outputs: 
-		get_speckle_noise - Either an array of length [n,1] if only one wavelength passed, or shape [n,m]
-
-		'''
-
-		#TODO: decide if PIAA will be optional via flag or permanent
-		#TODO: add ADC residuals effect
-		#TODO: @Max, why feed "filter", "star_spt" if not used. Why feed "telescope" if already available from self.telescope?
-
-		#if self.mode != 'vfn':
-		#    print("Warning: only 'vfn' mode has been confirmed")
-		separations = so.plan.ang_sep * u.mas
-		ao_mag=so.ao.ho_wfe_mag
-		mode=so.coron.mode
-		wvs=so.inst.xtransmit/1000 * u.um
-        
-		if mode == "on-axis":
-			return np.ones([np.size(separations),np.size(wvs)])
-
-		if np.size(wvs) < 2:
-			wvs = np.array(wvs)
-
-		if mode == "off-axis":
-			#-- Deal with nominal MODHIS mode (fiber centered on planet)
-			#TODO: this was copied from KPIC instrument. Check if any mods are needed for MODHIS
-
-			#Get the Strehl Ratio
-			SR = so.inst.strehl
-
-			p_law_kolmogorov = -11./3
-			p_law_ao_coro_filter = so.coron.p_law_dh#-p_law_kolmogorov 
-
-			r0 = 0.55e-6/((so.coron.telescope_seeing*u.arcsec).to(u.arcsecond).value/206265) * u.m #Easiest to ditch the seeing unit here. 
-
-			#The AO control radius in units of lambda/D
-			cutoff = so.coron.nactuators/2
-
-			contrast = np.zeros([np.size(separations),np.size(wvs)])
-
-			if np.size(separations) < 2:
-				separations = np.array([separations.value])*separations.unit
-
-			#Dimitri to put in references to this math
-			r0_sc = r0 * (wvs/(0.55*u.micron))**(6./5)
-			w_halo = so.inst.tel_diam * u.m / r0_sc
-
-			for i,sep in enumerate(separations):
-				ang_sep_resel_in = sep/206265/u.arcsecond*so.inst.tel_diam * u.m /wvs.to(u.m) #Convert separtiona from arcsec to units of lam/D
-
-				f_halo = np.pi*(1-SR)*0.488/w_halo**2 * (1+11./6*(ang_sep_resel_in/w_halo)**2)**(-11/6.)
-
-				contrast_at_cutoff = np.pi*(1-SR)*0.488/w_halo**2 * (1+11./6*(cutoff/w_halo)**2)**(-11/6.)
-				#Fill in the contrast array
-				contrast[i,:] = f_halo
-
-				biggest_ang_sep = np.abs(ang_sep_resel_in - cutoff) == np.min(np.abs(ang_sep_resel_in - cutoff))
-
-				contrast[i][ang_sep_resel_in < cutoff] = contrast_at_cutoff[ang_sep_resel_in < cutoff]*(ang_sep_resel_in[ang_sep_resel_in < cutoff]/cutoff)**p_law_ao_coro_filter
-
-			#Apply the fiber contrast gain
-			contrast /= so.coron.fiber_contrast_gain
-
-			#Make sure nothing is greater than 1. 
-			contrast[contrast>1] = 1.
-
-			so.coron.contrast= contrast
-			print("dynamic instrument contrast ready")
-
-		else:
-			raise ValueError("'%s' is a not a supported 'mode'" % (mode))
-            
-
+	
 	def telluric(self,so):
 		"""
 		load tapas telluric file
@@ -561,9 +432,6 @@ class fill_data():
 
 			so.inst.xtransmit = self.x
 			so.inst.ytransmit = so.inst.base_throughput* so.inst.coupling * so.ao.pywfs_dichroic
-            
-
-
 
 	def observe(self,so):
 		"""
@@ -618,83 +486,8 @@ class fill_data():
 
 		so.obs.snr = so.obs.s/so.obs.noise
 		so.obs.v_resamp, so.obs.snr_reselement = resample(so.obs.v,so.obs.snr,sig=so.inst.res_samp, dx=0, eta=1/np.sqrt(so.inst.res_samp),mode='pixels')
-		so.obs.v_resamp, so.obs.s_reselement = resample(so.obs.v,so.obs.s,sig=so.inst.res_samp, dx=0, eta=1/np.sqrt(so.inst.res_samp),mode='pixels')
-		so.obs.v_resamp, so.obs.noise_reselement = resample(so.obs.v,so.obs.noise,sig=so.inst.res_samp, dx=0, eta=1/np.sqrt(so.inst.res_samp),mode='pixels')
 
         
-	def observe_D(self,so):
-		"""
-		direct imaging
-		"""
-		flux_per_sec_nm_s = so.stel.s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
-		flux_per_sec_nm_p = so.plan.s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
-		so.obs.flux_per_sec_nm_p_before = flux_per_sec_nm_p
-		so.obs.flux_per_sec_nm_s_before = flux_per_sec_nm_s
-        
-		if so.obs.texp_frame_set=='default':
-			max_ph_per_s  =  np.max(flux_per_sec_nm_p * so.inst.sig)
-			if so.obs.texp < 900: 
-				so.obs.texp_frame = np.min((so.obs.texp,so.inst.saturation/max_ph_per_s))
-			else:
-				so.obs.texp_frame = np.min((900,so.inst.saturation/max_ph_per_s))
-			print('Texp per frame set to %s'%so.obs.texp_frame)
-			so.obs.nframes = int(np.ceil(so.obs.texp/so.obs.texp_frame))
-			print('Nframes set to %s'%so.obs.nframes)
-		else:
-			so.obs.texp_frame = so.obs.texp_frame_set
-			so.obs.nframes = int(np.ceil(so.obs.texp/so.obs.texp_frame))
-			print('Texp per frame set to %s'%so.obs.texp_frame)
-			print('Nframes set to %s'%so.obs.nframes)
-		
-		# degrade to instrument resolution
-		so.obs.flux_per_nm_s = flux_per_sec_nm_s * so.obs.texp_frame
-		s_ccd_lores = degrade_spec(so.stel.v, so.obs.flux_per_nm_s, so.inst.res)
-		so.obs.s_ccd_lores = s_ccd_lores
-
-		so.obs.flux_per_nm_p = flux_per_sec_nm_p * so.obs.texp_frame
-		p_ccd_lores = degrade_spec(so.stel.v, so.obs.flux_per_nm_p, so.inst.res)
-		so.obs.p_ccd_lores = p_ccd_lores
-
-        
-		# resample onto res element grid
-		so.obs.v, so.obs.s_frame = resample(so.stel.v,s_ccd_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
-		so.obs.s_frame *=so.inst.extraction_frac # extraction fraction, reduce photons
-		so.obs.s =  so.obs.s_frame * so.obs.nframes
-        
-		so.obs.v, so.obs.p_frame = resample(so.stel.v,p_ccd_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
-		so.obs.p_frame *=so.inst.extraction_frac # extraction fraction, reduce photons
-		so.obs.p =  so.obs.p_frame * so.obs.nframes
-        
-		# resample throughput for applying to sky background
-		base_throughput_interp= interpolate.interp1d(so.inst.xtransmit,so.inst.base_throughput)
-		instrument_contrast_interp= interpolate.interp1d(so.inst.xtransmit,so.coron.contrast)
-
-
-		# load background spectrum - sky is top of telescope and will be reduced by inst BASE throughput. Coupling already accounted for in solid angle of fiber. Does inst bkg need throughput applied?
-		so.coron.inst_contr = instrument_contrast_interp(so.obs.v)[0]
-		so.obs.sky_bg_ph    = base_throughput_interp(so.obs.v) * noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
-		so.obs.inst_bg_ph   = noise_tools.get_inst_bg(so.obs.v,npix=so.inst.pix_vert,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area,datapath=so.inst.transmission_path)
-
-		# calc noise
-#		if so.inst.pl_on: # 3 port lantern hack
-#			noise_frame_yJ_p  = np.sqrt(3) * noise_tools.sum_total_noise_D(so.obs.p_frame/3,so.obs.s_frame/3,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
-#			noise_frame_p     = noise_tools.sum_total_noise_D(so.obs.p_frame,so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
-#			yJ_sub_p          = np.where(so.obs.v < 1400)[0]
-#			noise_frame_p[yJ_sub_p] = noise_frame_yJ_p[yJ_sub_p] # fill in yj with sqrt(3) times noise in PL case
-
-#		else:
-		noise_frame_p  = noise_tools.sum_total_noise_D(so.obs.p_frame,so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
-		so.obs.noise_frame_p=noise_frame_p
-		noise_frame_p[np.where(np.isnan(noise_frame_p))] = np.inf
-		noise_frame_p[np.where(noise_frame_p==0)] = np.inf
-		
-		so.obs.noise_frame_p = noise_frame_p
-		so.obs.noise_p = np.sqrt(so.obs.nframes)*noise_frame_p
-
-		so.obs.p_snr = so.obs.p/so.obs.noise_p
-		print('direct imaging ready')
-        
-
 	def tracking(self,so):
 		"""
 		"""
@@ -844,3 +637,5 @@ class fill_data():
 			self.instrument(so)
 			self.observe(so)
 		self.tracking(so)
+
+

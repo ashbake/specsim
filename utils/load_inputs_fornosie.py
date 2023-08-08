@@ -382,7 +382,7 @@ class fill_data():
 
 		#if self.mode != 'vfn':
 		#    print("Warning: only 'vfn' mode has been confirmed")
-		separations = so.plan.ang_sep * u.mas
+		separations = (so.plan.ang_sep * u.mas).to(u.arcsec)
 		ao_mag=so.ao.ho_wfe_mag
 		mode=so.coron.mode
 		wvs=so.inst.xtransmit/1000 * u.um
@@ -683,13 +683,42 @@ class fill_data():
 #			noise_frame_p[yJ_sub_p] = noise_frame_yJ_p[yJ_sub_p] # fill in yj with sqrt(3) times noise in PL case
 
 #		else:
-		noise_frame_p  = noise_tools.sum_total_noise_D(so.obs.p_frame,so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
+		noise_frame_p, speckle_frame_p, sky_frame_p, inst_frame_p = noise_tools.sum_total_noise_D(so.obs.p_frame,so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
+ 		so.obs.ini_noise_frame_p = noise_frame_p
 		so.obs.noise_frame_p=noise_frame_p
+		so.obs.speckle_frame_p=speckle_frame_p
+		so.obs.sky_frame_p=sky_frame_p
+		so.obs.inst_frame_p=inst_frame_p
+
+		sky_frame_p = so.obs.sky_bg_ph
+		inst_frame_p=so.obs.inst_bg_ph
+		
+		so.obs.sky_frame_p=sky_frame_p
+		so.obs.inst_frame_p=inst_frame_p
+
 		noise_frame_p[np.where(np.isnan(noise_frame_p))] = np.inf
 		noise_frame_p[np.where(noise_frame_p==0)] = np.inf
+        
+		speckle_frame_p[np.where(np.isnan(speckle_frame_p))] = np.inf
+		speckle_frame_p[np.where(speckle_frame_p==0)] = np.inf
+        
+		sky_frame_p[np.where(np.isnan(sky_frame_p))] = np.inf
+		sky_frame_p[np.where(sky_frame_p==0)] = np.inf
+        
+		inst_frame_p[np.where(np.isnan(inst_frame_p))] = np.inf
+		inst_frame_p[np.where(inst_frame_p==0)] = np.inf
 		
 		so.obs.noise_frame_p = noise_frame_p
 		so.obs.noise_p = np.sqrt(so.obs.nframes)*noise_frame_p
+        
+		so.obs.speckle_frame_p = speckle_frame_p
+		so.obs.noise_speckle = np.sqrt(so.obs.nframes)*speckle_frame_p
+        
+		so.obs.sky_frame_p = sky_frame_p
+		so.obs.noise_sky = np.sqrt(so.obs.nframes)*sky_frame_p
+        
+		so.obs.inst_frame_p = inst_frame_p
+		so.obs.noise_inst = np.sqrt(so.obs.nframes)*inst_frame_p
 
 		so.obs.p_snr = so.obs.p/so.obs.noise_p
 		print('direct imaging ready')
