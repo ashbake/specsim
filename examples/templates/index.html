@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sin and Cos Calculator</title>
+</head>
+<body>
+    <form action="/" method="post">
+        <label for="x_value">Enter x value:</label>
+        <input type="text" name="x_value" id="x_value">
+        <input type="submit" value="Calculate">
+    </form>
+
+    {% if sin_val is not none and cos_val is not none %}
+        <p>sin({{ request.form.get("x_value") }}) = {{ sin_val }}</p>
+        <p>cos({{ request.form.get("x_value") }}) = {{ cos_val }}</p>
+        <img src="data:image/png;base64,{{ plot_url }}" alt="Plot of sin(x) and cos(x)">
+    {% endif %}
+</body>
+</html>
