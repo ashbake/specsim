@@ -55,8 +55,8 @@ def pick_coupling(w,dynwfe,ttStatic,ttDynamic,LO=30,PLon=0,piaa_boost=1.3,points
         losses[np.where(waves< 1.400)[0]] = 0.95 # only apply to y band
         raw_coupling = losses*(mode1+mode2+mode3) # do dumb things for now #0.95 is a recombination loss term 
     else:
-        values_1= values
-        points, values_1 = grid_interp_coupling(PLon)
+        values_1 = values
+        #points, values_1 = grid_interp_coupling(PLon,)
         point = (LO,ttStatic,ttDynamic,waves)
         raw_coupling = interpolate.interpn(points, values_1, point,bounds_error=False,fill_value=0)
 
