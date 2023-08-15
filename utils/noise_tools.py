@@ -189,28 +189,26 @@ def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg,darknoise,readnoise,npix,n
         total noise sampled on flux grid
     """
     # shot noise - array w/ wavelength or integrated over band
-    sig_flux = np.sqrt(flux)
 
     # background (instrument and sky) - array w/ wavelength matching flux array sampling or integrated over band
-    total_bg = (inst_bg + sky_bg) # per reduced pixel already so dont need to include vertical pixel extent
-    sig_bg   = np.sqrt(inst_bg + sky_bg) 
+    total_bg = (inst_bg + sky_bg) * texp # per reduced pixel already so dont need to include vertical pixel extent
 
     # read noise  - reduces by number of ramps, limit to 6 at best
     sig_read = np.max((3,(readnoise/np.sqrt(nsamp))))
     
     # dark current - times time and pixels
-    sig_dark = np.sqrt(darknoise * npix * texp) #* get dark noise every sample
     
-    noise = np.sqrt(sig_flux **2 + sig_bg**2 + npix * sig_read**2 + sig_dark**2)
+    noise = np.sqrt(flux + total_bg + npix * sig_read**2 + darknoise * npix * texp)
 
     # cap the noise if a number is provided
     if noisecap is not None:
         noise[np.where(noise < noisecap)] = noisecap * flux # noisecap is fraction of flux, 1/noisecap gives max SNR
 
     return noise
-
+####
 def sum_total_noise_D(flux, star_flux, texp, nsamp, inst_bg, sky_bg, darknoise, readnoise, npix, contrast,noisecap=None):
     """
+    off-axis mode
     noise in 1 exposure
 
     inputs:
@@ -238,6 +236,11 @@ def sum_total_noise_D(flux, star_flux, texp, nsamp, inst_bg, sky_bg, darknoise, 
     -------
     noise: array [e-]
         total noise sampled on flux grid
+    -------
+    date of the change: Jul 12, 2023
+
+    Huihao Zhang (zhang.12043@osu.edu)
+    based on "get_noise_components" in https://github.com/planetarysystemsimager/psisim/blob/kpic/psisim/observation.py and sum_total_noise
     """
     
     speckle_noise = star_flux * contrast
@@ -246,8 +249,8 @@ def sum_total_noise_D(flux, star_flux, texp, nsamp, inst_bg, sky_bg, darknoise, 
     sig_flux = np.sqrt(flux)
 
     # background (instrument and sky) - array w/ wavelength matching flux array sampling or integrated over band
-    total_bg = (inst_bg + sky_bg) # per reduced pixel already so dont need to include vertical pixel extent
-    sig_bg   = np.sqrt(inst_bg + sky_bg) 
+    total_bg = (inst_bg + sky_bg) * texp # per reduced pixel already so dont need to include vertical pixel extent
+    sig_bg   = np.sqrt(total_bg) 
 
     # read noise  - reduces by number of ramps, limit to 6 at best
     sig_read = np.max((3,(readnoise/np.sqrt(nsamp))))
@@ -255,14 +258,14 @@ def sum_total_noise_D(flux, star_flux, texp, nsamp, inst_bg, sky_bg, darknoise, 
     # dark current - times time and pixels
     sig_dark = np.sqrt(darknoise * npix * texp) #* get dark noise every sample
     
-    noise = np.sqrt(sig_flux **2 + sig_bg**2 + npix * sig_read**2 + sig_dark**2 + speckle_noise + speckle_noise**2)
+    noise = np.sqrt(flux + total_bg + npix * sig_read**2 + darknoise * npix * texp + speckle_noise + speckle_noise**2)
 
     # cap the noise if a number is provided
     if noisecap is not None:
         noise[np.where(noise < noisecap)] = noisecap * flux # noisecap is fraction of flux, 1/noisecap gives max SNR
 
     return noise
-
+####
 def read_noise(rn,npix):
     """
     input:

@@ -66,7 +66,7 @@ def pick_coupling(w,dynwfe,ttStatic,ttDynamic,LO=30,PLon=0,piaa_boost=1.3,points
     ho_strehl =  np.exp(-(2*np.pi*dynwfe/waves)**2) # computed per wavelength as grid
     coupling  = raw_coupling * piaa_boost * ho_strehl
     
-    return coupling, ho_strehl
+    return coupling, ho_strehl,raw_coupling
 
 def grid_interp_coupling(PLon=1,path='/Users/ashbake/Documents/Research/Projects/HISPEC/SNR_calcs/data/throughput/hispec_subsystems_11032022/coupling/',atm=1,adc=1):
     """

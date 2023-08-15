@@ -266,13 +266,68 @@ def plot_snr(so,snrtype=0,savepath=SAVEPATH):
 	ax.set_xlim(970,2500)
 	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.stel.mag,so.obs.texp,so.inst.darknoise)
 	plt.savefig(savepath + figname)
-    
-    
+
+####    
+def plot_rv_err(so,savefig=True):
+	"""
+	"""
+	lam_cen=so.rv.order_cen_lam
+	dv_vals=so.rv.dv_vals
+	order_cens=so.rv.order_cen_lam
+	order_inds = so.rv.order_indices
+	col_table = plt.get_cmap('Spectral_r')
+	fig, axs = plt.subplots(2,figsize=(7,7),sharex=True)
+	plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.85,top=0.85)
+
+	axs[1].plot([950,2400],[0.5,0.5],'k--',lw=0.7)
+	axs[1].fill_between([1450,2400],0,1000,facecolor='gray',alpha=0.2)
+	axs[1].fill_between([980,1330],0,1000,facecolor='gray',alpha=0.2)
+	axs[1].grid('True')
+	axs[1].set_ylim(-0,3*np.median(dv_vals))
+	axs[1].set_xlim(950,2400)
+	axs[1].set_ylabel('$\sigma_{RV}$ [m/s]')
+	axs[1].set_xlabel('Wavelength [nm]')
+
+	axs[0].set_ylabel('SNR')
+	axs[0].set_title('M$_%s$=%s, T$_{eff}$=%sK,\n ($t_{exp}$=%ss), vsini=%skm/s'%(so.filt.band,so.stel.mag,int(so.stel.teff),int(so.obs.texp),so.stel.vsini))
+
+	axs[0].grid('True')
+	ax2 = axs[0].twinx() 
+	ax2.plot(so.tel.v,so.tel.s,'gray',alpha=0.5,zorder=-100,label='Telluric Absorption')
+	ax2.plot(so.stel.v,so.inst.ytransmit,'k',alpha=0.5,zorder=-100,label='Total Throughput')
+	ax2.set_ylabel('Transmission',fontsize=12)
+	for i,lam_cen in enumerate(order_cens):
+		wvl_norm = (lam_cen - 900.) / (2500. - 900.)
+		axs[0].plot(so.obs.v[order_inds[i]],so.obs.s[order_inds[i]]/so.obs.noise[order_inds[i]],zorder=200,color=col_table(wvl_norm))
+		axs[1].plot(lam_cen,dv_vals[i],'o',zorder=100,color=col_table(wvl_norm),markeredgecolor='k')
+	
+	sub_yj = dv_vals[np.where((dv_vals!=np.inf) & (order_cens < 1400))[0]]
+	sub_hk = dv_vals[np.where((dv_vals!=np.inf) & (order_cens > 1400))[0]]
+	rvmed_yj = np.sqrt(np.sum(dv_vals[np.where((dv_vals!=np.inf) & (order_cens < 1400))[0]]**2))/np.sum(sub_yj)
+	rvmed_hk = np.median(dv_vals[np.where((dv_vals!=np.inf) & (order_cens > 1400))[0]])
+	dv_yj = 1. / (np.nansum(1./sub_yj**2.))**0.5	# 
+	dv_hk = 1. / (np.nansum(1./sub_hk**2.))**0.5	# 
+	dv_yj_tot = (so.inst.rv_floor**2 +dv_yj**2.)**0.5	# 
+	dv_hk_tot = (so.inst.rv_floor**2 +dv_hk**2.)**0.5	# # 
+
+	axs[1].text(1050,2*np.median(dv_vals),'$\sigma_{yJ}$=%sm/s'%round(dv_yj_tot,1),fontsize=12,zorder=101)
+	axs[1].text(1500,2*np.median(dv_vals),'$\sigma_{HK}$=%sm/s'%round(dv_hk_tot,1),fontsize=12,zorder=101)
+	ax2.legend(fontsize=8,loc=1)
+	if savefig:
+		plt.savefig('./output/rv_precision/RV_precision_%sK_%smag%s_%ss_vsini%skms.png'%(so.stel.teff,so.filt.band,so.stel.mag,so.obs.texp,so.stel.vsini))
+
+#	fig
+#	axs
+
 def plot_photon(so,snrtype=0,savepath=SAVEPATH):
 	"""
+	for signal in on-axis mode
 	snrtype: 0 or 1
 		0 selects per pixel SNR
 		1 selects per resolution element SNR
+	date of the change: Jul 12, 2023
+
+    Huihao Zhang (zhang.12043@osu.edu)
 	"""
 	fig, ax = plt.subplots(1,1, figsize=(10,8))	
 	if snrtype ==0:  ax.plot(so.obs.v,so.obs.s)
@@ -300,9 +355,13 @@ def plot_photon(so,snrtype=0,savepath=SAVEPATH):
     
 def plot_noise(so,snrtype=0,savepath=SAVEPATH):
 	"""
+	for totoal noise in on-axis mode
 	snrtype: 0 or 1
 		0 selects per pixel SNR
 		1 selects per resolution element SNR
+	date of the change: Jul 12, 2023
+
+    Huihao Zhang (zhang.12043@osu.edu)
 	"""
 	fig, ax = plt.subplots(1,1, figsize=(10,8))	
 	if snrtype ==0:  ax.plot(so.obs.v,so.obs.noise)
@@ -327,9 +386,210 @@ def plot_noise(so,snrtype=0,savepath=SAVEPATH):
 	ax.set_xlim(970,2500)
 	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.stel.mag,so.obs.texp,so.inst.darknoise)
 	plt.savefig(savepath + figname)
+
+# REQUIRES SO INSTANCE
+def plot_DI_snr(so,savepath=SAVEPATH):
+	"""
+	for SNR in off-axis mode
+	snrtype: 0 or 1
+		0 selects per pixel SNR
+		1 selects per resolution element SNR
+	date of the change: Jul 12, 2023
+
+    Huihao Zhang (zhang.12043@osu.edu)
+	"""
+	fig, ax = plt.subplots(1,1, figsize=(10,8))	
+	ax.plot(so.obs.v,so.obs.p_snr)
+	ax.set_ylabel('SNR')
+	ax.set_xlabel('Wavelength (nm)')
+	ax.set_title('SNR: AO Mode: %s, %s=%s, t=4hr'%(so.ao.mode,so.filt.band,int(so.plan.mag)))
+	ax.axhline(y=30,color='k',ls='--')
+	plt.legend()
+	# duplicate axis to plot filter response
+	ax2 = ax.twinx()
+	# plot band
+	ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(20+np.min(so.inst.y),0.9, 'y')
+	ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.J),0.9, 'J')
+	ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.H),0.9, 'H')
+	ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.K),0.9, 'K')
+	ax2.set_ylim(0,1)
+	ax.set_xlim(970,2500)
+	figname = 'snr_DI_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.plan.mag,so.obs.texp,so.inst.darknoise)
+	plt.savefig(savepath + figname)
+    
+    
+def plot_DI_photon(so,savepath=SAVEPATH):
+	"""
+	for signal in off-axis mode
+	snrtype: 0 or 1
+		0 selects per pixel SNR
+		1 selects per resolution element SNR
+	date of the change: Jul 12, 2023
+
+    Huihao Zhang (zhang.12043@osu.edu)
+	"""
+	fig, ax = plt.subplots(1,1, figsize=(10,8))	
+	ax.plot(so.obs.v,so.obs.p)
+
+	ax.set_ylabel('ph/e')
+	ax.set_xlabel('Wavelength (nm)')
+	ax.set_title('Signal: AO Mode: %s, %s=%s'%(so.ao.mode,so.filt.band,int(so.plan.mag)))
+	#ax.axhline(y=30,color='k',ls='--')
+	plt.legend()
+	# duplicate axis to plot filter response
+	ax2 = ax.twinx()
+	# plot band
+	ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(20+np.min(so.inst.y),0.9, 'y')
+	ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.J),0.9, 'J')
+	ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.H),0.9, 'H')
+	ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.K),0.9, 'K')
+	ax2.set_ylim(0,1)
+	ax.set_xlim(970,2500)
+	figname = 'snr_DI_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.plan.mag,so.obs.texp,so.inst.darknoise)
+	plt.savefig(savepath + figname)
+    
+def plot_DI_noise(so,savepath=SAVEPATH):
+	"""
+	for total noise in off-axis mode
+	snrtype: 0 or 1
+		0 selects per pixel SNR
+		1 selects per resolution element SNR
+	date of the change: Jul 12, 2023
+
+    Huihao Zhang (zhang.12043@osu.edu)
+	"""
+	fig, ax = plt.subplots(1,1, figsize=(10,8))	
+	ax.plot(so.obs.v,so.obs.noise_p)
+	ax.set_ylabel('ph/e')
+	ax.set_xlabel('Wavelength (nm)')
+	ax.set_title('Noise: AO Mode: %s, %s=%s'%(so.ao.mode,so.filt.band,int(so.plan.mag)))
+	#ax.axhline(y=30,color='k',ls='--')
+	plt.legend()
+	# duplicate axis to plot filter response
+	ax2 = ax.twinx()
+	# plot band
+	ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(20+np.min(so.inst.y),0.9, 'y')
+	ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.J),0.9, 'J')
+	ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.H),0.9, 'H')
+	ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.K),0.9, 'K')
+	ax2.set_ylim(0,1)
+	ax.set_xlim(970,2500)
+	figname = 'snr_DI_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.plan.mag,so.obs.texp,so.inst.darknoise)
+	plt.savefig(savepath + figname)
     
 
+def plot_sky_total(so,savepath=SAVEPATH):
+	"""
+	for off-axis sky noise
+	snrtype: 0 or 1
+		0 selects per pixel SNR
+		1 selects per resolution element SNR
+	date of the change: Jul 12, 2023
 
+    Huihao Zhang (zhang.12043@osu.edu)
+	"""
+	fig, ax = plt.subplots(1,1, figsize=(10,8))	
+	ax.plot(so.obs.v,so.obs.sky_bg_tot)
+	ax.set_ylabel('ph/e')
+	ax.set_xlabel('Wavelength (nm)')
+	ax.set_title('sky flux')
+	#ax.axhline(y=30,color='k',ls='--')
+	plt.legend()
+	# duplicate axis to plot filter response
+	ax2 = ax.twinx()
+	# plot band
+	ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(20+np.min(so.inst.y),0.9, 'y')
+	ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.J),0.9, 'J')
+	ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.H),0.9, 'H')
+	ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.K),0.9, 'K')
+	ax2.set_ylim(0,1)
+	ax.set_xlim(970,2500)
+	figname = 'sky_bg_total'
+	plt.savefig(savepath + figname)
+
+def plot_inst_total(so,savepath=SAVEPATH):
+	"""
+	off-axis instrument noise
+	snrtype: 0 or 1
+		0 selects per pixel SNR
+		1 selects per resolution element SNR
+	date of the change: Jul 12, 2023
+
+    Huihao Zhang (zhang.12043@osu.edu)
+	"""
+	fig, ax = plt.subplots(1,1, figsize=(10,8))	
+	ax.plot(so.obs.v,so.obs.inst_bg_tot)
+	ax.set_ylabel('ph/e')
+	ax.set_xlabel('Wavelength (nm)')
+	ax.set_title('instrument flux')
+	#ax.axhline(y=30,color='k',ls='--')
+	plt.legend()
+	# duplicate axis to plot filter response
+	ax2 = ax.twinx()
+	# plot band
+	ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(20+np.min(so.inst.y),0.9, 'y')
+	ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.J),0.9, 'J')
+	ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.H),0.9, 'H')
+	ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.K),0.9, 'K')
+	ax2.set_ylim(0,1)
+	ax.set_xlim(970,2500)
+	figname = 'instrumnet_bg_total'
+	plt.savefig(savepath + figname)
+
+def plot_DI_noise(so,savepath=SAVEPATH):
+	"""
+	off-axis noise
+	snrtype: 0 or 1
+		0 selects per pixel SNR
+		1 selects per resolution element SNR
+	date of the change: Jul 12, 2023
+
+    Huihao Zhang (zhang.12043@osu.edu)
+	"""
+	fig, ax = plt.subplots(1,1, figsize=(10,8))	
+	ax.plot(so.obs.v,so.obs.noise_p)
+	ax.set_ylabel('ph/e')
+	ax.set_xlabel('Wavelength (nm)')
+	ax.set_title('Noise: AO Mode: %s, %s=%s'%(so.ao.mode,so.filt.band,int(so.plan.mag)))
+	#ax.axhline(y=30,color='k',ls='--')
+	plt.legend()
+	# duplicate axis to plot filter response
+	ax2 = ax.twinx()
+	# plot band
+	ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(20+np.min(so.inst.y),0.9, 'y')
+	ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.J),0.9, 'J')
+	ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.H),0.9, 'H')
+	ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+	ax2.text(50+np.min(so.inst.K),0.9, 'K')
+	ax2.set_ylim(0,1)
+	ax.set_xlim(970,2500)
+	figname = 'snr_DI_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.plan.mag,so.obs.texp,so.inst.darknoise)
+	plt.savefig(savepath + figname)
+
+####
 def plot_snr_orders(so,snrtype=0,mode='mean',height=0.055,savepath=SAVEPATH):
 	"""
 	snrtype: 0 or 1
@@ -419,7 +679,40 @@ def plot_coupling(so,savepath=SAVEPATH):
 	plt.grid()
 	ax.set_ylim(0,peak)
 	plt.savefig(savepath + figname)
+####
+def plot_contrast(so,savepath=SAVEPATH):
+	"""
+	for instrument contrast
 
+	date of the change: Jul 12, 2023
+
+    Huihao Zhang (zhang.12043@osu.edu)
+    based on "get_noise_components" in https://github.com/planetarysystemsimager/psisim/blob/kpic/psisim/observation.py and sum_total_noise
+	"""
+	fig, ax = plt.subplots(1,1, figsize=(10,8))	
+	#ax.plot(so.inst.xtransmit,so.inst.ytransmit)
+	ax.plot(so.inst.xtransmit,so.coron.contrast)
+	peak = np.max(so.coron.contrast)
+
+	ax.set_ylabel('Contrast')
+	ax.set_xlabel('Wavelength (nm)')
+	ax.axhline(y=30,color='k',ls='--')
+	figname = 'Instrument Contrast.png' 
+	# duplicate axis to plot filter response
+	# plot band
+	ax.fill_between(so.inst.y,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
+	ax.text(20+np.min(so.inst.y),0.09, 'y')
+	ax.fill_between(so.inst.J,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
+	ax.text(50+np.min(so.inst.J),0.09, 'J')
+	ax.fill_between(so.inst.H,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
+	ax.text(50+np.min(so.inst.H),0.09, 'H')
+	ax.fill_between(so.inst.K,0,peak,facecolor='k',edgecolor='black',alpha=0.1)
+	ax.text(50+np.min(so.inst.K),0.09, 'K')
+	ax.set_xlim(970,2500)
+	plt.grid()
+	ax.set_ylim(0,peak)
+	plt.savefig(savepath + figname)
+####
 def plot_background_spectra(so,savepath=SAVEPATH):
 	"""
 	

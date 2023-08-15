@@ -23,6 +23,8 @@ class storage_object():
         self.track= TRACK()       
         self.coron= coron()
         self.plan= plan()
+        self.etc= etc()
+        self.rv = rv()
         # non class things
         self.info = "see objects.py in utils/ for info"
 
@@ -43,8 +45,14 @@ class AO():
         self.v_mag   = 'default' # magnitude or 'defaul't, magnitude of AO star, default: uses Vmag of target star
         self.ho_wfe  = 'default' # nm or 'default', high order wave front error, default: loads from file
 
-
+####
 class coron():
+    """
+    information about coronagraph
+    date of the change: Jul 12, 2023
+
+    Huihao Zhang (zhang.12043@osu.edu)
+    """
     "float values"
     def __init__(self):
         mode =None
@@ -52,7 +60,7 @@ class coron():
         telescope_seeing=None
         nactuators =None
         fiber_contrast_gain =None
-
+####
 
 class INSTRUMENT():
     "float values"
@@ -99,8 +107,14 @@ class STELLAR():
         self.sraw = None #  spectrum
         self.vsini = 0 # km/s
         self.mag = 10
-
+####
 class plan():
+    """
+    information about planet
+    date of the change: Jul 12, 2023
+
+    Huihao Zhang (zhang.12043@osu.edu)
+    """
     "planet info and spectrum"
     def __init__(self):
         # User optional define:
@@ -110,7 +124,37 @@ class plan():
         self.sraw = None #  spectrum
         self.vsini = 0 # km/s
         self.mag = 10
+class etc():
+    """
+    etc for off-axis
+    date of the change: Jul 12, 2023
 
+    Huihao Zhang (zhang.12043@osu.edu)
+    """
+    "planet info and spectrum"
+    def __init__(self):
+        # User optional define:
+        self.SN   = 5       # stellar spec file name, **make this take temp value in future
+        self.texp_frame = 900 # wavelength like normal (should match exoplanet and be in standard wavelength)
+class rv():
+    """
+    etc for off-axis
+    date of the change: Jul 12, 2023
+
+    Huihao Zhang (zhang.12043@osu.edu)
+    """
+    "planet info and spectrum"
+    def __init__(self):
+        # User optional define:
+        self.water_only=False
+        self.line_spacing=None
+        self.peak_spacing=2e4
+        self.height=0.055
+        self.cutoff=0.01
+        self.velocity_cutoff=10
+        self.rv_floor=0.5
+
+####
 
 class TELLURIC():
     "telluric transmission file, static"

@@ -11,6 +11,12 @@ from scipy import interpolate
 import sys,glob,os
 import pandas as pd
 from astropy.convolution import Gaussian1DKernel, convolve
+from scipy.ndimage import gaussian_filter
+from scipy.signal import medfilt, correlate
+import warnings
+from scipy import signal
+
+
 
 import throughput_tools# import pick_coupling, get_band_mag, get_base_throughput,grid_interp_coupling
 from wfe_tools import get_tip_tilt_resid, get_HO_WFE
@@ -18,6 +24,9 @@ import obs_tools
 import noise_tools
 import astropy.units as u
 from functions import *
+from astropy import constants as consts
+from scipy.ndimage.interpolation import shift
+import wfe_tools
 
 __all__ = ['fill_data','load_phoenix']
 
@@ -171,7 +180,7 @@ def get_band_mag(so,family,band,factor_0):
 
     mag = -2.5*np.log10(flux_Jy/zp)
 
-    return mag
+    return mag,x,y
 
 
 def _lsf_rotate(deltav,vsini,epsilon=0.6):
@@ -236,6 +245,12 @@ class fill_data():
 		print("------FILLING OBJECT--------")
 		# define x array to carry everywhere
 		self.x = np.arange(so.inst.l0,so.inst.l1,0.0005)
+		ind_1 = np.where((self.x>940)&(self.x<1090))[0]
+		ind_2 = np.where((self.x>1100)&(self.x<1360))[0]
+		ind_3 = np.where((self.x>1480)&(self.x<1820))[0]
+		ind_4 = np.where((self.x>1950)&(self.x<2350))[0]
+		ind_filter = np.array(ind_1.tolist()+ind_2.tolist()+ind_3.tolist()+ind_4.tolist())
+		self.x_filter = self.x[ind_filter]
 		# define bands here
 		so.inst.y=[980,1100]
 		so.inst.J=[1170,1327]
@@ -243,17 +258,91 @@ class fill_data():
 		so.inst.K=[1990,2460]
 
 		# order of these matter
-		self.filter(so)
-		self.planet(so)
-		self.stellar(so)
-		self.telluric(so)
-		self.ao(so)
-		self.instrument(so)
-		self.observe(so)
-		self.tracking(so)
-		self.get_speckle_noise(so)
-		self.observe_D(so)
+		if so.run.mode == 'etc_snr_off':
+			self.filter(so)
+			self.planet(so)
+			self.stellar(so)
+			self.telluric(so)
+			self.ao(so)
+			self.instrument(so)
+			self.get_speckle_noise(so)
+			self.etc_D(so)
 
+		elif so.run.mode =='etc_snr_on':
+			self.filter(so)
+			self.stellar(so)
+			self.telluric(so)
+			self.ao(so)
+			self.instrument(so)
+			self.etc(so)
+
+		elif so.run.mode =='snr_on':
+			self.filter(so)
+			self.stellar(so)
+			self.telluric(so)
+			self.ao(so)
+			self.instrument(so)
+			self.observe(so)
+
+		elif so.run.mode =='snr_off':
+			self.filter(so)
+			self.planet(so)
+			self.stellar(so)
+			self.telluric(so)
+			self.ao(so)
+			self.instrument(so)
+			self.observe(so)
+			self.get_speckle_noise(so)
+			self.observe_D(so)
+
+		elif so.run.mode =='rv_on':
+			self.filter(so)
+			self.stellar(so)
+			self.telluric(so)
+			self.ao(so)
+			self.instrument(so)
+			self.observe(so)
+			self.get_order_bounds(so)
+			self.make_telluric_mask(so)
+			self.get_rv_content(so)
+			self.get_rv_precision(so)
+		elif so.run.mode =='rv_off':
+			self.filter(so)
+			self.stellar(so)
+			self.telluric(so)
+			self.ao(so)
+			self.instrument(so)
+			self.observe(so)
+			self.get_speckle_noise(so)
+			self.get_order_bounds(so)
+			self.make_telluric_mask(so)
+			self.get_rv_content_D(so)
+			self.get_rv_precision_D(so)
+
+		elif so.run.mode =='ccf':
+			self.filter(so)
+			self.planet(so)
+			self.stellar(so)
+			self.telluric(so)
+			self.ao(so)
+			self.instrument(so)
+			self.observe(so)
+			self.get_speckle_noise(so)
+			self.observe_D(so)
+			self.ccf(so)
+		elif so.run.mode =='etc_ccf':
+			self.filter(so)
+			self.planet(so)
+			self.stellar(so)
+			self.telluric(so)
+			self.ao(so)
+			self.instrument(so)
+			self.observe(so)
+			self.get_speckle_noise(so)
+			self.observe_D(so)
+			self.etc_ccf(so)
+
+		
 	def filter(self,so):
 		"""
 		load band for scaling stellar spectrum
@@ -274,13 +363,18 @@ class fill_data():
 
 		so.filt.dl_l                 = np.mean(integrate(so.filt.xraw, so.filt.yraw)/so.filt.xraw) # dlambda/lambda
 		so.filt.center_wavelength    = integrate(so.filt.xraw,so.filt.yraw*so.filt.xraw)/integrate(so.filt.xraw,so.filt.yraw)
-
+####
 	def planet(self,so):
 		"""
 		loads planet spectrum
 		returns spectrum scaled to input V band mag 
 
 		everything in nm
+
+		date of the change: Jul 12, 2023
+
+        Huihao Zhang (zhang.12043@osu.edu)
+
 		"""
 		# Part 1: load raw spectrum
 		#
@@ -315,7 +409,12 @@ class fill_data():
 			dvel_mean = (dwvl_mean / np.nanmean(self.x)) * SPEEDOFLIGHT / 1e3 # average sampling in km/s
 			vsini_kernel,_ = _lsf_rotate(dvel_mean,so.plan.vsini,epsilon=0.6)
 			flux_vsini     = convolve(so.plan.s,vsini_kernel,normalize_kernel=True)  # photons / second / Ang
-			so.plan.s      = flux_vsini        
+			so.plan.s      = flux_vsini       
+		if so.plan.rv > 0:
+			dvelocity =   (so.plan.v / 300000) * u.nm * consts.c / (so.plan.v * u.nm )
+			rv_shift_resel = np.mean(so.plan.rv * u.km / u.s / dvelocity) * 1000*u.m/u.km
+			spec_shifted = shift(so.plan.s,rv_shift_resel.value)
+			so.plan.s      = spec_shifted 
 
 	def stellar(self,so):
 		"""
@@ -358,9 +457,16 @@ class fill_data():
 			vsini_kernel,_ = _lsf_rotate(dvel_mean,so.stel.vsini,epsilon=0.6)
 			flux_vsini     = convolve(so.stel.s,vsini_kernel,normalize_kernel=True)  # photons / second / Ang
 			so.stel.s      = flux_vsini
-            
+		if so.stel.rv > 0:
+			dvelocity =   (so.stel.v / 300000) * u.nm * consts.c / (so.stel.v * u.nm )
+			rv_shift_resel = np.mean(so.stel.rv * u.km / u.s / dvelocity) * 1000*u.m/u.km
+			spec_shifted = shift(so.stel.s,rv_shift_resel.value)
+			so.stel.s      = spec_shifted
 
-            
+
+####
+
+####            
 	def get_speckle_noise(self,so):
 		'''
 		Returns the contrast for a given list of separations.
@@ -374,6 +480,11 @@ class fill_data():
 		Outputs: 
 		get_speckle_noise - Either an array of length [n,1] if only one wavelength passed, or shape [n,m]
 
+        date of the change: Jul 12, 2023
+
+        Huihao Zhang (zhang.12043@osu.edu)
+		based on "get_speckle_noise" in https://github.com/planetarysystemsimager/psisim/blob/kpic/psisim/instruments/modhis.py
+		note that get_speckle_noise in PSIsim-hispec and PSIsim-modhis are the same
 		'''
 
 		#TODO: decide if PIAA will be optional via flag or permanent
@@ -382,11 +493,17 @@ class fill_data():
 
 		#if self.mode != 'vfn':
 		#    print("Warning: only 'vfn' mode has been confirmed")
-		separations = so.plan.ang_sep * u.mas
+		separations = (so.plan.ang_sep * u.mas).to(u.arcsec)
 		ao_mag=so.ao.ho_wfe_mag
 		mode=so.coron.mode
 		wvs=so.inst.xtransmit/1000 * u.um
         
+		if so.tel.seeing == 'good':
+			so.coron.telescope_seeing = 0.6
+		elif so.tel.seeing == 'bad':
+			so.coron.telescope_seeing = 1.05
+		else:
+			so.coron.telescope_seeing=1.5
 		if mode == "on-axis":
 			return np.ones([np.size(separations),np.size(wvs)])
 
@@ -441,7 +558,142 @@ class fill_data():
 
 		else:
 			raise ValueError("'%s' is a not a supported 'mode'" % (mode))
-            
+		
+	def get_order_bounds(self,so):
+		"""
+		given array, return max and mean of snr per order
+		"""
+		if so.rv.line_spacing == 'None':
+			line_spacing= None
+		else :
+			line_spacing=so.rv.line_spacing
+
+		peak_spacing=so.rv.peak_spacing
+		height=so.rv.height
+		order_peaks	  = signal.find_peaks(so.inst.base_throughput_filter,height=height,distance=peak_spacing,prominence=0.01)
+		ind_1 = np.where((so.stel.v>940)&(so.stel.v<1090))[0]
+		ind_2 = np.where((so.stel.v>1100)&(so.stel.v<1360))[0]
+		ind_3 = np.where((so.stel.v>1480)&(so.stel.v<1820))[0]
+		ind_4 = np.where((so.stel.v>1950)&(so.stel.v<2350))[0]
+		so.stel.ind_filter = np.array(ind_1.tolist()+ind_2.tolist()+ind_3.tolist()+ind_4.tolist())
+		so.stel.v_filter = so.stel.v[so.stel.ind_filter]
+		order_cen_lam	= so.stel.v_filter[order_peaks[0]]
+		blaze_angle	  =  76
+		order_indices	=[]
+		for i,lam_cen in enumerate(order_cen_lam):
+			if line_spacing == None: line_spacing_now = 0.02 if lam_cen < 1475 else 0.01
+			else: line_spacing_now=line_spacing
+			m = np.sin(blaze_angle*np.pi/180) * 2 * (1/line_spacing_now)/(lam_cen/1000)
+			fsr  = lam_cen/m
+			isub_test= np.where((so.stel.v[so.stel.ind_filter]> (lam_cen - fsr/2)) & (so.stel.v[so.stel.ind_filter] < (lam_cen+fsr/2))) #FINISH THIS
+			#plt.plot(so.stel.v[isub_test],so.inst.ytransmit[isub_test],'k--')
+			order_indices.append(np.where((so.obs.v[so.obs.ind_filter] > (lam_cen - 0.9*fsr/2)) & (so.obs.v[so.obs.ind_filter]  < (lam_cen+0.9*fsr/2)))[0])
+
+		so.rv.order_cen_lam=order_cen_lam
+		so.rv.order_indices=order_indices
+
+	def make_telluric_mask(self,so):
+		"""
+		"""
+		cutoff=so.rv.cutoff
+		velocity_cutoff=int(so.rv.velocity_cutoff)
+		water_only=so.rv.water_only ###  bool 
+		telluric_spec = np.abs(so.tel.s/so.tel.rayleigh)**so.tel.airmass
+		if water_only: telluric_spec = np.abs(so.tel.h2o)**so.tel.airmass #h2o only
+		telluric_spec[np.where(np.isnan(telluric_spec))] = 0
+		telluric_spec_lores = degrade_spec(so.stel.v, telluric_spec, so.inst.res)
+		# resample onto v array
+		filt_interp	 = interpolate.interp1d(so.stel.v_filter, telluric_spec_lores[so.stel.ind_filter], bounds_error=False,fill_value=0)
+		ind_1 = np.where((so.obs.v>940)&(so.obs.v<1090))[0]
+		ind_2 = np.where((so.obs.v>1100)&(so.obs.v<1360))[0]
+		ind_3 = np.where((so.obs.v>1480)&(so.obs.v<1820))[0]
+		ind_4 = np.where((so.obs.v>1950)&(so.obs.v<2350))[0]
+		so.obs.ind_filter = np.array(ind_1.tolist()+ind_2.tolist()+ind_3.tolist()+ind_4.tolist())
+		so.obs.v_filter = so.obs.v[so.obs.ind_filter]
+		s_tel		 = filt_interp(so.obs.v_filter)/np.max(filt_interp(so.obs.v_filter))	# filter profile resampled to phoenix times phoenix flux density
+
+		#cutoff = 0.01 # reject lines greater than 1% depth
+		telluric_mask = np.ones_like(s_tel)
+		telluric_mask[np.where(s_tel < (1-cutoff))[0]] = 0
+		# avoid +/-5km/s  (5pix) around telluric
+		for iroll in range(velocity_cutoff):
+			telluric_mask[np.where(np.roll(s_tel,iroll) < (1-cutoff))[0]] = 0
+			telluric_mask[np.where(np.roll(s_tel,-1*iroll) < (1-cutoff))[0]] = 0
+
+		so.rv.telluric_mask=telluric_mask
+		so.rv.s_tel=s_tel
+
+	def get_rv_content(self,so):
+		"""
+		"""
+		flux_interp = interpolate.InterpolatedUnivariateSpline(so.obs.v,so.obs.s, k=1)
+		dflux = flux_interp.derivative()
+		spec_deriv = dflux(so.obs.v_filter)
+		sigma_ord = np.abs(so.obs.noise[so.obs.ind_filter]) #np.abs(s) ** 0.5 # np.abs(n)
+		sigma_ord[np.where(sigma_ord ==0)] = 1e10
+		all_w = (so.obs.v_filter ** 2.) * (spec_deriv ** 2.) / sigma_ord ** 2. # include read noise and dark here!!
+		
+		so.rv.all_w=all_w
+
+	def get_rv_content_D(self,so):
+		"""
+		"""
+		flux_interp = interpolate.InterpolatedUnivariateSpline(so.obs.v,so.obs.p, k=1)
+		dflux = flux_interp.derivative()
+		spec_deriv = dflux(so.obs.v_filter)
+		sigma_ord = np.abs(so.obs.noise_p[so.obs.ind_filter]) #np.abs(s) ** 0.5 # np.abs(n)
+		sigma_ord[np.where(sigma_ord ==0)] = 1e10
+		all_w = (so.obs.v_filter ** 2.) * (spec_deriv ** 2.) / sigma_ord ** 2. # include read noise and dark here!!
+		
+		so.rv.all_w_p=all_w
+
+	def get_rv_precision(self,so):
+		SPEEDOFLIGHT = 2.998e8 # m/s
+		all_w=so.rv.all_w
+		order_cens=so.rv.order_cen_lam
+		order_inds=so.rv.order_indices
+		noise_floor=so.rv.rv_floor
+		mask=so.rv.telluric_mask
+		if np.any(mask==None):
+			mask = np.ones_like(all_w)
+		dv_vals = np.zeros_like(order_cens)
+		for i,lam_cen in enumerate(order_cens):
+			w_ord = all_w[order_inds[i]] * mask[order_inds[i]]
+			dv_order  = SPEEDOFLIGHT / (np.nansum(w_ord[1:-1])**0.5) # m/s
+			dv_vals[i]  = dv_order
+		
+		dv_tot  = np.sqrt(dv_vals**2 + noise_floor**2)
+		dv_spec  = 1. / (np.nansum(1./dv_vals**2.))**0.5
+		dv_spec_floor  = 1. / (np.nansum(1./dv_tot**2.))**0.5
+
+		so.rv.dv_tot=dv_tot
+		so.rv.dv_spec=dv_spec
+		so.rv.dv_vals=dv_vals
+
+	def get_rv_precision_D(self,so):
+		SPEEDOFLIGHT = 2.998e8 # m/s
+		all_w=so.rv.all_w_p
+		order_cens=so.rv.order_cen_lam
+		order_inds=so.rv.order_indices
+		noise_floor=so.rv.rv_floor
+		mask=so.rv.telluric_mask
+		if np.any(mask==None):
+			mask = np.ones_like(all_w)
+		dv_vals = np.zeros_like(order_cens)
+		for i,lam_cen in enumerate(order_cens):
+			w_ord = all_w[order_inds[i]] * mask[order_inds[i]]
+			dv_order  = SPEEDOFLIGHT / (np.nansum(w_ord[1:-1])**0.5) # m/s
+			dv_vals[i]  = dv_order
+		
+		dv_tot  = np.sqrt(dv_vals**2 + noise_floor**2)
+		dv_spec  = 1. / (np.nansum(1./dv_vals**2.))**0.5
+		dv_spec_floor  = 1. / (np.nansum(1./dv_tot**2.))**0.5
+
+		so.rv.dv_tot_p=dv_tot
+		so.rv.dv_spec_p=dv_spec
+		so.rv.dv_vals_p=dv_vals
+
+####            
 
 	def telluric(self,so):
 		"""
@@ -465,63 +717,212 @@ class fill_data():
 		so.tel.o3 = interpolate.splev(self.x,tck_tel,der=0,ext=1)
 
 	def ao(self,so):
-		"""
-		fill in ao info 
-		"""
-		# load ao information from ao file
-		if so.ao.mag=='default': 
-			factor_0 = so.stel.factor_0 # if mag is same as one loaded, dont change spectral mag
-		else: 
-			# scale to find factor_0 for new mag
-			factor_0 = so.stel.factor_0 * 10**(0.4*so.ao.mag)
+		if so.ao.mode == 'auto':
+			print('auto ao mode')
+			ho_wfe = []
+			ao_ho_wfe_mag = []
+			ao_ho_wfe_band = []
+			tt_wfe_mag = []
+			tt_wfe_band = []
+			tt_wfe = []
+			sr_tt = []
+			sr_ho = []
+			
+			if so.ao.inst =='hispec':
+				if so.ao.mag=='default': 
+					factor_0 = so.stel.factor_0 # if mag is same as one loaded, dont change spectral mag
+				else: 
+					# scale to find factor_0 for new mag
+					factor_0 = so.stel.factor_0 * 10**(0.4*so.ao.mag)
+				if type(so.ao.ho_wfe_set) is str:
+					f_full = pd.read_csv(so.ao.ho_wfe_set,header=[0,1])
+					mags             = f_full['seeing'].values.T[0]
+					f=f_full[['LGS_STRAP_45','SH','LGS_100J_45']]
+					so.ao.modes = f.columns
+				for i in range(len(f.columns)):
+					wfes = f[f.columns[i][0]].values.T[0]
+					ho_wfe_band= f.columns[i][1]
+					ho_wfe_mag,x_test1,y_test1 = get_band_mag(so,'Johnson',ho_wfe_band,factor_0)
+					f_howfe = interpolate.interp1d(mags,wfes, bounds_error=False,fill_value=10000)
+					ao_ho_wfe     = float(f_howfe(ho_wfe_mag))
+					strehl_ho = wfe_tools.calc_strehl(ao_ho_wfe,so.filt.center_wavelength)
+					ho_wfe.append(ao_ho_wfe)
+					ao_ho_wfe_band.append(ho_wfe_band)
+					ao_ho_wfe_mag.append(ho_wfe_mag)
+					sr_ho.append(strehl_ho)
 
-		if type(so.ao.ho_wfe_set) is str:
-			f = pd.read_csv(so.ao.ho_wfe_set,header=[0,1])
-			so.ao.modes = f.columns
-			mags             = f['mag'].values.T[0]
-			wfes             = f[so.ao.mode].values.T[0]
-			so.ao.ho_wfe_band= f[so.ao.mode].columns[0] # this is the mag band wfe is defined in, must be more readable way..
-			so.ao.ho_wfe_mag = get_band_mag(so,'Johnson',so.ao.ho_wfe_band,factor_0) # get magnitude of star in appropriate band
-			f_howfe          = interpolate.interp1d(mags,wfes, bounds_error=False,fill_value=10000)
-			so.ao.ho_wfe     = float(f_howfe(so.ao.ho_wfe_mag))
-			print('HO WFE %s mag is %s'%(so.ao.ho_wfe_band,so.ao.ho_wfe_mag))
+				if type(so.ao.ttdynamic_set) is str:
+					f_full = pd.read_csv(so.ao.ttdynamic_set,header=[0,1])
+					mags             = f_full['seeing'].values.T[0]
+					f=f_full[['LGS_STRAP_45','SH','LGS_100J_45']]
+					so.ao.modes = f.columns
+				for i in range(len(f.columns)):
+					tts             = f[f.columns[i][0]].values.T[0]
+					ttdynamic_band=f.columns[i][1] # this is the mag band wfe is defined in, must be more readable way..			
+					ttdynamic_mag,x_test2,y_test2 = get_band_mag(so,'Johnson',ttdynamic_band,so.stel.factor_0) # get magnitude of star in appropriate band
+					f_ttdynamic=  interpolate.interp1d(mags,tts, bounds_error=False,fill_value=10000)
+					tt_dynamic     = float(f_ttdynamic(ttdynamic_mag))
+					strehl_tt = wfe_tools.tt_to_strehl(tt_dynamic,so.filt.center_wavelength,so.inst.tel_diam)
+					tt_wfe.append(tt_dynamic)
+					tt_wfe_band.append(ttdynamic_band)
+					tt_wfe_mag.append(ttdynamic_mag)
+					sr_tt.append(strehl_tt)
+
+				ind_auto_ao = np.where(np.array(sr_tt)*np.array(sr_ho) == np.max(np.array(sr_tt)*np.array(sr_ho)))[0][0]
+				so.ao.sr_tt = sr_tt
+				so.ao.sr_ho = sr_ho
+				so.ao.mode=f.columns[ind_auto_ao][0]
+				print("ao mode:", f.columns[ind_auto_ao][0], f.columns[ind_auto_ao][1])
+				so.ao.tt_dynamic= tt_wfe[ind_auto_ao]
+				so.ao.ho_wfe= ho_wfe[ind_auto_ao]
+				so.ao.ho_wfe_mag=ao_ho_wfe_mag[ind_auto_ao]
+				so.ao.ho_wfe_band=ao_ho_wfe_band[ind_auto_ao]
+				so.ao.ttdynamic_mag=tt_wfe_mag[ind_auto_ao]
+				so.ao.ttdynamic_band=tt_wfe_band[ind_auto_ao]
+				print("tt:",so.ao.tt_dynamic)
+				print("ho:",so.ao.ho_wfe)
+				if so.ao.mode =='80J':
+					so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.J[1],0.8)
+				elif so.ao.mode =='80H':
+					so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.H[0],so.inst.H[1],0.8)
+				elif so.ao.mode =='80JH':
+					so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.H[1],0.8)
+				elif so.ao.mode =='100JH':
+					so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.H[1],1)
+				elif so.ao.mode =='100K':
+					so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.K[0],so.inst.K[1],1)
+				else:
+					so.ao.pywfs_dichroic = np.ones_like(self.x)
+								
+			elif so.ao.inst =='modhis':
+				ho_wfe = []
+				ao_ho_wfe_mag = []
+				ao_ho_wfe_band = []
+				tt_wfe_mag = []
+				tt_wfe_band = []
+				tt_wfe = []
+				sr_tt = []
+				sr_ho = []
+				if so.ao.mag=='default': 
+					factor_0 = so.stel.factor_0 # if mag is same as one loaded, dont change spectral mag
+				else: 
+					# scale to find factor_0 for new mag
+					factor_0 = so.stel.factor_0 * 10**(0.4*so.ao.mag)
+				if type(so.ao.ho_wfe_set) is str:
+					f_before = pd.read_csv(so.ao.ho_wfe_set,header=[0,1,2,3])
+					mags             = f_before['seeing'].values.T[0]
+					f = f_before[so.tel.seeing][str(int(so.tel.zenith))]
+					so.ao.modes = f.columns
+				for i in range(len(f.columns)):
+					wfes = f[f.columns[i][0]].values.T[0]
+					ho_wfe_band= f.columns[i][1]
+					ho_wfe_mag,x_test3,y_test3 = get_band_mag(so,'Johnson',ho_wfe_band,so.stel.factor_0)
+					f_howfe = interpolate.interp1d(mags,wfes, bounds_error=False,fill_value=10000)
+					ao_ho_wfe     = float(f_howfe(ho_wfe_mag))
+					strehl_ho = wfe_tools.calc_strehl(ao_ho_wfe,so.filt.center_wavelength)
+					ho_wfe.append(ao_ho_wfe)
+					ao_ho_wfe_band.append(ho_wfe_band)
+					ao_ho_wfe_mag.append(ho_wfe_mag)
+					sr_ho.append(strehl_ho)
+
+				if type(so.ao.ttdynamic_set) is str:
+					f_before = pd.read_csv(so.ao.ttdynamic_set,header=[0,1,2,3])
+					mags            = f_before['seeing'].values.T[0]
+					f = f_before[so.tel.seeing][str(int(so.tel.zenith))]
+					so.ao.modes_tt  = f.columns # should match howfe..
+				for i in range(len(f.columns)):
+					tts             = f[f.columns[i][0]].values.T[0]
+					ttdynamic_band=f.columns[i][1] # this is the mag band wfe is defined in, must be more readable way..			
+					ttdynamic_mag,x_test4,y_test4= get_band_mag(so,'Johnson',ttdynamic_band,so.stel.factor_0) # get magnitude of star in appropriate band
+					f_ttdynamic=  interpolate.interp1d(mags,tts, bounds_error=False,fill_value=10000)
+					tt_dynamic     = float(f_ttdynamic(ttdynamic_mag))
+					strehl_tt = wfe_tools.tt_to_strehl(tt_dynamic,so.filt.center_wavelength,so.inst.tel_diam)
+					tt_wfe.append(tt_dynamic)
+					tt_wfe_band.append(ttdynamic_band)
+					tt_wfe_mag.append(ttdynamic_mag)
+					sr_tt.append(strehl_tt)
+
+				ind_auto_ao = np.where(np.array(sr_tt)*np.array(sr_ho) == np.max(np.array(sr_tt)*np.array(sr_ho)))[0][0]
+				so.ao.mode=f.columns[ind_auto_ao][0]
+				print("ao mode:", f.columns[ind_auto_ao][0], f.columns[ind_auto_ao][1])
+				so.ao.tt_dynamic= tt_wfe[ind_auto_ao]
+				so.ao.ho_wfe= ho_wfe[ind_auto_ao]
+				so.ao.ho_wfe_mag=ao_ho_wfe_mag[ind_auto_ao]
+				so.ao.ho_wfe_band=ao_ho_wfe_band[ind_auto_ao]
+				so.ao.ttdynamic_mag=tt_wfe_mag[ind_auto_ao]
+				so.ao.ttdynamic_band=tt_wfe_band[ind_auto_ao]
+				print("tt:",so.ao.tt_dynamic)
+				print("ho:",so.ao.ho_wfe)
+				if so.ao.mode =='80J':
+					so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.J[1],0.8)
+				elif so.ao.mode =='80H':
+					so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.H[0],so.inst.H[1],0.8)
+				elif so.ao.mode =='80JH':
+					so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.H[1],0.8)
+				elif so.ao.mode =='100JH':
+					so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.H[1],1)
+				elif so.ao.mode =='100K':
+					so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.K[0],so.inst.K[1],1)
+				else:
+					so.ao.pywfs_dichroic = np.ones_like(self.x)
+			else:
+				raise ValueError('instrument must be modhis or hispec')
 		else:
-			so.ao.ho_wfe = so.ao.ho_wfe_set
+			if so.ao.mag=='default': 
+				factor_0 = so.stel.factor_0 # if mag is same as one loaded, dont change spectral mag
+			else: 
+				# scale to find factor_0 for new mag
+				factor_0 = so.stel.factor_0 * 10**(0.4*so.ao.mag)
 
-		if type(so.ao.ttdynamic_set) is str:
-			f = pd.read_csv(so.ao.ttdynamic_set,header=[0,1])
-			so.ao.modes_tt  = f.columns # should match howfe..
-			mags            = f['mag'].values.T[0]
-			tts             = f[so.ao.mode].values.T[0]
-			so.ao.ttdynamic_band=f[so.ao.mode].columns[0] # this is the mag band wfe is defined in, must be more readable way..			
-			so.ao.ttdynamic_mag = get_band_mag(so,'Johnson',so.ao.ttdynamic_band,factor_0) # get magnitude of star in appropriate band
-			f_ttdynamic=  interpolate.interp1d(mags,tts, bounds_error=False,fill_value=10000)
-			so.ao.tt_dynamic     = float(f_ttdynamic(so.ao.ttdynamic_mag))
-			print('Tip Tilt %s mag is %s'%(so.ao.ttdynamic_band,so.ao.ttdynamic_mag))
-		else:
-			so.ao.tt_dynamic = so.ao.ttdynamic_set
+			if type(so.ao.ho_wfe_set) is str:
+				f_before = pd.read_csv(so.ao.ho_wfe_set,header=[0,1,2,3])
+				mags             = f_before['seeing'].values.T[0]
+				f = f_before[so.tel.seeing][str(int(so.tel.zenith))]
+				so.ao.modes = f.columns
+				wfes             = f[so.ao.mode].values.T[0]
+				so.ao.ho_wfe_band= f[so.ao.mode].columns[0] # this is the mag band wfe is defined in, must be more readable way..
+				so.ao.ho_wfe_mag,x_test5,y_test5 = get_band_mag(so,'Johnson',so.ao.ho_wfe_band,factor_0) # get magnitude of star in appropriate band
+				f_howfe          = interpolate.interp1d(mags,wfes, bounds_error=False,fill_value=10000)
+				so.ao.ho_wfe     = float(f_howfe(so.ao.ho_wfe_mag))
+				print('HO WFE %s mag is %s'%(so.ao.ho_wfe_band,so.ao.ho_wfe_mag))
+			else:
+				so.ao.ho_wfe = so.ao.ho_wfe_set
 
-		print('AO mode: %s'%so.ao.mode)
+			if type(so.ao.ttdynamic_set) is str:
+				f_before = pd.read_csv(so.ao.ttdynamic_set,header=[0,1,2,3])
+				mags             = f_before['seeing'].values.T[0]
+				f = f_before[so.tel.seeing][str(int(so.tel.zenith))]
+				so.ao.modes_tt  = f.columns # should match howfe..
+				tts             = f[so.ao.mode].values.T[0]
+				so.ao.ttdynamic_band=f[so.ao.mode].columns[0] # this is the mag band wfe is defined in, must be more readable way..			
+				so.ao.ttdynamic_mag,x_test6,y_test6 = get_band_mag(so,'Johnson',so.ao.ttdynamic_band,factor_0) # get magnitude of star in appropriate band
+				f_ttdynamic=  interpolate.interp1d(mags,tts, bounds_error=False,fill_value=10000)
+				so.ao.tt_dynamic     = float(f_ttdynamic(so.ao.ttdynamic_mag))
+				print('Tip Tilt %s mag is %s'%(so.ao.ttdynamic_band,so.ao.ttdynamic_mag))
+			else:
+				so.ao.tt_dynamic = so.ao.ttdynamic_set
 
-		#so.ao.ho_wfe = get_HO_WFE(so.ao.v_mag,so.ao.mode) #old
-		print('HO WFE is %s'%so.ao.ho_wfe)
-	
-		#so.ao.tt_dynamic = get_tip_tilt_resid(so.ao.v_mag,so.ao.mode)
-		print('tt dynamic is %s'%so.ao.tt_dynamic)
+			print('AO mode: %s'%so.ao.mode)
 
-		# consider throughput impact of ao here
-		if so.ao.mode =='80J':
-			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.J[1],0.8)
-		elif so.ao.mode =='80H':
-			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.H[0],so.inst.H[1],0.8)
-		elif so.ao.mode =='80JH':
-			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.H[1],0.8)
-		elif so.ao.mode =='100JH':
-			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.H[1],1)
-		elif so.ao.mode =='100K':
-			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.K[0],so.inst.K[1],1)
-		else:
-			so.ao.pywfs_dichroic = np.ones_like(self.x)
+			#so.ao.ho_wfe = get_HO_WFE(so.ao.v_mag,so.ao.mode) #old
+			print('HO WFE is %s'%so.ao.ho_wfe)
+
+			#so.ao.tt_dynamic = get_tip_tilt_resid(so.ao.v_mag,so.ao.mode)
+			print('tt dynamic is %s'%so.ao.tt_dynamic)
+
+			# consider throughput impact of ao here
+			if so.ao.mode =='80J':
+				so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.J[1],0.8)
+			elif so.ao.mode =='80H':
+				so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.H[0],so.inst.H[1],0.8)
+			elif so.ao.mode =='80JH':
+				so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.H[1],0.8)
+			elif so.ao.mode =='100JH':
+				so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.H[1],1)
+			elif so.ao.mode =='100K':
+				so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.K[0],so.inst.K[1],1)
+			else:
+				so.ao.pywfs_dichroic = np.ones_like(self.x)
 
 	def instrument(self,so):
 		###########
@@ -546,17 +947,18 @@ class fill_data():
 			#add airmass calc for strehl for seeing limited instrument
 		except:
 			so.inst.base_throughput  = throughput_tools.get_base_throughput(self.x,datapath=so.inst.transmission_path) # everything except coupling
-			
+			so.inst.base_throughput_filter  = throughput_tools.get_base_throughput(self.x_filter,datapath=so.inst.transmission_path) # everything except coupling
+
 			# interp grid
 			try: so.inst.points
 			except AttributeError: 
 				out = throughput_tools.grid_interp_coupling(int(so.inst.pl_on),path=so.inst.transmission_path + 'coupling/',atm=int(so.inst.atm),adc=int(so.inst.adc))
 				so.inst.grid_points, so.inst.grid_values = out[0],out[1:] #if PL, three values
 			try:
-				so.inst.coupling, so.inst.strehl = throughput_tools.pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,so.ao.tt_dynamic,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values)
+				so.inst.coupling, so.inst.strehl,so.inst.rawcoup = throughput_tools.pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,so.ao.tt_dynamic,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values)
 			except ValueError:
 				# hack here bc tt dynamic often is out of bounds
-				so.inst.coupling, so.inst.strehl = throughput_tools.pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,20,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values)
+				so.inst.coupling, so.inst.strehl,so.inst.rawcoup = throughput_tools.pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,20,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values)
 				so.inst.notes = 'tt dynamic out of bounds! %smas' %so.ao.tt_dynamic
 
 			so.inst.xtransmit = self.x
@@ -593,14 +995,20 @@ class fill_data():
 		so.obs.v, so.obs.s_frame = resample(so.stel.v,s_ccd_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
 		so.obs.s_frame *=so.inst.extraction_frac # extraction fraction, reduce photons
 		so.obs.s =  so.obs.s_frame * so.obs.nframes
+		ind_1 = np.where((so.obs.v>940)&(so.obs.v<1090))[0]
+		ind_2 = np.where((so.obs.v>1100)&(so.obs.v<1360))[0]
+		ind_3 = np.where((so.obs.v>1480)&(so.obs.v<1820))[0]
+		ind_4 = np.where((so.obs.v>1950)&(so.obs.v<2350))[0]
+		so.obs.ind_filter = np.array(ind_1.tolist()+ind_2.tolist()+ind_3.tolist()+ind_4.tolist())
+		so.obs.s_filter = so.obs.s[so.obs.ind_filter]
 
 		# resample throughput for applying to sky background
-		base_throughput_interp= interpolate.interp1d(so.inst.xtransmit,so.inst.base_throughput)
+		base_throughput_interp= interpolate.interp1d(so.inst.xtransmit,so.inst.ytransmit)
 
 		# load background spectrum - sky is top of telescope and will be reduced by inst BASE throughput. Coupling already accounted for in solid angle of fiber. Does inst bkg need throughput applied?
 		so.obs.sky_bg_ph    = base_throughput_interp(so.obs.v) * noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
 		so.obs.inst_bg_ph   = noise_tools.get_inst_bg(so.obs.v,npix=so.inst.pix_vert,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area,datapath=so.inst.transmission_path)
-
+		so.obs.sky_bg_ph_test = noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
 		# calc noise
 		if so.inst.pl_on: # 3 port lantern hack
 			noise_frame_yJ  = np.sqrt(3) * noise_tools.sum_total_noise(so.obs.s_frame/3,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
@@ -616,18 +1024,26 @@ class fill_data():
 		so.obs.noise_frame = noise_frame
 		so.obs.noise = np.sqrt(so.obs.nframes)*noise_frame
 
-		so.obs.snr = so.obs.s/so.obs.noise
-		so.obs.v_resamp, so.obs.snr_reselement = resample(so.obs.v,so.obs.snr,sig=so.inst.res_samp, dx=0, eta=1/np.sqrt(so.inst.res_samp),mode='pixels')
-		so.obs.v_resamp, so.obs.s_reselement = resample(so.obs.v,so.obs.s,sig=so.inst.res_samp, dx=0, eta=1/np.sqrt(so.inst.res_samp),mode='pixels')
-		so.obs.v_resamp, so.obs.noise_reselement = resample(so.obs.v,so.obs.noise,sig=so.inst.res_samp, dx=0, eta=1/np.sqrt(so.inst.res_samp),mode='pixels')
+		so.obs.noise_filter = so.obs.noise[so.obs.ind_filter]
+		so.obs.snr = so.obs.s_filter/so.obs.noise_filter
+		#so.obs.v_resamp, so.obs.snr_reselement = resample(so.obs.v,so.obs.snr,sig=so.inst.res_samp, dx=0, eta=1/np.sqrt(so.inst.res_samp),mode='pixels')
+		#so.obs.v_resamp, so.obs.s_reselement = resample(so.obs.v,so.obs.s,sig=so.inst.res_samp, dx=0, eta=1/np.sqrt(so.inst.res_samp),mode='pixels')
+		#so.obs.v_resamp, so.obs.noise_reselement = resample(so.obs.v,so.obs.noise,sig=so.inst.res_samp, dx=0, eta=1/np.sqrt(so.inst.res_samp),mode='pixels')
 
-        
+####
 	def observe_D(self,so):
 		"""
 		direct imaging
+
+		date of the change: Jul 12, 2023
+
+        Huihao Zhang (zhang.12043@osu.edu)
+		based on "simulate_observation" in https://github.com/planetarysystemsimager/psisim/blob/kpic/psisim/observation.py
 		"""
 		flux_per_sec_nm_s = so.stel.s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
 		flux_per_sec_nm_p = so.plan.s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
+		flux_per_sec_nm_p_nosky = so.plan.s  * so.inst.tel_area * so.inst.ytransmit
+
 		so.obs.flux_per_sec_nm_p_before = flux_per_sec_nm_p
 		so.obs.flux_per_sec_nm_s_before = flux_per_sec_nm_s
         
@@ -655,18 +1071,31 @@ class fill_data():
 		p_ccd_lores = degrade_spec(so.stel.v, so.obs.flux_per_nm_p, so.inst.res)
 		so.obs.p_ccd_lores = p_ccd_lores
 
+		so.obs.flux_per_nm_p_nosky = flux_per_sec_nm_p_nosky * so.obs.texp_frame
+		p_nosky_ccd_lores = degrade_spec(so.stel.v, so.obs.flux_per_nm_p_nosky, so.inst.res)
+		so.obs.p_nosky_ccd_lores = p_nosky_ccd_lores
+
         
 		# resample onto res element grid
 		so.obs.v, so.obs.s_frame = resample(so.stel.v,s_ccd_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
 		so.obs.s_frame *=so.inst.extraction_frac # extraction fraction, reduce photons
 		so.obs.s =  so.obs.s_frame * so.obs.nframes
+		so.obs.s_filter = so.obs.s[so.obs.ind_filter]
         
 		so.obs.v, so.obs.p_frame = resample(so.stel.v,p_ccd_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
 		so.obs.p_frame *=so.inst.extraction_frac # extraction fraction, reduce photons
 		so.obs.p =  so.obs.p_frame * so.obs.nframes
+		so.obs.p_filter = so.obs.p[so.obs.ind_filter]
+
+
+		so.obs.v, so.obs.p_nosky_frame = resample(so.stel.v,p_nosky_ccd_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
+		so.obs.p_nosky_frame *=so.inst.extraction_frac # extraction fraction, reduce photons
+		so.obs.p_nosky =  so.obs.p_nosky_frame* so.obs.nframes
+		so.obs.p_nosky_filter = so.obs.p_nosky[so.obs.ind_filter]
+
         
 		# resample throughput for applying to sky background
-		base_throughput_interp= interpolate.interp1d(so.inst.xtransmit,so.inst.base_throughput)
+		base_throughput_interp= interpolate.interp1d(so.inst.xtransmit,so.inst.ytransmit)
 		instrument_contrast_interp= interpolate.interp1d(so.inst.xtransmit,so.coron.contrast)
 
 
@@ -675,25 +1104,330 @@ class fill_data():
 		so.obs.sky_bg_ph    = base_throughput_interp(so.obs.v) * noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
 		so.obs.inst_bg_ph   = noise_tools.get_inst_bg(so.obs.v,npix=so.inst.pix_vert,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area,datapath=so.inst.transmission_path)
 
+		sky_bg_tot = so.obs.sky_bg_ph * so.obs.texp_frame
+		inst_bg_tot = so.obs.inst_bg_ph * so.obs.texp_frame
 		# calc noise
-#		if so.inst.pl_on: # 3 port lantern hack
-#			noise_frame_yJ_p  = np.sqrt(3) * noise_tools.sum_total_noise_D(so.obs.p_frame/3,so.obs.s_frame/3,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
-#			noise_frame_p     = noise_tools.sum_total_noise_D(so.obs.p_frame,so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
-#			yJ_sub_p          = np.where(so.obs.v < 1400)[0]
-#			noise_frame_p[yJ_sub_p] = noise_frame_yJ_p[yJ_sub_p] # fill in yj with sqrt(3) times noise in PL case
+		if so.inst.pl_on: # 3 port lantern hack
+			noise_frame_yJ_p  = np.sqrt(3) * noise_tools.sum_total_noise_D(so.obs.p_frame/3,so.obs.s_frame/3,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
+			noise_frame_p     = noise_tools.sum_total_noise_D(so.obs.p_frame,so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
+			yJ_sub_p          = np.where(so.obs.v < 1400)[0]
+			noise_frame_p[yJ_sub_p] = noise_frame_yJ_p[yJ_sub_p] # fill in yj with sqrt(3) times noise in PL case
 
-#		else:
-		noise_frame_p  = noise_tools.sum_total_noise_D(so.obs.p_frame,so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
+		else:
+			noise_frame_p  = noise_tools.sum_total_noise_D(so.obs.p_frame,so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
+		speckle_noise = so.obs.s_frame * so.coron.inst_contr
+		so.obs.speckle_noise = speckle_noise * np.sqrt(so.obs.nframes)
+
+#		so.obs.thermal =(so.obs.inst_bg_ph + so.obs.sky_bg_ph +  so.inst.darknoise * so.inst.pix_vert) * so.obs.texp_frame * so.obs.nframes
+		so.obs.thermal =(so.obs.inst_bg_ph + so.obs.sky_bg_ph) * so.obs.texp_frame * so.obs.nframes
+		so.obs.read_noise = np.max((3,(so.inst.readnoise/np.sqrt(so.inst.res_samp))))*np.sqrt(so.obs.nframes)
 		so.obs.noise_frame_p=noise_frame_p
 		noise_frame_p[np.where(np.isnan(noise_frame_p))] = np.inf
 		noise_frame_p[np.where(noise_frame_p==0)] = np.inf
+
+		so.obs.sky_bg_tot = sky_bg_tot
+		so.obs.inst_bg_tot = inst_bg_tot
+
+		sky_bg_tot[np.where(np.isnan(sky_bg_tot))] = np.inf
+		sky_bg_tot[np.where(sky_bg_tot==0)] = np.inf
+
+		inst_bg_tot[np.where(np.isnan(inst_bg_tot))] = np.inf
+		inst_bg_tot[np.where(inst_bg_tot==0)] = np.inf		
+		
+		so.obs.sky_bg_tot = sky_bg_tot * np.sqrt(so.obs.nframes)
+		so.obs.inst_bg_tot = inst_bg_tot * np.sqrt(so.obs.nframes)
+
 		
 		so.obs.noise_frame_p = noise_frame_p
 		so.obs.noise_p = np.sqrt(so.obs.nframes)*noise_frame_p
+		so.obs.noise_p_filter = so.obs.noise_p[so.obs.ind_filter]
 
-		so.obs.p_snr = so.obs.p/so.obs.noise_p
+
+		so.obs.p_snr = so.obs.p_filter/so.obs.noise_p_filter
 		print('direct imaging ready')
+
+	def etc(self,so):
+		"""
+		direct imaging
+
+		date of the change: Jul 12, 2023
+
+        Huihao Zhang (zhang.12043@osu.edu)
+		based on "simulate_observation" in https://github.com/planetarysystemsimager/psisim/blob/kpic/psisim/observation.py
+		"""
+		flux_per_sec_nm_s = so.stel.s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
+		
+		# degrade to instrument resolution
+		so.etc.flux_per_nm_s = flux_per_sec_nm_s * so.etc.texp_frame
+		s_ccd_lores = degrade_spec(so.stel.v, so.etc.flux_per_nm_s, so.inst.res)
+		so.etc.s_ccd_lores = s_ccd_lores
+
         
+		# resample onto res element grid
+		so.etc.v, so.etc.s_frame = resample(so.stel.v,s_ccd_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
+		so.etc.s_frame *=so.inst.extraction_frac # extraction fraction, reduce photons
+        
+        
+		# resample throughput for applying to sky background
+		base_throughput_interp= interpolate.interp1d(so.inst.xtransmit,so.inst.ytransmit)
+
+
+		# load background spectrum - sky is top of telescope and will be reduced by inst BASE throughput. Coupling already accounted for in solid angle of fiber. Does inst bkg need throughput applied?
+		so.etc.sky_bg_ph    = base_throughput_interp(so.etc.v) * noise_tools.get_sky_bg(so.etc.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
+		so.etc.inst_bg_ph   = noise_tools.get_inst_bg(so.etc.v,npix=so.inst.pix_vert,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area,datapath=so.inst.transmission_path)
+		# calc noise
+		if so.inst.pl_on: # 3 port lantern hack
+			noise_frame_yJ  = np.sqrt(3) * noise_tools.sum_total_noise(so.etc.s_frame/3,so.etc.texp_frame, so.obs.nsamp,so.etc.inst_bg_ph, so.etc.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
+			noise_frame     = noise_tools.sum_total_noise(so.etc.s_frame,so.etc.texp_frame, so.obs.nsamp,so.etc.inst_bg_ph, so.etc.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
+			yJ_sub          = np.where(so.etc.v < 1400)[0]
+			noise_frame[yJ_sub] = noise_frame_yJ[yJ_sub] # fill in yj with sqrt(3) times noise in PL case
+		else:
+			noise_frame  = noise_tools.sum_total_noise(so.etc.s_frame,so.etc.texp_frame, so.obs.nsamp,so.etc.inst_bg_ph, so.etc.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
+
+		so.etc.noise_frame_s = noise_frame
+
+		s_frame = so.etc.s_frame 
+
+		s_frame[np.where(np.isnan(s_frame))] = np.inf
+		s_frame[np.where(s_frame==0)] = np.inf
+		so.etc.s_frame = s_frame
+		ind_1 = np.where((so.etc.v>940)&(so.etc.v<1090))[0]
+		ind_2 = np.where((so.etc.v>1100)&(so.etc.v<1360))[0]
+		ind_3 = np.where((so.etc.v>1480)&(so.etc.v<1820))[0]
+		ind_4 = np.where((so.etc.v>1950)&(so.etc.v<2350))[0]
+		so.obs.ind_filter = np.array(ind_1.tolist()+ind_2.tolist()+ind_3.tolist()+ind_4.tolist())
+
+		so.etc.nframe_s = (so.etc.noise_frame_s / so.etc.s_frame)**2 * so.etc.SN**2
+		so.etc.nframe_s_filter = so.etc.nframe_s[so.obs.ind_filter]
+		so.etc.total_expt_s = so.etc.nframe_s * so.etc.texp_frame
+		so.etc.total_expt_s = so.etc.total_expt_s[so.obs.ind_filter]
+		
+		
+		print('ETC for off-axis mode ready')
+
+	def etc_D(self,so):
+		"""
+		direct imaging
+
+		date of the change: Jul 12, 2023
+
+        Huihao Zhang (zhang.12043@osu.edu)
+		based on "simulate_observation" in https://github.com/planetarysystemsimager/psisim/blob/kpic/psisim/observation.py
+		"""
+		flux_per_sec_nm_s = so.stel.s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
+		flux_per_sec_nm_p = so.plan.s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
+		so.etc.flux_per_sec_nm_p_before = flux_per_sec_nm_p
+		so.etc.flux_per_sec_nm_s_before = flux_per_sec_nm_s
+		
+		# degrade to instrument resolution
+		so.etc.flux_per_nm_s = flux_per_sec_nm_s * so.etc.texp_frame
+		s_ccd_lores = degrade_spec(so.stel.v, so.etc.flux_per_nm_s, so.inst.res)
+		so.etc.s_ccd_lores = s_ccd_lores
+
+		so.etc.flux_per_nm_p = flux_per_sec_nm_p * so.etc.texp_frame
+		p_ccd_lores = degrade_spec(so.stel.v, so.etc.flux_per_nm_p, so.inst.res)
+		so.etc.p_ccd_lores = p_ccd_lores
+
+        
+		# resample onto res element grid
+		so.etc.v, so.etc.s_frame = resample(so.stel.v,s_ccd_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
+		so.etc.s_frame *=so.inst.extraction_frac # extraction fraction, reduce photons
+        
+		so.etc.v, so.etc.p_frame = resample(so.stel.v,p_ccd_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
+		so.etc.p_frame *=so.inst.extraction_frac # extraction fraction, reduce photons
+        
+		# resample throughput for applying to sky background
+		base_throughput_interp= interpolate.interp1d(so.inst.xtransmit,so.inst.ytransmit)
+		instrument_contrast_interp= interpolate.interp1d(so.inst.xtransmit,so.coron.contrast)
+
+
+		# load background spectrum - sky is top of telescope and will be reduced by inst BASE throughput. Coupling already accounted for in solid angle of fiber. Does inst bkg need throughput applied?
+		so.coron.inst_contr = instrument_contrast_interp(so.etc.v)[0]
+		so.etc.sky_bg_ph    = base_throughput_interp(so.etc.v) * noise_tools.get_sky_bg(so.etc.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
+		so.etc.inst_bg_ph   = noise_tools.get_inst_bg(so.etc.v,npix=so.inst.pix_vert,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area,datapath=so.inst.transmission_path)
+		# calc noise
+		if so.inst.pl_on: # 3 port lantern hack
+			noise_frame_yJ_p  = np.sqrt(3) * noise_tools.sum_total_noise_D(so.etc.p_frame/3,so.etc.s_frame/3,so.etc.texp_frame, so.obs.nsamp,so.etc.inst_bg_ph, so.etc.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
+			noise_frame_p     = noise_tools.sum_total_noise_D(so.etc.p_frame,so.etc.s_frame,so.etc.texp_frame, so.obs.nsamp,so.etc.inst_bg_ph, so.etc.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
+			yJ_sub_p          = np.where(so.etc.v < 1400)[0]
+			noise_frame_p[yJ_sub_p] = noise_frame_yJ_p[yJ_sub_p] # fill in yj with sqrt(3) times noise in PL case
+#so.etc.p_frame
+		else:
+			noise_frame_p  = noise_tools.sum_total_noise_D(so.etc.p_frame,so.etc.s_frame,so.etc.texp_frame, so.obs.nsamp,so.etc.inst_bg_ph, so.etc.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.coron.inst_contr)
+
+		if so.inst.pl_on: # 3 port lantern hack
+			noise_frame_yJ  = np.sqrt(3) * noise_tools.sum_total_noise(so.etc.s_frame/3,so.etc.texp_frame, so.obs.nsamp,so.etc.inst_bg_ph, so.etc.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
+			noise_frame     = noise_tools.sum_total_noise(so.etc.s_frame,so.etc.texp_frame, so.obs.nsamp,so.etc.inst_bg_ph, so.etc.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
+			yJ_sub          = np.where(so.etc.v < 1400)[0]
+			noise_frame[yJ_sub] = noise_frame_yJ[yJ_sub] # fill in yj with sqrt(3) times noise in PL case
+		else:
+			noise_frame  = noise_tools.sum_total_noise(so.etc.s_frame,so.etc.texp_frame, so.obs.nsamp,so.etc.inst_bg_ph, so.etc.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
+		so.etc.noise_frame_s = noise_frame
+		so.etc.noise_frame = noise_frame_p
+		p_frame = so.etc.p_frame 
+
+		p_frame[np.where(np.isnan(p_frame))] = np.inf
+		p_frame[np.where(p_frame==0)] = np.inf
+		
+
+		s_frame = so.etc.s_frame 
+
+		s_frame[np.where(np.isnan(s_frame))] = np.inf
+		s_frame[np.where(s_frame==0)] = np.inf
+		so.etc.s_frame = s_frame
+
+		so.etc.p_frame = p_frame
+
+		ind_1 = np.where((so.etc.v>940)&(so.etc.v<1090))[0]
+		ind_2 = np.where((so.etc.v>1100)&(so.etc.v<1360))[0]
+		ind_3 = np.where((so.etc.v>1480)&(so.etc.v<1820))[0]
+		ind_4 = np.where((so.etc.v>1950)&(so.etc.v<2350))[0]
+		so.obs.ind_filter = np.array(ind_1.tolist()+ind_2.tolist()+ind_3.tolist()+ind_4.tolist())
+
+		so.etc.nframe = (so.etc.noise_frame / so.etc.p_frame)**2 * so.etc.SN**2
+		so.etc.nframe_filter = so.etc.nframe[so.obs.ind_filter]
+		so.etc.total_expt = so.etc.nframe * so.etc.texp_frame
+		so.etc.total_expt_filter = so.etc.total_expt[so.obs.ind_filter]
+
+		so.etc.nframe_s = (so.etc.noise_frame_s / so.etc.s_frame)**2 * so.etc.SN**2
+		so.etc.nframe_s_filter = so.etc.nframe_s[so.obs.ind_filter]
+		so.etc.total_expt_s = so.etc.nframe_s * so.etc.texp_frame
+		so.etc.total_expt_s = so.etc.total_expt_s[so.obs.ind_filter]
+		
+		
+		print('ETC for off-axis mode ready')
+
+	def ccf(self,so):
+		if so.etc.ccf=='open':
+			#The photon flux at the object will be the stellar flux multipled by the contrast there: 
+			# full_host_spectrum
+			host_flux_at_obj = so.obs.s[so.obs.ind_filter] *so.obs.speckle_noise[so.obs.ind_filter]
+
+			systematics = (so.etc.cal*(host_flux_at_obj+so.obs.thermal[so.obs.ind_filter]))**2 #Variance of systematics
+
+			noise_plus_systematics = np.sqrt(so.obs.noise_p[so.obs.ind_filter]**2+systematics)
+			sky_trans = np.interp(so.obs.v[so.obs.ind_filter],so.stel.v,so.tel.s)
+			#Get the wavelength spacing
+			dwvs = np.abs(so.obs.s[so.obs.ind_filter] - np.roll(so.obs.s[so.obs.ind_filter], 1))
+			dwvs[0] = dwvs[1]
+			dwv_mean = np.mean(dwvs)
+			lsf_fwhm = (2.2* 10**(-5) * u.um/dwv_mean).decompose() #Get the lsf_fwhm in units of current wavelength spacing
+			lsf_sigma = lsf_fwhm/(2*np.sqrt(2*np.log(2))) #Convert to sigma
+
+			#Calculate the 
+			sky_transmission_lsf = gaussian_filter(sky_trans,lsf_sigma.value)
+			signal=so.obs.p[so.obs.ind_filter]
+			model=so.obs.p_nosky[so.obs.ind_filter]
+			total_noise=noise_plus_systematics
+			sky_trans=sky_transmission_lsf
+			systematics_residuals=so.etc.cal
+			kernel_size=501
+			norm_cutoff=0.8
+			total_noise_var = (total_noise* u.ph)**2 
+			bad_noise = np.isnan(total_noise_var)
+			total_noise_var[bad_noise]=np.inf
+
+			#Calculate some normalization factor
+			#Dimitri to explain this better. 
+			norm = ((1-systematics_residuals)*sky_trans)
+			
+			#Get a median-filtered version of your model spectrum
+			model_medfilt = medfilt(model,kernel_size=kernel_size)
+			#Subtract the median version from the original model, effectively high-pass filtering the model
+			model_filt = model*u.ph-model_medfilt*u.ph
+			model_filt[np.isnan(model_filt)] = 0.
+			model_filt[norm<norm_cutoff] = 0.
+			model_filt[bad_noise] = 0.
+
+			#Divide out the sky transmision
+			normed_signal = signal/norm
+			#High-pass filter like with the model
+			signal_medfilt = medfilt(normed_signal,kernel_size=kernel_size)
+			signal_filt = normed_signal*u.ph-signal_medfilt*u.ph
+			signal_filt[np.isnan(signal_filt)] = 0.
+			signal_filt[norm<norm_cutoff] = 0.
+			signal_filt[bad_noise] = 0.
+			
+			#Now the actual ccf_snr
+			ccf_snr = np.sqrt((np.sum(signal_filt * model_filt/total_noise_var))**2 / np.sum(model_filt * model_filt/total_noise_var))
+			so.obs.ccf_snr = ccf_snr
+			print('CCF SNR ready')
+		else:
+			print('no ccf snr')
+
+	def etc_ccf(self,so):
+		warnings.warn('This function is incomplete at the moment. Double check all results for accuracy.')
+
+		if so.etc.ccfetc == 'open':
+			#Get the wavelength spacing
+			# Compute total obs. time from instrument object
+			sky_trans = np.interp(so.obs.v[so.obs.ind_filter],so.stel.v,so.tel.s)
+			dwvs = np.abs(so.obs.s[so.obs.ind_filter] - np.roll(so.obs.s[so.obs.ind_filter], 1))
+			dwvs[0] = dwvs[1]
+			dwv_mean = np.mean(dwvs)
+			lsf_fwhm = (2.2* 10**(-5) * u.um/dwv_mean).decompose() #Get the lsf_fwhm in units of current wavelength spacing
+			lsf_sigma = lsf_fwhm/(2*np.sqrt(2*np.log(2))) #Convert to sigma
+
+			#Calculate the 
+			sky_transmission_lsf = gaussian_filter(sky_trans,lsf_sigma.value)
+			obs_time = so.obs.texp
+
+			host_flux_at_obj = so.obs.s[so.obs.ind_filter] *so.obs.speckle_noise[so.obs.ind_filter]
+
+			systematics = (so.etc.cal*(host_flux_at_obj+so.obs.thermal[so.obs.ind_filter]))**2 #Variance of systematics
+			signal = so.obs.p[so.obs.ind_filter]
+			model = so.obs.p_nosky[so.obs.ind_filter]
+			photon_noise = np.sqrt(so.obs.thermal[so.obs.ind_filter]+so.obs.p[so.obs.ind_filter]+so.obs.speckle_noise[so.obs.ind_filter])
+			read_noise = so.obs.read_noise
+			sky_trans=sky_transmission_lsf
+			goal_ccf=so.etc.goal_ccf
+			systematics_residuals=so.etc.cal
+			kernel_size=501
+			norm_cutoff=0.8
+
+
+			#Calculate the 
+			sky_transmission_lsf = gaussian_filter(sky_trans,lsf_sigma.value)
+
+			# Remove time to get flux
+			signal = signal / obs_time
+			model  = model / obs_time
+
+			#Get the noise variance
+			total_noise_flux = (photon_noise**2 /obs_time) #+ (read_noise**2/instrument.n_exposures) #+ (systematics/ (obs_time**2))
+			bad_noise = np.isnan(total_noise_flux)
+			total_noise_flux[bad_noise]=np.inf
+
+			#Calculate some normalization factor
+			#Dimitri to explain this better. 
+			norm = ((1-systematics_residuals)*sky_trans)
+
+			#Get a median-filtered version of your model spectrum
+			model_medfilt = medfilt(model,kernel_size=kernel_size)
+			#Subtract the median version from the original model, effectively high-pass filtering the model
+			model_filt = model-model_medfilt
+			model_filt[np.isnan(model_filt)] = 0.
+			model_filt[norm<norm_cutoff] = 0.
+			model_filt[bad_noise] = 0.
+
+			#Divide out the sky transmision
+			normed_signal = signal/norm
+			#High-pass filter like with the model
+			signal_medfilt = medfilt(normed_signal,kernel_size=kernel_size)
+			signal_filt = normed_signal-signal_medfilt
+			signal_filt[np.isnan(signal_filt)] = 0.
+			signal_filt[norm<norm_cutoff] = 0.
+			signal_filt[bad_noise] = 0.
+
+			#Now the actual ccf_snr
+			min_exp_time = goal_ccf**2 / ((np.sum(signal_filt * model_filt/total_noise_flux))**2 / np.sum(model_filt * model_filt/total_noise_flux))
+			so.obs.etc_ccf = min_exp_time
+			print('ETC for ccf snr ready')
+		else:
+			print('no etc for ccf')
+	
+
+####
 
 	def tracking(self,so):
 		"""
