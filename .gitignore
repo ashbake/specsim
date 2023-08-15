@@ -8,3 +8,5 @@
 utils/__pycache__/
 .DS_Store
 utils/__pycache__/*pyc
+utils/.ipynb_checkpoints/
+examples/data/.DS_Store
