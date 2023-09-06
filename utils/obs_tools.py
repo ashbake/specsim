@@ -91,7 +91,7 @@ def get_tracking_cam(camera='h2rg',x=None):
     return rn, pixel_pitch, qe_mod, dark, saturation
 
 
-def get_tracking_optics_aberrations(field_r,camera,ploton=False):
+def get_tracking_optics_aberrations(field_r,camera,ploton=False,filepath=None):
     """
     loads PSF size of tracking optics 
 
@@ -106,11 +106,13 @@ def get_tracking_optics_aberrations(field_r,camera,ploton=False):
     ploton (bool)
         plots the psf RMS vs field position in arcsec
 
+    filepath (str)
+        path and filename to file containing optics aberrations in field position and rms per wavelengths
     returns:
     -------
     RMS of the PSF due to optical aberrations in pixels (radius rms)
     """
-    f = np.loadtxt('/Users/ashbake/Documents/Research/Projects/HISPEC/SNR_calcs/data/WFE/trackingcamera_optics/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt')
+    f = np.loadtxt(filepath)
     field, rmstot, rms900,rms1000,rms1200,rms1400,rms1600,rms2200  = f.T #field [deg], rms [um]
     _,pixel_pitch,_,_,_ = get_tracking_cam(camera=camera,x=None)
 
@@ -222,7 +224,7 @@ def get_tracking_band(wave,band):
 
     return bandpass, center_wavelength
 
-def get_fwhm(wfe,tt_resid,wavelength,diam,platescale,field_r=0,camera='h2rg',getall=False):
+def get_fwhm(wfe,tt_resid,wavelength,diam,platescale,field_r=0,camera='h2rg',getall=False,aberrations_file=None):
     """
     combine DL by strehlt and tip/tilt error and off axis
 
@@ -249,7 +251,12 @@ def get_fwhm(wfe,tt_resid,wavelength,diam,platescale,field_r=0,camera='h2rg',get
     fwhm_tt = rms_to_fwhm * tt_resid*1e-3/platescale 
 
     # FWHM from off axis aberrations in camera optics
-    fwhm_offaxis     = radius_to_diam * get_tracking_optics_aberrations(field_r,camera) # times to to get radius
+    try:
+        fwhm_offaxis     = radius_to_diam * get_tracking_optics_aberrations(field_r,camera,filepath=aberrations_file) # times to to get radius
+    except:
+        fwhm_offaxis = 0.5
+        print('Cant find file %s' %aberrations_file)
+        print('Warning: no tracking camera aberrations file found, assuming 0.5')
     
     fwhm = np.sqrt(fwhm_tt**2 + fwhm_ho**2 + fwhm_offaxis**2)
 

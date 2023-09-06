@@ -10,16 +10,32 @@ from astropy.modeling.models import BlackBody
 from astropy import units as u
 from astropy import constants as c 
 
+from functions import tophat
+
 from throughput_tools import get_emissivity, get_emissivities
 
 all = {'get_sky_bg','get_inst_bg','sum_total_noise','plot_noise_components'}
 
-def get_sky_bg(x,airmass=1.5,pwv=1.5,npix=3,lam0=2000,R=100000,diam=10,area=76,skypath = '../../../../_DATA/sky/'):
+def get_sky_bg(x,airmass=1.3,pwv=1.5,npix=3,R=100000,diam=10,area=76,skypath = '../../../../_DATA/sky/'):
     """
-    generate sky background per reduced pixel, default to HIPSEC. Source: DMawet jup. notebook
+    generate sky background per reduced pixel, default is HIPSEC. 
+    Source: DMawet jup. notebook
 
     inputs:
     -------
+    x : array [nm]
+        wavelength in nanometers
+
+    airmass: float [1,inf)
+        airmass of the observation. Defaults to 1.3
+
+    pwv: float [mm] [0,inf)
+        precipitable water vapor in millimeters during 
+        the observation. Defaults to 1.5
+
+    npix: integer 
+        number of pixels, defaults to 3
+    
 
     outputs:
     --------
@@ -27,7 +43,7 @@ def get_sky_bg(x,airmass=1.5,pwv=1.5,npix=3,lam0=2000,R=100000,diam=10,area=76,s
     """
     diam *= u.m
     area = area * u.m * u.m
-    wave=x*u.nm
+    wave = x*u.nm
 
     fwhm = ((wave  / diam) * u.radian).to(u.arcsec)
     solidangle = fwhm**2 * 1.13 #corrected for Gaussian beam (factor 1.13)
@@ -47,6 +63,11 @@ def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hi
 
     inputs:
     -------
+    x : array [nm]
+        wavelength in nanometers
+
+    npix: integer
+        number of pixels
 
     outputs:
     --------
@@ -68,7 +89,7 @@ def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hi
     # red
     for i,temp in enumerate(temps):
         bbtemp_fxn  = BlackBody(temp * u.K, scale=1.0 * u.erg / (u.micron * u.s * u.cm**2 * u.arcsec**2)) 
-        bbtemp = bbtemp_fxn(wave) *  area.to(u.cm**2) * solidangle
+        bbtemp      = bbtemp_fxn(wave) *  area.to(u.cm**2) * solidangle
         #bbtemp = blackbody_lambda(wave, temp).to(u.erg/(u.micron * u.s * u.cm**2 * u.arcsec**2)) * area.to(u.cm**2) * solidangle
         if i==0:
             tel_thermal_red  = em_red[i] * bbtemp.to(u.photon/u.s/u.micron, equivalencies=u.spectral_density(wave)) * pix_width_nm
@@ -91,7 +112,7 @@ def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hi
     tck        = interpolate.splrep(w,s.value, k=2, s=0)
     em_total   = interpolate.splev(x,tck,der=0,ext=1)
 
-    return em_total # units of ph/s/pix
+    return em_total # units of ph/s/reduced_pix
 
 def get_sky_bg_tracking(x,fwhm,airmass=1.5,pwv=1.5,area=76,skypath = '../../../../_DATA/sky/'):
     """
@@ -106,7 +127,7 @@ def get_sky_bg_tracking(x,fwhm,airmass=1.5,pwv=1.5,area=76,skypath = '../../../.
     sky background (ph/s)
     """
     area = area * u.m * u.m
-    wave=x*u.nm
+    wave = x*u.nm
 
     fwhm *= u.arcsec
     solidangle = fwhm**2 * 1.13 #corrected for Gaussian beam (factor 1.13)
@@ -120,7 +141,7 @@ def get_sky_bg_tracking(x,fwhm,airmass=1.5,pwv=1.5,area=76,skypath = '../../../.
     
     return sky_background_interp.value # ph/s/nm
 
-def get_inst_bg_tracking(x,fwhm,area=76,datapath='./data/throughput/hispec_subsystems_11032022/'):
+def get_inst_bg_tracking(x,pixel_size,npix,datapath='./data/throughput/hispec_subsystems_11032022/'):
     """
     generate sky background per pixel, default to HIPSEC. Source: DMawet jup. notebook
     change this to take emissivities and temps as inputs so dont
@@ -134,31 +155,39 @@ def get_inst_bg_tracking(x,fwhm,area=76,datapath='./data/throughput/hispec_subsy
     sky background (photons/s) already considering PSF sampling
 
     """
-    temps = [276,276,276]
-    em = get_emissivities(x,surfaces=['tel','ao','feicom'],datapath=datapath)
+    wave = x * u.nm
+    window_temp = 277 * u.K # temperature of cryostat window
+    pixel_size *= u.micron
+    f_num = 8 # fnumber of cryostat window size to detector as of 8/15/23
 
-    # telescope
-    area *= u.m * u.m
-    wave = x*u.nm
-
-    fwhm *= u.arcsec
-    solidangle = fwhm**2 * 1.13 #corrected for Gaussian beam (factor 1.13)
+    # Load blocking filter profile
+    fx,fy = np.loadtxt(datapath + 'feicam/blocking_filter.TXT',skiprows=20).T
+    f = interpolate.interp1d(fx[::-1]*u.nm,fy,bounds_error=False,fill_value=0)
+    blocking_filter   = f(wave)/100
     
-    # step through temperatures and emissivities for red and blue
-    # red
-    for i,temp in enumerate(temps):
-        bbtemp_fxn  = BlackBody(temp * u.K, scale=1.0 * u.erg / (u.micron * u.s * u.cm**2 * u.arcsec**2)) 
-        bbtemp = bbtemp_fxn(wave) *  area.to(u.cm**2) * solidangle
-        #bbtemp = solidangle * blackbody_lambda(wave, temp).to(u.erg/(u.nm * u.s * u.cm**2 * u.arcsec**2)) * area.to(u.cm**2) 
-        if i==0:
-            tel_thermal = em[i] * bbtemp.to(u.photon/u.s/u.nm, equivalencies=u.spectral_density(wave)) 
-        else:
-            therm_temp   = em[i] * bbtemp.to(u.photon/u.s/u.nm, equivalencies=u.spectral_density(wave)) 
-            tel_thermal += therm_temp
+    # load window emissivity
+    #fx,fy = np.loadtxt(datapath + 'feicam/Infrasil_Window.txt').T
+    #f = interpolate.interp1d(fx[::-1]*u.nm,fy,bounds_error=False,fill_value=0)
+    window_emissivity = 0.05 #1 - f(wave)/100
+    
+    # Create QE profile for H2RG matching cutoff
+    QE = tophat(wave.value,600,2600,0.9) # sensitivity of h2rg
 
-    return tel_thermal.value # units of ph/nm/s
+    area_times_omega = u.radian**2 * 1.13**2 * np.pi**2 * pixel_size**2 / 4 /f_num**2
+    bbtemp_fxn  = BlackBody(window_temp, scale=1.0 * u.erg / (u.micron * u.s * u.cm**2 * u.arcsec**2)) 
+    bb   = area_times_omega.to(u.cm**2 * u.arcsec**2) * bbtemp_fxn(wave)
 
-def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg,darknoise,readnoise,npix,noisecap=None):
+    bb_spec_dens = bb.to(u.photon/u.s/u.nm, equivalencies=u.spectral_density(wave))
+    
+    # thermal spectrum over npix, then integrate
+    thermal_spectrum = npix * QE * window_emissivity * blocking_filter * bb_spec_dens # units of ph/nm/s/pix
+    thermal = np.trapz(thermal_spectrum,wave)
+
+    return thermal_spectrum, thermal.value # units of ph/nm/s
+
+
+
+def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg, darknoise,readnoise,npix,noisecap=None):
     """
     noise in 1 exposure
 
@@ -192,22 +221,44 @@ def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg,darknoise,readnoise,npix,n
     sig_flux = np.sqrt(flux)
 
     # background (instrument and sky) - array w/ wavelength matching flux array sampling or integrated over band
-    total_bg = (inst_bg + sky_bg) # per reduced pixel already so dont need to include vertical pixel extent
-    sig_bg   = np.sqrt(inst_bg + sky_bg) 
+    sig_bg   = background_noise(inst_bg,sky_bg, texp)
 
     # read noise  - reduces by number of ramps, limit to 6 at best
-    sig_read = np.max((3,(readnoise/np.sqrt(nsamp))))
+    sig_read = read_noise(np.max((3,(readnoise/np.sqrt(nsamp)))), npix)
     
     # dark current - times time and pixels
-    sig_dark = np.sqrt(darknoise * npix * texp) #* get dark noise every sample
+    sig_dark = dark_noise(darknoise,npix,texp) #* get dark noise every sample
     
-    noise = np.sqrt(sig_flux **2 + sig_bg**2 + npix * sig_read**2 + sig_dark**2)
+    noise    = np.sqrt(sig_flux **2 + sig_bg**2 + sig_read**2 + sig_dark**2)
 
     # cap the noise if a number is provided
     if noisecap is not None:
         noise[np.where(noise < noisecap)] = noisecap * flux # noisecap is fraction of flux, 1/noisecap gives max SNR
 
     return noise
+
+def background_noise(inst_bg,sky_bg, texp):
+    """
+    Compute the noise due to instrument and sky background photons
+
+    inputs
+    ------
+    inst_bg - float/array [photons/sec/reduced pixel]
+        the instrument background flux 
+    sky_bg  -  float/array [photons/sec/reduced pixel]
+        the sky background flux 
+    texp    - float [seconds]
+        the exposure time
+
+    returns
+    -------
+    float [photons]
+        the standard deviation noise of sky and instrument thermal background thermal
+    """
+    total_bg = texp * (inst_bg + sky_bg) # per reduced pixel already so dont need to include vertical pixel extent
+    
+    return np.sqrt(inst_bg + sky_bg) 
+
 
 def read_noise(rn,npix):
     """
@@ -217,11 +268,18 @@ def read_noise(rn,npix):
         read noise
     npix [pix]
         number of pixels
+
+    output:
+    -------
+    float [photons]
+        the standard deviation of detector read noise over npix
     """
     return np.sqrt(npix * rn**2)
 
 def dark_noise(darknoise,npix,texp):
     """
+    Computs Poisson noise due to dark current
+
     input:
     ------
     darknoise: [e-/pix/s]
@@ -230,9 +288,15 @@ def dark_noise(darknoise,npix,texp):
         number of pixels
     texp [s]
         exposure time in seconds
+
+    output:
+    -------
+    sig_dark [photons]
+        the standard deviation of dark current photons over npix
     """
     sig_dark = np.sqrt(darknoise * npix * texp)
     return sig_dark
+
 
 def plot_noise_components(so):
     """
@@ -240,6 +304,8 @@ def plot_noise_components(so):
     """
     plt.figure()
     plt.plot(so.stel.v,so.hispec.ytransmit)
+
+
 
 def plot_bg(so, v,instbg,skybg):
     fig, ax = plt.subplots(1,1, figsize=(8,5))  

@@ -329,7 +329,7 @@ class fill_data():
 		so.tel.rayleigh = interpolate.splev(self.x,tck_tel,der=0,ext=1)
 
 		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['O3'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
-		so.tel.o3 = interpolate.splev(self.x,tck_tel,der=0,ext=1)
+		so.tel.o3  = interpolate.splev(self.x,tck_tel,der=0,ext=1)
 
 	def ao(self,so):
 		"""
@@ -467,7 +467,7 @@ class fill_data():
 
 		# calc noise
 		if so.inst.pl_on: # 3 port lantern hack
-			noise_frame_yJ  = np.sqrt(3) * noise_tools.sum_total_noise(so.obs.s_frame/3,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
+			noise_frame_yJ  = np.sqrt(3) * noise_tools.sum_total_noise(so.obs.s_frame/3,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert) # flux split evenly over 3 traces for each of 3 PL outputs
 			noise_frame     = noise_tools.sum_total_noise(so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
 			yJ_sub          = np.where(so.obs.v < 1400)[0]
 			noise_frame[yJ_sub] = noise_frame_yJ[yJ_sub] # fill in yj with sqrt(3) times noise in PL case
@@ -511,18 +511,21 @@ class fill_data():
 		so.track.bandpass = bandpass * so.ao.pywfs_dichroic
 
 		# get fwhm (in pixels)
-		so.track.fwhm = float(obs_tools.get_fwhm(so.ao.ho_wfe,so.ao.tt_dynamic,so.track.center_wavelength,so.inst.tel_diam,so.track.platescale,field_r=so.track.field_r,camera=so.track.camera,getall=False))
+		so.track.fwhm = float(obs_tools.get_fwhm(so.ao.ho_wfe,so.ao.tt_dynamic,so.track.center_wavelength,so.inst.tel_diam,so.track.platescale,field_r=so.track.field_r,camera=so.track.camera,getall=False,aberrations_file=so.track.aberrations_file))
+		so.track.npix  = np.pi* (so.track.fwhm/2)**2 # only take noise in circle of diameter FWHM 
 		so.track.fwhm_units = 'pixel'
 		print('Tracking FWHM=%spix'%so.track.fwhm)
 		
 		so.track.strehl = np.exp(-(2*np.pi*so.ao.ho_wfe/so.track.center_wavelength)**2)
 
-		# get sky background and instrument background, spec is ph/nm/s, fwhm must be in arcsec
+		# get sky background and instrument background, spec is ph/nm/s
+		# fwhm must be in arcsec 
 		so.track.sky_bg_spec = noise_tools.get_sky_bg_tracking(self.x,so.track.fwhm*so.track.platescale,airmass=so.tel.airmass,pwv=so.tel.pwv,area=so.inst.tel_area,skypath=so.tel.skypath)
-		so.track.sky_bg_ph   = so.track.texp * np.trapz(so.track.sky_bg_spec * so.track.bandpass * so.track.ytransmit,self.x) # sky bkg needs mult by throughput and bandpass profile
+		so.track.sky_bg_ph   = np.trapz(so.track.sky_bg_spec * so.track.bandpass * so.track.ytransmit,self.x) # sky bkg needs mult by throughput and bandpass profile
 
-		so.track.inst_bg_spec = noise_tools.get_inst_bg_tracking(self.x,so.track.fwhm * so.track.platescale,area=76,datapath=so.inst.transmission_path)
-		so.track.inst_bg_ph   = so.track.texp * np.trapz(so.track.inst_bg_spec * so.track.bandpass,self.x) # inst background needs multiplied by bandpass, inst throughput included in emissivities (i think)
+		# get background spec (takes thermal emission from warm cryostat window)
+		# units of ph/nm/s for spectrum and ph/s for inst_bg_ph
+		so.track.inst_bg_spec, so.track.inst_bg_ph = noise_tools.get_inst_bg_tracking(self.x,so.track.pixel_pitch,so.track.npix,datapath=so.inst.transmission_path)
 
 		# get photons in band
 		so.track.signal_spec = so.stel.s * so.track.texp *\
@@ -534,7 +537,6 @@ class fill_data():
 		print('Tracking photons: %s e-'%so.track.nphot)
 
 		# get noise
-		so.track.npix  = np.pi* (so.track.fwhm/2)**2 # only take noise in circle of diameter FWHM 
 		so.track.noise = noise_tools.sum_total_noise(so.track.nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix)
 		print('Tracking noise: %s e-'%so.track.noise)
 		so.track.snr = so.track.nphot/so.track.noise 
@@ -565,7 +567,7 @@ class fill_data():
 		self.tracking(so)
 		self.observe(so)
 
-	def set_teff_mag(self,so,temp,mag,star_only=False):
+	def set_teff_mag(self,so,temp,mag,staronly=False,trackonly=False):
 		"""
 		given new temperature, relaod things as needed
 		mode: 'track' or 'spec'
@@ -573,7 +575,7 @@ class fill_data():
 		so.stel.teff  = temp
 		so.stel.mag   = mag
 		self.stellar(so)
-		if not star_only:
+		if not staronly:
 			if trackonly:
 				self.ao(so)
 				self.instrument(so)
