@@ -88,7 +88,7 @@ def plot_stellar_colors():
 	plt.figure()
 	bands = f['Temp'].values
 	for key in f.keys():
-		if key =='Temp':continue
+		if key=='Temp':continue
 		if key=='2500':continue
 		if key=='3800':continue
 		p = plt.plot(bands,f[key]- f[key][6],label=key)
@@ -304,6 +304,8 @@ def plot_snr_orders(so,snrtype=0,mode='mean',height=0.055,savepath=SAVEPATH):
 
 	plt.savefig(savepath + figname)
 
+	return cen_lam, snr_peaks,snr_means
+	
 def plot_base_throughput(so,savepath=SAVEPATH):
 	"""
 	"""

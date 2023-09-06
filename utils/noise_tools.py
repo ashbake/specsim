@@ -112,7 +112,7 @@ def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hi
     tck        = interpolate.splrep(w,s.value, k=2, s=0)
     em_total   = interpolate.splev(x,tck,der=0,ext=1)
 
-    return em_total # units of ph/s/pix
+    return em_total # units of ph/s/reduced_pix
 
 def get_sky_bg_tracking(x,fwhm,airmass=1.5,pwv=1.5,area=76,skypath = '../../../../_DATA/sky/'):
     """
@@ -160,15 +160,15 @@ def get_inst_bg_tracking(x,pixel_size,npix,datapath='./data/throughput/hispec_su
     pixel_size *= u.micron
     f_num = 8 # fnumber of cryostat window size to detector as of 8/15/23
 
-    # Load HISPEC blocking filter profile
+    # Load blocking filter profile
     fx,fy = np.loadtxt(datapath + 'feicam/blocking_filter.TXT',skiprows=20).T
     f = interpolate.interp1d(fx[::-1]*u.nm,fy,bounds_error=False,fill_value=0)
     blocking_filter   = f(wave)/100
     
-    # load HISPEC window emissivity
-    fx,fy = np.loadtxt(datapath + 'feicam/Infrasil_Window.txt').T
-    f = interpolate.interp1d(fx[::-1]*u.nm,fy,bounds_error=False,fill_value=0)
-    window_emissivity = 1 - f(wave)/100
+    # load window emissivity
+    #fx,fy = np.loadtxt(datapath + 'feicam/Infrasil_Window.txt').T
+    #f = interpolate.interp1d(fx[::-1]*u.nm,fy,bounds_error=False,fill_value=0)
+    window_emissivity = 0.05 #1 - f(wave)/100
     
     # Create QE profile for H2RG matching cutoff
     QE = tophat(wave.value,600,2600,0.9) # sensitivity of h2rg

@@ -329,7 +329,7 @@ class fill_data():
 		so.tel.rayleigh = interpolate.splev(self.x,tck_tel,der=0,ext=1)
 
 		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['O3'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
-		so.tel.o3 = interpolate.splev(self.x,tck_tel,der=0,ext=1)
+		so.tel.o3  = interpolate.splev(self.x,tck_tel,der=0,ext=1)
 
 	def ao(self,so):
 		"""
@@ -567,7 +567,7 @@ class fill_data():
 		self.tracking(so)
 		self.observe(so)
 
-	def set_teff_mag(self,so,temp,mag,star_only=False):
+	def set_teff_mag(self,so,temp,mag,staronly=False,trackonly=False):
 		"""
 		given new temperature, relaod things as needed
 		mode: 'track' or 'spec'
@@ -575,7 +575,7 @@ class fill_data():
 		so.stel.teff  = temp
 		so.stel.mag   = mag
 		self.stellar(so)
-		if not star_only:
+		if not staronly:
 			if trackonly:
 				self.ao(so)
 				self.instrument(so)
