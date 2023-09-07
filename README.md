@@ -20,7 +20,7 @@ Many data files are needed to run the examples for MODHIS and HISPEC. A set of f
 If you would like to download more files to run more stellar temperatures, magnitudes, and airmasses, read below. Otherwise skip to the *Running specsim* section at the bottom
 
 #### AO Performance Files
-AO files are needed to define the high order wavefront error and tip tilt residiuals as a function of the stellar magnitude. These WFE terms are used by the code to determine the fiber coupling performance. For HISPEC and MODHIS, we use AO simulations of the AO systems called HAKA and NFIRAOS, respectively, to generate the files provided in `examples/data/wfe/`.
+AO files are needed to define the high order wavefront error and tip tilt residiuals as a function of the stellar magnitude. These WFE terms are used by the code to determine the fiber coupling performance. For HISPEC and MODHIS, we use AO simulations of the AO systems called HAKA and NFIRAOS, respectively, to generate the files provided in `data/wfe/`.
 
 The MODHIS dynamic tip tilt file, for example, called `TTDYNAMIC_NFIRAOS.csv` contains columns of the magnitude, the flux (not sure what the flux is to, need to look into this) in that band in e-, and the tip tilt error in mas for the three main MODHIS AO modes: NGS, LGS_ON, and LGS_OFF. The header specifies that these magnitudes and flux values are defined in V band. In reality the MODHIS AO system receives a slightly more narrow range of wavelengths, so we should update this to some V_NFIRAOS label that specifies the specific wavelength range (this matters for red stars). Anywho, for now we can just use V band. 
 
@@ -47,7 +47,7 @@ The [SVO service](http://svo2.cab.inta-csic.es/theory/fps/index.php?mode=browse&
 #### Telluric File
 The telluric models loaded by specsim are assumed to be in the format of PSG models, which should be high resolution and can be created using the psg wrapper called run_psg located [here](https://github.com/ashbake/run_psg). 
 
-A spectrum is zipped and provided in examples/data/telluric/ that spans 800 to 2700nm. This file can be unzipped and linked to in the config file through the ```telluric_file``` variable.
+A spectrum is zipped and provided in data/telluric/ that spans 800 to 2700nm. This file can be unzipped and linked to in the config file through the ```telluric_file``` variable.
 
 #### Stellar Files
 
