@@ -64,7 +64,7 @@ These should be unzipped into any directory, which should be specified as the va
 
 # Running specsim
 
-First import some key packages from specsim
+First start a python session and import some key packages from specsim:
 ```
 > from specsim import objects, load_inputs, plot_tools
 ```
