@@ -1,5 +1,5 @@
 # specsim
-SNR calculator developed for HISPEC/MODHIS tracking camera and main instrument. Can be adapted to other instruments. It utilizes PSISIM functions but with the single purpose to simulate signal to noise spectra for spectrographs and their handy dandy tracking camera.
+SNR calculator developed for HISPEC/MODHIS tracking camera and main instrument, but it can be adapted to other instruments. It builds on a lot of functions from the PSISIM package. The main branch should be runnable after download - it does not include all the latest features and updates, but demonstrates the usage of the code.
 
 ## Installation
 Clone the repo
