@@ -8,14 +8,16 @@ Clone the repo
 ```
 Move into that directory and run the following to pip install specsim and its dependencies:
 
-**NOTE THIS ISNT WORKING YET- instead creade environment and install packages listed in requirements.txt**
+**Depending on your python environment setup, this may not work. If no, install the packages listed in requirements.txt into your python 3 environment**
 
 ```
 > pip install -e .
 ```
 
 ### Data Downloads & Setup
-Many data files are needed to run the examples for MODHIS and HISPEC. 
+Many data files are needed to run the examples for MODHIS and HISPEC. A set of files are included in the repo in the data/ folder and are already linked to in the config file such that the only thing that needs to be done to run the example below is to unzip the telluric file provided. 
+
+If you would like to download more files to run more stellar temperatures, magnitudes, and airmasses, read below. Otherwise skip to the 'Running specsim' example
 
 #### AO Performance Files
 AO files are needed to define the high order wavefront error and tip tilt residiuals as a function of the stellar magnitude. These WFE terms are used by the code to determine the fiber coupling performance. For HISPEC and MODHIS, we use AO simulations of the AO systems called HAKA and NFIRAOS, respectively, to generate the files provided in `examples/data/wfe/`.
