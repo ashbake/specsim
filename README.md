@@ -71,13 +71,13 @@ First start a python session and import some key packages from specsim:
 
 Key parameters are stored in a configuration file e.g. "modhis_snr.cfg'. The function "load_object' loads the contents of this configuration file into a storage object "so'. The objects.py function is a useful reference for seeing what is contained in so, but it has class attributes like 'stel' for stellar properties and 'track' for tracking camera properties. For example, the stellar temperature defined in the config file will be loaded and stored in "so.stel.teff'.
 
-The "fill_data" class takes the storage object and upon initiation, it fills the so object by running a bunch of things. As such, this process takes a little while - first it defines the wavelength grid (x) and yJHK filter bounds, then does the dirty work of loading, reinterpolating files, and calculating things in the correct order.
+The "fill_data" class takes the storage object and upon initiation, it fills the `so` object. As such, this process takes a little while - first it defines the high resolution wavelength grid, then does the dirty work of loading, reinterpolating files, and calculating things in the correct order.
 
 
 ```
 > configfile = './configs/modhis_snr.cfg' # define our config file name and path
 > so    = objects.load_object(configfile)     # Load the contents of the config file into the so "storage object"
-> cload = load_inputs.fill_data(so)               # Initiate the fill_data class which runs an observation and stores the results in so
+> cload = load_inputs.fill_data(so)           # Initiate the fill_data class which runs an observation and stores the results in so
 ```
 
 
@@ -86,6 +86,7 @@ We can then use some plotting tools to plot the snr
 > plot_tools.plot_snr(so,snrtype=0,savepath=savepath)
 ```
 
+The instrument wavelength and SNR per pixel is stored in `so.obs.v` and  `so.obs.s`, respectively. 
 
 
 
