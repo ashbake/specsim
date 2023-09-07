@@ -8,7 +8,7 @@ Clone the repo
 ```
 Move into that directory and run the following to pip install specsim and its dependencies:
 
-**Depending on your python environment setup, this may not work. If no, install the packages listed in requirements.txt into your python 3 environment**
+**Depending on your python environment setup, this may not work. If not, install the packages listed in requirements.txt into your python 3 environment**
 
 ```
 > pip install -e .
