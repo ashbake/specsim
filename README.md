@@ -1,5 +1,5 @@
 # specsim
-SNR calculator developed for HISPEC/MODHIS tracking camera and main instrument, but it can be adapted to other instruments. It builds on a lot of functions from the PSISIM package. The main branch should be runnable after download - it does not include all the latest features and updates, but demonstrates the usage of the code.
+Specsim is an SNR calculator developed for HISPEC/MODHIS, but it can be adapted to other instruments. It builds on a lot of functions from the PSISIM package. The main branch should be runnable after download - it does not include all the latest features and updates, but demonstrates the usage of the code.
 
 ## Installation
 Clone the repo
