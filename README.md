@@ -64,7 +64,7 @@ These should be unzipped into any directory, which should be specified as the va
 
 First import some key packages from specsim
 ```
-> from specsim import objects, load_inputs
+> from specsim import objects, load_inputs, plot_tools
 ```
 
 Key parameters are stored in a configuration file e.g. "modhis_snr.cfg'. The function "load_object' loads the contents of this configuration file into a storage object "so'. The objects.py function is a useful reference for seeing what is contained in so, but it has class attributes like 'stel' for stellar properties and 'track' for tracking camera properties. For example, the stellar temperature defined in the config file will be loaded and stored in "so.stel.teff'.
