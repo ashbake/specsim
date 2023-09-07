@@ -218,7 +218,7 @@ def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg, darknoise,readnoise,npix,
         total noise sampled on flux grid
     """
     # shot noise - array w/ wavelength or integrated over band
-    sig_flux = np.sqrt(flux)
+    sig_flux = np.sqrt(np.abs(flux))
 
     # background (instrument and sky) - array w/ wavelength matching flux array sampling or integrated over band
     sig_bg   = background_noise(inst_bg,sky_bg, texp)
@@ -257,7 +257,7 @@ def background_noise(inst_bg,sky_bg, texp):
     """
     total_bg = texp * (inst_bg + sky_bg) # per reduced pixel already so dont need to include vertical pixel extent
     
-    return np.sqrt(inst_bg + sky_bg) 
+    return np.sqrt(np.abs(inst_bg + sky_bg) )
 
 
 def read_noise(rn,npix):
