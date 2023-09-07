@@ -5,9 +5,10 @@
 ./output
 ./references
 ./data
-utils/__pycache__/
+specsim/__pycache__/
 .DS_Store
-utils/__pycache__/*pyc
-utils/.ipynb_checkpoints/
+specsim/__pycache__/*pyc
+specsim/.ipynb_checkpoints/
 examples/data/.DS_Store
+*~
 data/telluric/psg_out_2020.08.02_l0_800nm_l1_2700nm_res_0.001nm_lon_204.53_lat_19.82_pres_0.5826.fits

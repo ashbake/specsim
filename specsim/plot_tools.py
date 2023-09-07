@@ -20,7 +20,7 @@ DATAPATH = '../data/'
 SAVEPATH  = '../output/'
 
 
-# MONEY MAKER PLOTS
+# instrument project plots
 def plot_doppler_spectrographs(so,cload):
 	"""
 	make figures to add to sam's cool rv landscape plot
@@ -72,6 +72,7 @@ def plot_doppler_spectrographs(so,cload):
 def setup_plot_style():
 	"""
 	"""
+	import matplotlib
 	font = {'size'   : 14}
 	matplotlib.rc('font', **font)
 	plt.rcParams['font.size'] = '14'
@@ -239,13 +240,24 @@ def plot_throughput_nice(telluric_file,datapath='./data/throughput/hispec_subsys
 # REQUIRES SO INSTANCE
 def plot_snr(so,snrtype=0,savepath=SAVEPATH):
 	"""
-	snrtype: 0 or 1
-		0 selects per pixel SNR
-		1 selects per resolution element SNR
+	Plots SNR calculated in so instance
+	
+	inputs
+	------
+	so : object
+		instance of specsim storage object
+
+	snrtype: 'pixel' or 'res_element'
+		'pixel' selects per pixel SNR
+		'res_element' selects per resolution element SNR
+
+	savepath: str
+		path to save the plot to
 	"""
 	fig, ax = plt.subplots(1,1, figsize=(10,8))	
-	if snrtype ==0:  ax.plot(so.obs.v,so.obs.snr)
-	elif snrtype==1: ax.plot(so.obs.v_resamp,so.obs.snr_reselement)
+	if snrtype =='pixel':  ax.plot(so.obs.v,so.obs.snr)
+	elif snrtype=='res_element': ax.plot(so.obs.v_res_element,so.obs.snr_res_element)
+	else: print('Choose pixel or res_element for snrtype'); return
 	ax.set_ylabel('SNR')
 	ax.set_xlabel('Wavelength (nm)')
 	ax.set_title('AO Mode: %s, %s=%s, t=4hr'%(so.ao.mode,so.filt.band,int(so.stel.mag)))
@@ -269,15 +281,21 @@ def plot_snr(so,snrtype=0,savepath=SAVEPATH):
 
 def plot_snr_orders(so,snrtype=0,mode='mean',height=0.055,savepath=SAVEPATH):
 	"""
-	snrtype: 0 or 1
-		0 selects per pixel SNR
-		1 selects per resolution element SNR
+	inputs:
+	-------
+	so : object
+		instance of specsim storage object
+
+	snrtype: 'pixel' or 'res_element'
+		'pixel' selects per pixel SNR
+		'res_element' selects per resolution element SNR
+	
 	mode: 'mean' or 'peak'
 		plots SNR as either the average ('mean') or the peak ('peak') of each order
 
 	"""
-	if snrtype==0: cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so,so.obs.v,so.obs.snr,height=height)
-	if snrtype==1: cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so,so.obs.v_resamp,so.obs.snr_reselement,height=height)
+	if snrtype=='pixel': cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so,so.obs.v,so.obs.snr,height=height)
+	if snrtype=='res_element':cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so,so.obs.v_res_element,so.obs.snr_res_element,height=height)
 
 	fig, ax = plt.subplots(1,1, figsize=(8,6))	
 	if mode=='peak': ax.plot(cen_lam, snr_peaks,lw=2)

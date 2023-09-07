@@ -244,8 +244,11 @@ class fill_data():
 		self.ao(so)
 		self.instrument(so)
 		self.observe(so)
+
+		# turn off tracking for now, not needed
 		if track_on:
-                        self.tracking(so)
+			self.tracking(so)
+		self.track_on=track_on
 
 	def filter(self,so):
 		"""
@@ -374,7 +377,7 @@ class fill_data():
 	
 		print('tt dynamic is %s'%so.ao.tt_dynamic)
 
-		# consider throughput impact of ao here
+		# consider throughput impact of ao mode here
 		if so.ao.mode =='80J':
 			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.J[1],0.8)
 		elif so.ao.mode =='80H':
@@ -387,6 +390,7 @@ class fill_data():
 			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.K[0],so.inst.K[1],1)
 		else:
 			so.ao.pywfs_dichroic = np.ones_like(self.x)
+
 
 	def instrument(self,so):
 		###########
@@ -451,41 +455,60 @@ class fill_data():
 
 	def observe(self,so):
 		"""
+		Computes the flux reaching the spectrometer sampled 
+		in pixels and the noise spectrum to compute the 
+		snr per pixel (so.obs.v,so.obs.snr) 
+		and snr per resolution element (so.obs.v_res_element,so.obs.snr_res_element)
 		"""
-		flux_per_sec_nm = so.stel.s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
+		# flux density is stellar flux * telescope area * instrument throughput * atmospheric absorption 
+		#
+		phot_per_sec_nm = so.stel.s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
 
+	
+		# Figure out the exposure time per frame to avoid saturation
+		# Default case takes 900s as maximum frame exposure time length
+		#
 		if so.obs.texp_frame_set=='default':
-			max_ph_per_s  =  np.max(flux_per_sec_nm * so.inst.sig)
+			max_ph_per_s  =  np.max(phot_per_sec_nm * so.inst.sig)
 			if so.obs.texp < 900: 
-				so.obs.texp_frame = np.min((so.obs.texp,so.inst.saturation/max_ph_per_s))
+				texp_frame_tmp = np.min((so.obs.texp,so.inst.saturation/max_ph_per_s))
 			else:
-				so.obs.texp_frame = np.min((900,so.inst.saturation/max_ph_per_s))
-			print('Texp per frame set to %s'%so.obs.texp_frame)
-			so.obs.nframes = int(np.ceil(so.obs.texp/so.obs.texp_frame))
+				texp_frame_tmp = np.min((900,so.inst.saturation/max_ph_per_s))
+			so.obs.nframes = int(np.ceil(so.obs.texp/texp_frame_tmp))
 			print('Nframes set to %s'%so.obs.nframes)
+			so.obs.texp_frame = np.round(so.obs.texp / so.obs.nframes,2)
+			print('Texp per frame set to %s'%so.obs.texp_frame)
+		# user defined exposure time per frame case:
 		else:
 			so.obs.texp_frame = so.obs.texp_frame_set
 			so.obs.nframes = int(np.ceil(so.obs.texp/so.obs.texp_frame))
 			print('Texp per frame set to %s'%so.obs.texp_frame)
 			print('Nframes set to %s'%so.obs.nframes)
 		
-		# degrade to instrument resolution
-		so.obs.flux_per_nm = flux_per_sec_nm * so.obs.texp_frame
-		s_ccd_lores = degrade_spec(so.stel.v, so.obs.flux_per_nm, so.inst.res)
-
-		# resample onto res element grid
+		# Degrade to instrument resolution after applying frame exposure time
+		#
+		so.obs.frame_phot_per_nm = phot_per_sec_nm * so.obs.texp_frame
+		s_ccd_lores = degrade_spec(so.stel.v, so.obs.frame_phot_per_nm, so.inst.res)
+		
+		# Resample onto res element grid - new wavelength grid so.obs.v
+		# 
 		so.obs.v, so.obs.s_frame = resample(so.stel.v,s_ccd_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
-		so.obs.s_frame *=so.inst.extraction_frac # extraction fraction, reduce photons
+		so.obs.s_frame *=so.inst.extraction_frac # extraction fraction, reduce photons to mimic spectral extraction imperfection
+		
+		# Get total spectrum for all frames
 		so.obs.s =  so.obs.s_frame * so.obs.nframes
-
-		# resample throughput for applying to sky background
-		base_throughput_interp= interpolate.interp1d(so.inst.xtransmit,so.inst.base_throughput)
-
-		# load background spectrum - sky is top of telescope and will be reduced by inst BASE throughput. Coupling already accounted for in solid angle of fiber. Does inst bkg need throughput applied?
+		
+		# Resample throughput for applying to sky background
+		#
+		base_throughput_interp = interpolate.interp1d(so.inst.xtransmit,so.inst.base_throughput)
+		
+		# Load background spectrum - sky is top of telescope and will be reduced by inst BASE throughput. Coupling already accounted for in solid angle of fiber. Does inst bkg need throughput applied?
+		#
 		so.obs.sky_bg_ph    = base_throughput_interp(so.obs.v) * noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
 		so.obs.inst_bg_ph   = noise_tools.get_inst_bg(so.obs.v,npix=so.inst.pix_vert,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area,datapath=so.inst.transmission_path)
-
-		# calc noise
+		
+		# Calculate noise
+		#
 		if so.inst.pl_on: # 3 port lantern hack
 			noise_frame_yJ  = np.sqrt(3) * noise_tools.sum_total_noise(so.obs.s_frame/3,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert) # flux split evenly over 3 traces for each of 3 PL outputs
 			noise_frame     = noise_tools.sum_total_noise(so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
@@ -494,17 +517,24 @@ class fill_data():
 		else:
 			noise_frame  = noise_tools.sum_total_noise(so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert)
 		
+		# Remove nans and 0s from noise frame, make these infinite
+		#
 		noise_frame[np.where(np.isnan(noise_frame))] = np.inf
 		noise_frame[np.where(noise_frame==0)] = np.inf
 		
+		# Combine noise in quadrature
+		#
 		so.obs.noise_frame = noise_frame
 		so.obs.noise = np.sqrt(so.obs.nframes)*noise_frame
 
+		# Compute snr and resample to get SNR per res element (assumes flux in the number of pixels spanning a res element (3 for hispec/modhis) combine in quadrature) 
 		so.obs.snr = so.obs.s/so.obs.noise
-		so.obs.v_resamp, so.obs.snr_reselement = resample(so.obs.v,so.obs.snr,sig=so.inst.res_samp, dx=0, eta=1/np.sqrt(so.inst.res_samp),mode='pixels')
+		so.obs.v_res_element, so.obs.snr_res_element = resample(so.obs.v,so.obs.snr,sig=so.inst.res_samp, dx=0, eta=1/np.sqrt(so.inst.res_samp),mode='pixels')
 
 	def tracking(self,so):
 		"""
+		Gets the tracking centroid precision based 
+		on the SNR and FWHM of the PSF
 		"""
 		#pick guide camera - eventually settle on one and put params in config file!
 		rn, pixel_pitch, qe_mod, dark,saturation = obs_tools.get_tracking_cam(camera=so.track.camera,x=self.x)
@@ -607,7 +637,7 @@ class fill_data():
 
 	def set_mag(self,so,mag,trackonly=False):
 		"""
-		given new temperature, relaod things as needed
+		given new magnitude, relaod things as needed
 		"""
 		print('-----Reloading Stellar Magnitude-----')
 		so.stel.mag = mag
@@ -615,12 +645,13 @@ class fill_data():
 		self.ao(so)
 		if not trackonly:
 			self.instrument(so)
-		self.tracking(so)
+		if self.track_on:
+			self.tracking(so)
 		self.observe(so)
 
 	def set_tracking_band_texp(self,so,band,texp):
 		"""
-		given new temperature, relaod things as needed
+		given new tracking band, relaod things as needed
 		"""
 		print('-----Reloading Tracking Band and Exposure Time------')
 		so.track.band = band
@@ -629,7 +660,7 @@ class fill_data():
 
 	def set_ao_mode(self,so,mode,trackonly=False):
 		"""
-		given new temperature, relaod things as needed
+		given new ao mode, reload things as needed
 		"""
 		print('-----Reloading Stellar Magnitude-----')
 		so.ao.mode = mode
