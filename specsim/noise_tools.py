@@ -45,10 +45,13 @@ def get_sky_bg(x,airmass=1.3,pwv=1.5,npix=3,R=100000,diam=10,area=76,skypath = '
     area = area * u.m * u.m
     wave = x*u.nm
 
+    pwv_rounded = np.round(pwv,1)
+    airmass_rounded = np.round(airmass,1)
+    
     fwhm = ((wave  / diam) * u.radian).to(u.arcsec)
     solidangle = fwhm**2 * 1.13 #corrected for Gaussian beam (factor 1.13)
 
-    sky_background_MK_tmp  = np.genfromtxt(skypath+'mk_skybg_zm_'+str(pwv)+'_'+str(airmass)+'_ph.dat', skip_header=0)
+    sky_background_MK_tmp  = np.genfromtxt(skypath+'mk_skybg_zm_'+str(pwv_rounded)+'_'+str(airmass_rounded)+'_ph.dat', skip_header=0)
     sky_background_MK      = sky_background_MK_tmp[:,1]
     sky_background_MK_wave = sky_background_MK_tmp[:,0] #* u.nm
 

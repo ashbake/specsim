@@ -15,12 +15,13 @@ from astropy.convolution import Gaussian1DKernel, convolve
 from specsim import throughput_tools# import pick_coupling, get_band_mag, get_base_throughput,grid_interp_coupling
 from specsim import obs_tools
 from specsim import noise_tools
+from specsim import wfe_tools 
 
 from specsim.functions import *
 
 __all__ = ['fill_data','load_phoenix']
 
-def load_phoenix(stelname,wav_start=750,wav_end=780):
+def load_phoenix(stelname,stelpath,wav_start=750,wav_end=780):
 	"""
 	load fits file stelname with stellar spectrum from phoenix 
 	http://phoenix.astro.physik.uni-goettingen.de/?page_id=15
@@ -35,13 +36,11 @@ def load_phoenix(stelname,wav_start=750,wav_end=780):
 	
 	# conversion factor
 
-	f = fits.open(stelname)
+	f = fits.open(stelpath + stelname)
 	spec = f[0].data / (1e8) # ergs/s/cm2/cm to ergs/s/cm2/Angstrom for conversion
 	f.close()
 	
-	path = stelname.split('/')
-	wave_file = os.path.join(*stelname.split('/')[0:-1]) + '/' + \
-					'WAVE_PHOENIX-ACES-AGSS-COND-2011.fits' #assume wave in same folder
+	wave_file = os.path.join(stelpath + 'WAVE_PHOENIX-ACES-AGSS-COND-2011.fits') #assume wave in same folder
 	f = fits.open(wave_file)
 	lam = f[0].data # angstroms
 	f.close()
@@ -122,7 +121,7 @@ def scale_stellar(so, mag):
 	load new stellar to match bounds of filter since may not match working badnpass elsewhere
 	"""
 	if so.stel.model=='phoenix':
-		stelv,stels       =  load_phoenix(so.stel.stel_file,wav_start=np.min(so.filt.xraw), wav_end=np.max(so.filt.xraw)) #phot/m2/s/nm
+		stelv,stels       =  load_phoenix(so.stel.stel_file,so.stel.phoenix_folder,wav_start=np.min(so.filt.xraw), wav_end=np.max(so.filt.xraw)) #phot/m2/s/nm
 	elif so.stel.model=='sonora':
 		stelv,stels       =  load_sonora(so.stel.stel_file,wav_start=np.min(so.filt.xraw), wav_end=np.max(so.filt.xraw)) #phot/m2/s/nm
 
@@ -146,7 +145,7 @@ def get_band_mag(so,family,band,factor_0):
     # load stellar the multiply by scaling factor, factor_0, and filter. integrate
     if (np.min(x) < so.inst.l0) or (np.max(x) > so.inst.l1):
         if so.stel.model=='phoenix':
-            vraw,sraw = load_phoenix(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
+            vraw,sraw = load_phoenix(so.stel.stel_file,so.stel.phoenix_folder,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
         elif so.stel.model=='sonora':
             vraw,sraw = load_sonora(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
     else:
@@ -167,6 +166,9 @@ def get_band_mag(so,family,band,factor_0):
     mag = -2.5*np.log10(flux_Jy/zp)
 
     return mag
+
+
+
 
 
 def _lsf_rotate(deltav,vsini,epsilon=0.6):
@@ -292,8 +294,8 @@ class fill_data():
 		else:
 			teff = str(int(so.stel.teff)).zfill(5)
 			so.stel.model             = 'phoenix' 
-			so.stel.stel_file         = so.stel.phoenix_folder + 'lte%s-4.50-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'%(teff)
-			so.stel.vraw,so.stel.sraw = load_phoenix(so.stel.stel_file,wav_start=so.inst.l0, wav_end=so.inst.l1) #phot/m2/s/nm
+			so.stel.stel_file         = 'lte%s-4.50-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'%(teff)
+			so.stel.vraw,so.stel.sraw = load_phoenix(so.stel.stel_file,so.stel.phoenix_folder,wav_start=so.inst.l0, wav_end=so.inst.l1) #phot/m2/s/nm
 		
 		so.stel.v   = self.x
 		tck_stel    = interpolate.splrep(so.stel.vraw,so.stel.sraw, k=2, s=0)
@@ -321,6 +323,8 @@ class fill_data():
 		pwv0      = fits.getheader(so.tel.telluric_file)['PWV']
 		airmass0  = fits.getheader(so.tel.telluric_file)['AIRMASS']
 		
+		so.tel.airmass = 1/np.cos(np.pi * so.obs.zenith_angle / 180.)
+
 		_,ind     = np.unique(data['Wave/freq'],return_index=True)
 		tck_tel   = interpolate.splrep(data['Wave/freq'][ind],data['Total'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
 		so.tel.v, so.tel.s = self.x, interpolate.splev(self.x,tck_tel,der=0,ext=1)
@@ -338,44 +342,67 @@ class fill_data():
 		"""
 		fill in ao info 
 		"""
-		# load ao information from ao file
+		# load an ao star, if default just take the already loaded star
 		if so.ao.mag=='default': 
 			factor_0 = so.stel.factor_0 # if mag is same as one loaded, dont change spectral mag
 		else: 
 			# scale to find factor_0 for new mag
 			factor_0 = so.stel.factor_0 * 10**(0.4*so.ao.mag)
 
-		if type(so.ao.ho_wfe_set) is str:
-			f = pd.read_csv(so.ao.ho_wfe_set,header=[0,1])
-			so.ao.modes = f.columns
-			mags             = f['mag'].values.T[0]
-			wfes             = f[so.ao.mode].values.T[0]
-			so.ao.ho_wfe_band= f[so.ao.mode].columns[0] # this is the mag band wfe is defined in, must be more readable way..
-			so.ao.ho_wfe_mag = get_band_mag(so,'Johnson',so.ao.ho_wfe_band,factor_0) # get magnitude of star in appropriate band
-			f_howfe          = interpolate.interp1d(mags,wfes, bounds_error=False,fill_value=10000)
-			so.ao.ho_wfe     = float(f_howfe(so.ao.ho_wfe_mag))
-			print('HO WFE %s mag is %s'%(so.ao.ho_wfe_band,so.ao.ho_wfe_mag))
-		else:
-			so.ao.ho_wfe = so.ao.ho_wfe_set
-
-		if type(so.ao.ttdynamic_set) is str:
-			f = pd.read_csv(so.ao.ttdynamic_set,header=[0,1])
-			so.ao.modes_tt  = f.columns # should match howfe..
-			mags            = f['mag'].values.T[0]
-			tts             = f[so.ao.mode].values.T[0]
-			so.ao.ttdynamic_band=f[so.ao.mode].columns[0] # this is the mag band wfe is defined in, must be more readable way..			
-			so.ao.ttdynamic_mag = get_band_mag(so,'Johnson',so.ao.ttdynamic_band,factor_0) # get magnitude of star in appropriate band
-			f_ttdynamic=  interpolate.interp1d(mags,tts, bounds_error=False,fill_value=10000)
-			so.ao.tt_dynamic     = float(f_ttdynamic(so.ao.ttdynamic_mag))
-			print('Tip Tilt %s mag is %s'%(so.ao.ttdynamic_band,so.ao.ttdynamic_mag))
-		else:
+		if type(so.ao.ttdynamic_set) is float or type(so.ao.ttdynamic_set) is float:
+			# set tt dynamic and ho wfe
+			# requires either both to be text file or both to be floats
 			so.ao.tt_dynamic = so.ao.ttdynamic_set
+			so.ao.ho_wfe     = so.ao.ho_wfe_set
+			if type(so.ao.ho_wfe) != type(so.ao.tt_dynamic): raise ValueError('HO WFE and TT Dynamic must *both* be set to float values or both to file paths to WFE files')
+			so.ao.mode_chosen = 'User Defined'
+		else:
 
-		print('AO mode: %s'%so.ao.mode)
+			# so.obs.zenith_angle = (180/np.pi) * np.arccos(1/so.tel.airmass) # if decide to take seeing
+			data = wfe_tools.load_WFE(so.ao.ho_wfe_set, so.ao.ttdynamic_set, so.obs.zenith_angle, so.tel.seeing)
+			ao_modes   = np.array(list(data.keys()))
+			strehl, ho_wfes, tt_wfes, aomags = [], [], [],[]
+			for ao_mode in ao_modes:
+				# get magnitude in band the AO mode is defined in 
+				wfe_mag  = get_band_mag(so,'Johnson',data[ao_mode]['band'],factor_0)
+				aomags.apend(wfe_mag)
+				# interpolate over WFEs and sample HO and TT at correct mag
+				f_howfe    = interpolate.interp1d(data[ao_mode]['ho_mag'],data[ao_mode]['ho_wfe'], bounds_error=False,fill_value=10000)
+				f_ttwfe    = interpolate.interp1d(data[ao_mode]['tt_mag'],data[ao_mode]['tt_wfe'], bounds_error=False,fill_value=10000)
+				ho_wfe  = float(f_howfe(wfe_mag))
+				tt_wfe  = float(f_ttwfe(wfe_mag))
 
-		print('HO WFE is %s'%so.ao.ho_wfe)
+				#compute strehl and save total
+				strehl_ho = wfe_tools.calc_strehl(ho_wfe,so.filt.center_wavelength)
+				strehl_tt = wfe_tools.tt_to_strehl(tt_wfe,so.filt.center_wavelength,so.inst.tel_diam)
+				strehl.append(strehl_ho * strehl_tt)
+				ho_wfes.append(ho_wfe)
+				tt_wfes.append(tt_wfe)
+
+			# if user wants the code to pick best mode:
+			if so.ao.mode == 'auto' or so.ao.mode == 'Auto':
+				#print('Auto AO Mode')
+				i_AO       = np.argmax(np.array(strehl))
+			# if the user selected a specific mode:
+			else:
+				if so.ao.mode in ao_modes: 
+					i_AO = np.where(so.ao.mode==ao_modes)[0][0]
+				else:
+					raise ValueError('AO mode chosen not a mode! Modes: auto or %s'%ao_modes)
+			
+			# store in object
+			so.ao.mode_chosen   = ao_modes[i_AO]
+			so.ao.ho_wfe        = ho_wfes[i_AO]
+			so.ao.tt_dynamic    = tt_wfes[i_AO]
+			so.ao.ao_mag        = ao_mags[i_AO]
+			so.ao.strehl        = strehl[i_AO]
+
+
+		print('AO mode chosen: %s'%so.ao.mode_chosen)
+
+		print('HO WFE is %s'%round(so.ao.ho_wfe))
 	
-		print('tt dynamic is %s'%so.ao.tt_dynamic)
+		print('tt dynamic is %s'%round(so.ao.tt_dynamic,2))
 
 		# consider throughput impact of ao mode here
 		if so.ao.mode =='80J':
@@ -394,12 +421,6 @@ class fill_data():
 
 	def instrument(self,so):
 		###########
-		# load hispec transmission
-		#xtemp, ytemp  = np.loadtxt(so.inst.transmission_file,delimiter=',').T #microns!
-		#f = interp1d(xtemp*1000,ytemp,kind='linear', bounds_error=False, fill_value=0)
-		
-		#so.inst.xtransmit, so.inst.ytransmit = self.x, f(self.x) 
-
 		# save dlambda
 		sig = so.stel.v/so.inst.res/so.inst.res_samp # lambda/res = dlambda, nm per pixel
 		so.inst.sig=sig
@@ -413,6 +434,7 @@ class fill_data():
 			so.inst.ytransmit   = interpolate.splev(self.x,tck_thput,der=0,ext=1)
 			so.inst.base_throughput = so.inst.ytransmit.copy() # store this here bc ya
 			#add airmass calc for strehl for seeing limited instrument
+			print('')
 		except:
 			so.inst.base_throughput  = throughput_tools.get_base_throughput(self.x,datapath=so.inst.transmission_path) # everything except coupling
 			
@@ -428,12 +450,14 @@ class fill_data():
 			#	so.inst.coupling, so.inst.strehl = throughput_tools.pick_coupling(self.x,so.ao.ho_wfe,so.ao.tt_static,20,LO=so.ao.lo_wfe,PLon=so.inst.pl_on,points=so.inst.grid_points, values=so.inst.grid_values)
 			#	so.inst.notes = 'tt dynamic out of bounds! %smas' %so.ao.tt_dynamic
 
-                        # load coupling (just round to nearest value instead of doing the interpolation above!)
+            # load coupling (just round to nearest value instead of doing the interpolation above!)
 			filename_skeleton = 'coupling/couplingEff_atm%s_adc%s_PL%s_defoc%snmRMS_LO%snmRMS_ttStatic%smas_ttDynamic%smasRMS.csv'
 			tt_dynamic_rounded = np.round(2 * so.ao.tt_dynamic) / 2 # round to neared 0.5 because grid is sampled to 0.5mas
-			lo_wfe_rounded = int(np.round(25 * so.ao.lo_wfe)/25)
+			lo_wfe_rounded = int(100*np.round(4*(so.ao.lo_wfe/100))/4) # round to nearest 25
 			tt_static_rounded = np.round(so.ao.tt_static*2)/2
-			defocus_rounded =  int(np.round(25 * so.ao.defocus)/25)
+			if int(tt_static_rounded)==tt_static_rounded: tt_static_rounded  = int(tt_static_rounded)
+			if int(tt_dynamic_rounded)==tt_dynamic_rounded: tt_dynamic_rounded  = int(tt_dynamic_rounded)
+			defocus_rounded =  int(100*np.round(4*(so.ao.defocus/100))/4)
 
 			f = pd.read_csv(so.inst.transmission_path+filename_skeleton%(int(so.inst.atm),int(so.inst.adc),int(so.inst.pl_on),defocus_rounded,lo_wfe_rounded,tt_static_rounded,tt_dynamic_rounded)) # load file
 			if so.inst.pl_on:

@@ -28,8 +28,9 @@ class storage_object():
 class RUN():
     "star info and spectrum"
     def __init__(self):
-        self.outpath      = './' # stellar spec file name
-
+        self.outpath      = './'   # output path
+        self.tag          = 'test' # tag for plot saving
+        
 class AO():
     "float values"
     def __init__(self):

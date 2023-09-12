@@ -7,48 +7,63 @@ from scipy.integrate import trapz
 from scipy import signal
 from scipy import signal, interpolate
 import matplotlib.pylab as plt
+import pandas as pd 
 
 all = {}
 
-def get_tip_tilt_resid(Vmag, mode):
+
+
+def load_WFE(ho_wfe_file, tt_wfe_file, zenith_angle, seeing):
     """
-    load data from haka sims, spit out tip tilt
+    load new format WFE files where 
+    AO performance is defined per seeing and zenith angle
+
     """
-    modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files 
-    imode = np.where(modes==mode)[0]
+    data  = {}
 
-    #load data file
-    f = np.loadtxt('./data/WFE/HAKA/Kstar_tiptilt.txt').T
-    vmags = f[0]
-    tip_tilts = f[1:][imode] # switch to take best mode for observing case
+    try:
+        ho_ao_file = pd.read_csv(ho_wfe_file,header=[0,1,2,3,4])
+        tt_ao_file = pd.read_csv(tt_wfe_file,header=[0,1,2,3,4])
+    except:
+        raise ValueError('Failed to read WFE files. Please check files exist in correct format')
 
-    #interpolate
-    f_tt = interpolate.interp1d(vmags,tip_tilts, bounds_error=False,fill_value=10000)
+    mags_ho     = ho_ao_file['mag'].values.T[0]
+    mags_tt     = tt_ao_file['mag'].values.T[0]
 
-    return f_tt(Vmag)
+    # require certain zenith angles - later can interp or round
+    if zenith_angle not in [0,30,45,60]: raise ValueError('please specify zenith angle as 0, 30, 45, or 60deg')
+    if seeing not in ['good','average','bad']: raise ValueError('please specify seeing good, average, or bad')
+    
+    ho_wfe_per_mode = ho_ao_file['WFE[nm]'][seeing][str(int(zenith_angle))]
+    tt_wfe_per_mode = tt_ao_file['WFE[nm]'][seeing][str(int(zenith_angle))]
+    
+    for item in ho_wfe_per_mode.columns:
+        ao_mode    = item[0]
+        ho_wfes    = ho_wfe_per_mode[ao_mode].values.T[0]
+        wfe_band   = ho_wfe_per_mode[ao_mode].columns[0]
+        tt_wfes    = tt_wfe_per_mode[ao_mode].values.T[0]
+        if wfe_band != tt_wfe_per_mode[ao_mode].columns[0]:
+            raise ValueError('Check AO files! The bands per AO mode does not match')
+        data[ao_mode] = {}
+        data[ao_mode]['band']    = wfe_band
+        data[ao_mode]['ho_wfe']  = ho_wfes
+        data[ao_mode]['tt_wfe']  = tt_wfes
+        data[ao_mode]['ho_mag']  = mags_ho
+        data[ao_mode]['tt_mag']  = mags_tt
 
-def get_HO_WFE(Vmag, mode):
-    """
-    load data from haka sims, spit out tip tilt
-    """
-    modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files 
-    imode = np.where(modes==mode)[0][0]
-
-    #load data file
-    f = np.loadtxt('./data/WFE/HAKA/Kstar_HOwfe.txt').T
-    vmags = f[0]
-    wfes = f[1:][imode]
-
-    #interpolate
-    f_wfe = interpolate.interp1d(vmags,wfes, bounds_error=False,fill_value=10000)
-
-    return f_wfe(Vmag)
+    return data
 
 
 def calc_strehl(wfe,wavelength):
     """
+    inputs
+    ------
     wfe: nm
-    wavelength: nm
+    wavelength: nm, grid or single number
+
+    outputs
+    -------
+    strehl at wavelength
     """
     strehl = np.exp(-(2*np.pi*wfe/wavelength)**2)
 
@@ -60,12 +75,18 @@ def tt_to_strehl(tt,lam,D):
     
     equation 4.60 from Hardy 1998 (adaptive optics for astronomy) matches this
 
+    inputs
+    ------
     lam: nm
         wavelength(s)
     D: m
         telescope diameter
     tt: mas
         tip tilt rms
+
+    outputs
+    -------
+    strehl_tt  
     """
     tt_rad = tt * 1e-3/206265 # convert to radians from mas
     lam_m =lam * 1e-9
@@ -77,6 +98,106 @@ def tt_to_strehl(tt,lam,D):
 
     return strehl_tt
 
+
+
+
+
+def plot_strehl():
+    """
+    plot strehl for modhis for the different ao modes
+    """
+    configfile = './modhis_snr.cfg'
+    so    = load_object(configfile)
+    cload = fill_data(so) # put coupling files in load and wfe stuff too
+
+    data = load_WFE(so.ao.ho_wfe_set, so.ao.ttdynamic_set, 60, 'bad')
+    ao_modes =  np.array(list(data.keys()))
+
+
+    colors   = ['b','orange','limegreen','g','r','c','b','gray','black']
+    widths   = [2,2,2, 1.5,2, 1.5,1.5,  1, 1]
+
+    from specsim.load_inputs import get_band_mag
+
+    fig, ax = plt.subplots(1,figsize=(7,5),sharex=True)
+    for i,ao_mode in enumerate(ao_modes):
+        # interpolate over WFEs and sample HO and TT at correct mag
+        strehl_ho = calc_strehl(data[ao_mode]['ho_wfe'],so.filt.center_wavelength)
+        strehl_tt = tt_to_strehl(data[ao_mode]['tt_wfe'],so.filt.center_wavelength,so.inst.tel_diam)
+        strehl = strehl_ho * strehl_tt
+        ax.plot(data[ao_mode]['ho_mag'],strehl,label=(ao_mode),linestyle='--',lw=1,c=colors[i])
+
+    ax.set_xlim(0,21)
+    ax.set_ylim(0,1.1)
+    ax.legend(loc='best',fontsize=10)#,bbox_to_anchor=(1.2,1))
+    ax.grid(True)
+    ax.set_ylabel('%s Strehl'%so.filt.band)
+    ax.set_xlabel('R Mag' )
+
+    plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.7)
+    ax.set_title('NFIRAOS Performance'%int(so.stel.teff))
+
+    plt.savefig('output/strehl_ao_modes.png')
+
+
+
+def plot_coupling_modhis():
+    """
+    plot coupling for different strehl regimes
+    """
+    configfile = './modhis_snr.cfg'
+    so    = load_object(configfile)
+
+    ao_data = {}
+    ao_data['lgs_on']  = [2.43, 181.] # avg, 45 deg
+    ao_data['ngs']     = [1.36, 150.] # taken from 
+    ao_data['lgs_off'] = [2.24, 200.]
+    
+    colors   = ['b','orange','limegreen','g','r','c','b','gray','black']
+
+    coupling = []
+    fig, ax = plt.subplots(1,figsize=(7,5),sharex=True)
+    so.inst.pl_on=0
+    for i,mode in enumerate(ao_data.keys()):
+        so.ao.ttdynamic_set = ao_data[mode][0]
+        so.ao.ho_wfe_set    = ao_data[mode][1]
+        cload = fill_data(so) # put coupling files in load and wfe stuff too
+        coupling.append(so.inst.coupling)
+
+        ax.plot(so.inst.xtransmit,so.inst.coupling,linestyle='-',label=mode,lw=1.5,c=colors[i])
+    
+    so.inst.pl_on=1
+    for i,mode in enumerate(ao_data.keys()):
+        so.ao.ttdynamic_set = ao_data[mode][0]
+        so.ao.ho_wfe_set    = ao_data[mode][1]
+        cload = fill_data(so) # put coupling files in load and wfe stuff too
+        coupling.append(so.inst.coupling)
+        iyj = np.where(so.inst.xtransmit < 1500)[0]
+        ax.plot(so.inst.xtransmit[iyj],so.inst.coupling[iyj],linestyle='--',lw=1,c=colors[i])
+
+
+    ax.set_xlim(980,2450)
+    ax.set_ylim(0,0.8)
+    ax.legend(loc='best',fontsize=10)#,bbox_to_anchor=(1.2,1))
+    ax.grid(True)
+    ax.set_ylabel('Coupling')
+    ax.set_xlabel('Wavelength [nm]')
+
+    plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.7)
+    ax.set_title('Coupling Performance')
+
+    plt.savefig('output/coupling_ao_modes.png')
+
+
+
+
+
+
+#
+# old
+##
+#
+#
 def plot_wfe():
     """
     """
@@ -377,3 +498,38 @@ def plot_wfe_old():
     plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15)
     ax[0].set_title('K Star HAKA WFE Estimate')
 
+
+
+def get_tip_tilt_resid_old(Vmag, mode):
+    """
+    load data from haka sims, spit out tip tilt
+    """
+    modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files 
+    imode = np.where(modes==mode)[0]
+
+    #load data file
+    f = np.loadtxt('./data/WFE/HAKA/Kstar_tiptilt.txt').T
+    vmags = f[0]
+    tip_tilts = f[1:][imode] # switch to take best mode for observing case
+
+    #interpolate
+    f_tt = interpolate.interp1d(vmags,tip_tilts, bounds_error=False,fill_value=10000)
+
+    return f_tt(Vmag)
+
+def get_HO_WFE_old(Vmag, mode):
+    """
+    load data from haka sims, spit out tip tilt
+    """
+    modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files 
+    imode = np.where(modes==mode)[0][0]
+
+    #load data file
+    f = np.loadtxt('./data/WFE/HAKA/Kstar_HOwfe.txt').T
+    vmags = f[0]
+    wfes = f[1:][imode]
+
+    #interpolate
+    f_wfe = interpolate.interp1d(vmags,wfes, bounds_error=False,fill_value=10000)
+
+    return f_wfe(Vmag)
