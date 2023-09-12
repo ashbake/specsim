@@ -349,7 +349,7 @@ class fill_data():
 			# scale to find factor_0 for new mag
 			factor_0 = so.stel.factor_0 * 10**(0.4*so.ao.mag)
 
-		if type(so.ao.ttdynamic_set) is float or type(so.ao.ttdynamic_set) is float:
+		if type(so.ao.ttdynamic_set) is float or type(so.ao.ho_wfe_set) is float:
 			# set tt dynamic and ho wfe
 			# requires either both to be text file or both to be floats
 			so.ao.tt_dynamic = so.ao.ttdynamic_set
@@ -379,9 +379,10 @@ class fill_data():
 				ho_wfes.append(ho_wfe)
 				tt_wfes.append(tt_wfe)
 
+			so.ao.strehl_array = np.array(strehl)
 			# if user wants the code to pick best mode:
 			if so.ao.mode == 'auto' or so.ao.mode == 'Auto':
-				#print('Auto AO Mode')
+				print('Auto AO Mode')
 				i_AO       = np.argmax(np.array(strehl))
 			# if the user selected a specific mode:
 			else:
@@ -459,7 +460,11 @@ class fill_data():
 			if int(tt_dynamic_rounded)==tt_dynamic_rounded: tt_dynamic_rounded  = int(tt_dynamic_rounded)
 			defocus_rounded =  int(100*np.round(4*(so.ao.defocus/100))/4)
 
-			f = pd.read_csv(so.inst.transmission_path+filename_skeleton%(int(so.inst.atm),int(so.inst.adc),int(so.inst.pl_on),defocus_rounded,lo_wfe_rounded,tt_static_rounded,tt_dynamic_rounded)) # load file
+			if tt_dynamic_rounded < 20:
+				f = pd.read_csv(so.inst.transmission_path+filename_skeleton%(int(so.inst.atm),int(so.inst.adc),int(so.inst.pl_on),defocus_rounded,lo_wfe_rounded,tt_static_rounded,tt_dynamic_rounded)) # load file
+			else:
+				f = pd.read_csv(so.inst.transmission_path+filename_skeleton%(int(so.inst.atm),int(so.inst.adc),int(so.inst.pl_on),defocus_rounded,lo_wfe_rounded,tt_static_rounded,19.5)) # load file
+
 			if so.inst.pl_on:
 				coupling_data_raw = f['coupling_eff_mode1'] + f['coupling_eff_mode2'] + f['coupling_eff_mode3']
 			else:
