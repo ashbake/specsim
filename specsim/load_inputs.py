@@ -434,7 +434,7 @@ class fill_data():
 			so.inst.xtransmit   = self.x
 			so.inst.ytransmit   = interpolate.splev(self.x,tck_thput,der=0,ext=1)
 			so.inst.base_throughput = so.inst.ytransmit.copy() # store this here bc ya
-			#add airmass calc for strehl for seeing limited instrument
+			#add airmass calc for strehl for seeing limited instruments?
 			print('')
 		except:
 			so.inst.base_throughput  = throughput_tools.get_base_throughput(self.x,datapath=so.inst.transmission_path) # everything except coupling
