@@ -83,10 +83,10 @@ The "fill_data" class takes the storage object and upon initiation, it fills the
 
 We can then use some plotting tools to plot the snr
 ```
-> plot_tools.plot_snr(so,snrtype=0,savepath=savepath)
+> plot_tools.plot_snr(so,snrtype='res_element',savepath=savepath)
 ```
 
-The instrument wavelength and SNR per pixel is stored in `so.obs.v` and  `so.obs.s`, respectively. 
+The instrument wavelength and instrument flux per pixel in units of photons is stored in `so.obs.v` and  `so.obs.s`, respectively. The per resolution element wavelength grid and  SNR is in so.obs.v_res_element and so.obs.snr_res_element.
 
 
 
