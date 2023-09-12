@@ -365,7 +365,7 @@ class fill_data():
 			for ao_mode in ao_modes:
 				# get magnitude in band the AO mode is defined in 
 				wfe_mag  = get_band_mag(so,'Johnson',data[ao_mode]['band'],factor_0)
-				aomags.apend(wfe_mag)
+				aomags.append(wfe_mag)
 				# interpolate over WFEs and sample HO and TT at correct mag
 				f_howfe    = interpolate.interp1d(data[ao_mode]['ho_mag'],data[ao_mode]['ho_wfe'], bounds_error=False,fill_value=10000)
 				f_ttwfe    = interpolate.interp1d(data[ao_mode]['tt_mag'],data[ao_mode]['tt_wfe'], bounds_error=False,fill_value=10000)
@@ -394,7 +394,7 @@ class fill_data():
 			so.ao.mode_chosen   = ao_modes[i_AO]
 			so.ao.ho_wfe        = ho_wfes[i_AO]
 			so.ao.tt_dynamic    = tt_wfes[i_AO]
-			so.ao.ao_mag        = ao_mags[i_AO]
+			so.ao.ao_mag        = aomags[i_AO]
 			so.ao.strehl        = strehl[i_AO]
 
 
