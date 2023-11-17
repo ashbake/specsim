@@ -45,6 +45,6 @@ plt.yticks(my_yticks,my_yticks)
 plt.subplots_adjust(left=0.15,bottom=0.15)
 plt.grid()
 plt.text(9,33,'SNR=30')
-plt.savefig('./output/median_bin_snr_per_band.png')
+plt.savefig('./examples/output/median_bin_snr_per_band.png')
 
-
+plt.show()

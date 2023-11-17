@@ -1,11 +1,14 @@
 ##############################################################
-# General functions for calc_snr_max
+# General functions for noise calculations
+# contributors:
+# Ashley Baker abaker@caltech.edu
+# Huihao Zhang zhang.12043@osu.edu
+# many functions based on psisim https://github.com/planetarysystemsimager/psisim/
 ###############################################################
 
 import numpy as np
 from scipy import interpolate
 
-#from astropy.modeling.blackbody import blackbody_lambda, blackbody_nu
 from astropy.modeling.models import BlackBody
 from astropy import units as u
 from astropy import constants as c 
@@ -188,9 +191,138 @@ def get_inst_bg_tracking(x,pixel_size,npix,datapath='./data/throughput/hispec_su
 
     return thermal_spectrum, thermal.value # units of ph/nm/s
 
+def get_contrast(wave,pl_sep,tel_diam,seeing,strehl):
+    """
+    Gets the contrast for SMF positioned on planet of some
+    distance from host star
+
+    inputs
+    ------
+    wave         - [nm] A list of wavelengths [float length m]
+    pl_sep       - [mas] separations at which to calculate the speckle noise in arcseconds
+    tel_diam     - Telescope diameter [m]
+    seeing       - seeing during observation [arcsec]
+    strehl       - strehl of AO correction
+    """
+
+    p_law_kolmogorov = -11./3
+    p_law_ao_coro_filter = -2 
+    nactuators = 58             # number of actuators
+    fiber_contrast_gain = 10.   # represents suppression thanks to fiber
+    
+    # apply units
+    pl_sep   *= u.marcsec
+    tel_diam *= u.m
+    wvs = u.micron * wave.copy() /1000 # convert to microns
+    seeing *= u.arcsec
+
+    #compute r0
+    r0 = 0.55e-6/(seeing.to(u.radian)) * u.m * u.radian #Easiest to ditch the seeing unit here. 
+
+    #The AO control radius in units of lambda/D
+    cutoff = nactuators/2
+
+    contrast = np.zeros_like(wvs)
+
+    #Dimitri to put in references to this math
+    r0_sc = r0 * (wvs/(0.55*u.micron))**(6./5)
+    w_halo = tel_diam / r0_sc
+
+    ang_sep_resel_in = pl_sep.to(u.radian)*tel_diam /wvs.to(u.m) / u.radian #Convert separtiona from arcsec to units of lam/D. rid of radian unit
+
+    contrast = np.pi*(1-strehl)*0.488/w_halo**2 * (1+11./6*(ang_sep_resel_in/w_halo)**2)**(-11/6.)
+
+    contrast_at_cutoff = np.pi*(1-strehl)*0.488/w_halo**2 * (1+11./6*(cutoff/w_halo)**2)**(-11/6.)
+
+    biggest_ang_sep = np.abs(ang_sep_resel_in - cutoff) == np.min(np.abs(ang_sep_resel_in - cutoff))
+
+    contrast[ang_sep_resel_in < cutoff] = contrast_at_cutoff[ang_sep_resel_in < cutoff]*(ang_sep_resel_in[ang_sep_resel_in < cutoff]/cutoff)**p_law_ao_coro_filter
+
+    #Apply the fiber contrast gain
+    contrast /= fiber_contrast_gain
+
+    #Make sure nothing is greater than 1. 
+    contrast[contrast>1] = 1.
+
+    return contrast
 
 
-def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg, darknoise,readnoise,npix,noisecap=None):
+def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,vortex_charge):
+    """
+    taken from https://github.com/planetarysystemsimager/psisim/blob/kpic/psisim/instruments/modhis.py#L441C1-L441C1
+    planet is off axis, star gets reduction in throughput due to vortex
+
+    inputs
+    ------
+    wave [nm]   - wavelength array
+    ho_wfe [nm] - High order wave front error
+
+    outupts
+    -------
+    contrast
+
+    TODO
+    ----
+    need planet throughput to accompany it since off axis?
+    """
+    # apply units
+    ho_wfe *= u.nm
+    tt_dyn *= u.mas
+    wvs = u.micron * wave.copy() /1000 # convert to microns
+    tel_diam *= u.m
+    host_diameter *=u.mas
+
+    #-- Get Stellar leakage due to WFE
+    #Pick the WFE coefficient based on the vortex charge. Coeff values emprically determined in simulation
+    if vortex_charge == 1:
+        wfe_coeff = 0.840       # Updated on 1/11/21 based on 6/17/19 pyWFS data
+    elif vortex_charge == 2:
+        wfe_coeff = 1.650       # Updated on 1/11/21 based on 6/17/19 pyWFS data
+
+    #Approximate contrast from WFE
+    contrast = (wfe_coeff * ho_wfe.to(u.micron) / wvs)**(2.) # * self.vortex_charge)
+
+    #-- Get Stellar leakage due to Tip/Tilt Jitter
+    # Convert jitter to lam/D
+    ttlamD = tt_dyn.to(u.radian) / (wvs.to(u.m)/ tel_diam) / u.radian
+
+    # Use leakage approx. from Ruane et. al 2019 
+        # https://arxiv.org/pdf/1908.09780.pdf      Eq. 3
+    ttnull = (ttlamD)**(2*vortex_charge)
+
+    # Add to total contrast
+    contrast += ttnull
+
+    #-- Get Stellar leakage due to finite sized star (Geometric leakage)
+      # Assumes user has already set host diameter with set_vfn_host_diameter()
+      # Equation and coefficients are from Ruante et. al 2019
+        # https://arxiv.org/pdf/1908.09780.pdf     fig 7c
+    # Convert host_diameter to units of lambda/D
+    host_diam_LoD = host_diameter.to(u.radian) / (wvs.to(u.m)/tel_diam) /u.radian
+
+    # Define Coefficients for geometric leakage equation
+    if vortex_charge == 1:
+        geo_coeff = 3.5
+    elif vortex_charge == 2:
+        geo_coeff = 4.2
+    
+    # Compute leakage
+    geonull = (host_diam_LoD / geo_coeff)**(2*vortex_charge)
+    
+    # Add to total contrast
+    contrast += geonull
+        
+    #convert to ndarray for consistency with contrast returned by other modes
+    contrast = np.array(contrast)
+    
+    #Make sure nothing is greater than 1. 
+    contrast[contrast>1] = 1.
+    
+    return contrast
+
+
+
+def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg, darknoise,readnoise,npix,speckle,noisefloor=None):
     """
     noise in 1 exposure
 
@@ -212,7 +344,9 @@ def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg, darknoise,readnoise,npix,
         read noise of detector
     npix - float [pixels]
         number of pixels in cross dispersion of spectrum being combined into one 1D spectrum
-    noisecap - float or None (default: None)
+    speckle - array [e-]
+        counts from speckle leakage from star. should be zeroes if on axis
+    noisefloor - float or None (default: None)
         noise cap to be applied. Defined relative to flux such that 1/noisecap is the max SNR allowed
     
     outputs:
@@ -223,6 +357,10 @@ def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg, darknoise,readnoise,npix,
     # shot noise - array w/ wavelength or integrated over band
     sig_flux = np.sqrt(np.abs(flux))
 
+    # speckle noise
+    speckle_noise = np.sqrt(speckle)
+    post_processing_gain = 100. # reduction of speckle related systematics in software
+
     # background (instrument and sky) - array w/ wavelength matching flux array sampling or integrated over band
     sig_bg   = background_noise(inst_bg,sky_bg, texp)
 
@@ -232,11 +370,11 @@ def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg, darknoise,readnoise,npix,
     # dark current - times time and pixels
     sig_dark = dark_noise(darknoise,npix,texp) #* get dark noise every sample
     
-    noise    = np.sqrt(sig_flux **2 + sig_bg**2 + sig_read**2 + sig_dark**2)
+    noise    = np.sqrt(sig_flux **2 + sig_bg**2 + sig_read**2 + sig_dark**2 + speckle_noise**2 + (speckle/post_processing_gain)**2) 
 
     # cap the noise if a number is provided
-    if noisecap is not None:
-        noise[np.where(noise < noisecap)] = noisecap * flux # noisecap is fraction of flux, 1/noisecap gives max SNR
+    if noisefloor is not None:
+        noise[np.where(noise < noisefloor)] = noisefloor * flux # noisecap is fraction of flux, 1/noisecap gives max SNR
 
     return noise
 
@@ -260,7 +398,7 @@ def background_noise(inst_bg,sky_bg, texp):
     """
     total_bg = texp * (inst_bg + sky_bg) # per reduced pixel already so dont need to include vertical pixel extent
     
-    return np.sqrt(np.abs(inst_bg + sky_bg) )
+    return np.sqrt(np.abs(total_bg) )
 
 
 def read_noise(rn,npix):
@@ -301,14 +439,8 @@ def dark_noise(darknoise,npix,texp):
     return sig_dark
 
 
-def plot_noise_components(so):
-    """
-    plot spectra and transmission so know what we're dealing with
-    """
-    plt.figure()
-    plt.plot(so.stel.v,so.hispec.ytransmit)
 
-
+########### PLOT
 
 def plot_bg(so, v,instbg,skybg):
     fig, ax = plt.subplots(1,1, figsize=(8,5))  

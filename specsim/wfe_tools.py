@@ -100,8 +100,6 @@ def tt_to_strehl(tt,lam,D):
 
 
 
-
-
 def plot_strehl():
     """
     plot strehl for modhis for the different ao modes
@@ -192,6 +190,8 @@ def plot_coupling_modhis():
 
 
 
+# ##################################
+# OLD PAST HERE
 
 #
 # old
@@ -251,7 +251,7 @@ def plot_wfe():
     #plt.savefig('output/ao_modes/AO_modes_Teff_%s.pdf'%so.stel.teff)
 
 
-def plot_strehl():
+def plot_strehl_old():
     """
     """
     configfile = 'hispec_tracking_camera.cfg'
@@ -386,7 +386,6 @@ def plot_planets_ao_modes():
     # plot contours of it
     planets_filename = './data/populations/PS_2023.02.08_13.41.45.csv'
     planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
-    # add brown dwarfs!
     hmags = planet_data['sy_hmag']
     teffs = planet_data['st_teff']
     mass  = planet_data['pl_bmassj']
@@ -411,7 +410,6 @@ def plot_planets_ao_modes():
 
     plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.85)
     ax.scatter(hmags,teffs,marker='.',c='c',alpha=0.5,label='Planet Hosts')
-    #ax.scatter(hmags_bd,teffs_bd,marker='.',c='c',alpha=0.5,label='Brown Dwarfs')
     ax.set_xlabel('H Mag')
     ax.set_ylabel('T$_{eff}$')
     ax.set_title('HISPEC Performance Landscape')
@@ -438,8 +436,6 @@ def get_AO_plot_scheme():
 
 
 
-# ##################################
-# OLD PAST HERE
 def get_dyn_wfe(Rmag):
     """
     ***fix this - only return wfe that is important for centroiding based

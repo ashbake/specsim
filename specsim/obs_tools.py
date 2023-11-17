@@ -9,7 +9,7 @@ from scipy import signal, interpolate
 
 from specsim.functions import tophat
 from specsim import load_inputs
-
+from specsim.ccf_tools import get_order_bounds
 all = {}
 
 
@@ -281,13 +281,13 @@ def compute_band_photon_counts():
     load_inputs.get_band_mag(so,'SLOAN','uprime_filter',so.stel.factor_0)
 
 
-def get_order_value(so,v,snr,height=0.055,distance=2e4,prominence=0.01):
+def get_order_value2(so,v,snr,height=0.055,distance=2e4,prominence=0.01):
     """
     given array, return max and mean of snr per order
     """
     order_peaks      = signal.find_peaks(so.inst.base_throughput,height=height,distance=distance,prominence=prominence)
     order_cen_lam    = so.stel.v[order_peaks[0]]
-    blaze_angle      =  76
+    blaze_angle      = 76
     snr_peaks = []
     snr_means = []
     for i,lam_cen in enumerate(order_cen_lam):
@@ -302,22 +302,17 @@ def get_order_value(so,v,snr,height=0.055,distance=2e4,prominence=0.01):
 
     return np.array(order_cen_lam), np.array(snr_peaks), np.array(snr_means)
 
-def get_order_value2(v,base_throughput,x,y):
+def get_order_value(x,y,order_filename):
     """
     given array, return max and mean of snr per order
     """
-    order_peaks      = signal.find_peaks(base_throughput,height=0.055,distance=2e4,prominence=0.01)
-    order_cen_lam    = v[order_peaks[0]]
-    blaze_angle      =  76
+    order_cen_lam,fsr = get_order_bounds(order_filename)
+
     snr_peaks = []
     snr_means = []
     for i,lam_cen in enumerate(order_cen_lam):
-        line_spacing = 0.02 if lam_cen < 1475 else 0.01
-        m = np.sin(blaze_angle*np.pi/180) * 2 * (1/line_spacing)/(lam_cen/1000)
-        fsr  = lam_cen/m
-        isub_test= np.where((v> (lam_cen - fsr/2)) & (v < (lam_cen+fsr/2))) #FINISH THIS
         #plt.plot(so.stel.v[isub_test],total_throughput[isub_test],'k--')
-        sub_snr = y[np.where((x > (lam_cen - 1.3*fsr/2)) & (x < (lam_cen+1.3*fsr/2)))[0]] #FINISH THIS]
+        sub_snr = y[np.where((x > (lam_cen - 1.3*fsr[i]/2)) & (x < (lam_cen+1.3*fsr[i]/2)))[0]] #FINISH THIS]
         snr_peaks.append(np.nanmax(sub_snr))
         snr_means.append(np.nanmean(sub_snr))
 
@@ -339,7 +334,6 @@ def air_index_refraction(lam,p,t):
 
 def load_confirmed_planets(planets_filename = './data/populations/confirmed_planets_PS_2023.01.12_16.07.07.csv'):
     planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
-    # add brown dwarfs!
     hmags = planet_data['sy_hmag']
     teffs = planet_data['st_teff']
     return hmags,teffs

@@ -66,6 +66,72 @@ def plot_doppler_spectrographs(so,cload):
 		cload.filter(so)
 		ax.plot(so.filt.xraw,so.filt.yraw*.5,'darkgray',lw=0.8)
 
+def plot_rv_err(so,savefig=True):
+	"""
+	"""
+	dv_vals =	so.obs.rv_order.copy()
+	col_table = plt.get_cmap('Spectral_r')
+	fig, axs = plt.subplots(2,figsize=(7,7),sharex=True)
+	plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.85,top=0.85)
+
+	axs[1].plot([950,2400],[so.inst.rv_floor,so.inst.rv_floor],'k--',lw=0.7)
+	axs[1].fill_between([1450,2400],0,1e10,facecolor='gray',alpha=0.2)
+	axs[1].fill_between([980,1330],0,1e10,facecolor='gray',alpha=0.2)
+	axs[1].grid('True')
+	axs[1].set_ylim(-0,3*np.median(dv_vals))
+	axs[1].set_xlim(950,2400)
+	axs[1].set_ylabel('$\sigma_{RV}$ [m/s]')
+	axs[1].set_xlabel('Wavelength [nm]')
+
+	axs[0].set_ylabel('SNR')
+	axs[0].set_title('M$_%s$=%s, T$_{eff}$=%sK,\n $t_{exp}$=%ss, vsini=%skm/s'%(so.filt.band,so.stel.mag,int(so.stel.teff),int(so.obs.texp),so.stel.vsini))
+
+	axs[0].grid('True')
+	ax2 = axs[0].twinx() 
+	ax2.plot(so.tel.v,so.tel.s,'gray',alpha=0.5,zorder=-100,label='Telluric Absorption')
+	ax2.plot(so.stel.v,so.inst.ytransmit,'k',alpha=0.5,zorder=-100,label='Total Throughput')
+	ax2.set_ylabel('Transmission',fontsize=12)
+	for i,lam_cen in enumerate(so.inst.order_cens):
+		wvl_norm = (lam_cen - 900.) / (2500. - 900.)
+		order_ind   = np.where((so.obs.v > lam_cen - so.inst.order_widths[i]/2) & (so.obs.v < lam_cen + so.inst.order_widths[i]/2))[0]
+		axs[0].plot(so.obs.v[order_ind],so.obs.s[order_ind]/so.obs.noise[order_ind],zorder=200,color=col_table(wvl_norm))
+		axs[1].plot(lam_cen,dv_vals[i],'o',zorder=100,color=col_table(wvl_norm),markeredgecolor='k')
+	
+	sub_yj = dv_vals[np.where((dv_vals!=np.inf) & (so.inst.order_cens < 1400))[0]]
+	sub_hk = dv_vals[np.where((dv_vals!=np.inf) & (so.inst.order_cens > 1400))[0]]
+	rvmed_yj = np.sqrt(np.sum(dv_vals[np.where((dv_vals!=np.inf) & (so.inst.order_cens < 1400))[0]]**2))/np.sum(sub_yj)
+	rvmed_hk = np.median(dv_vals[np.where((dv_vals!=np.inf) & (so.inst.order_cens > 1400))[0]])
+	dv_yj = 1. / (np.nansum(1./sub_yj**2.))**0.5	# 
+	dv_hk = 1. / (np.nansum(1./sub_hk**2.))**0.5	# 
+	dv_yj_tot = (so.inst.rv_floor**2 +dv_yj**2.)**0.5	# 
+	dv_hk_tot = (so.inst.rv_floor**2 +dv_hk**2.)**0.5	# # 
+	# 2*np.median(dv_vals)
+	axs[1].text(1050,.5,'$\sigma_{yJ}$=%sm/s'%round(dv_yj_tot,1),fontsize=12,zorder=101)
+	axs[1].text(1500,.5,'$\sigma_{HK}$=%sm/s'%round(dv_hk_tot,1),fontsize=12,zorder=101)
+	ax2.legend(fontsize=8,loc=1)
+	if savefig:
+		plt.savefig('./output/RV_precision_%s_%sK_%smag%s_%ss_vsini%skms.png'%(so.run.tag,so.stel.teff,so.filt.band,so.stel.mag,so.obs.texp,so.stel.vsini))
+
+	return fig,axs
+
+
+
+def load_brown_dwarfs_AB():
+    """
+    load adam burgasser's file
+
+    returns hmag, teff
+    """
+    xl = pd.ExcelFile('/Users/ashbake/Documents/Research/Projects/HISPEC/Tests/TrackingCamera/data/ucd_sheet_teff.xlsx')
+    #xl.sheet_names
+    first_sheet = xl.sheet_names[0]
+    df = xl.parse(first_sheet)
+    #df.head()
+    teff = df['teff']
+    hmag = df['H_2MASS']
+
+    return  hmag.values,teff.values
+
 
 
 # STAND ALONE PLOTTING FUNCTIONS
@@ -238,7 +304,7 @@ def plot_throughput_nice(telluric_file,datapath='./data/throughput/hispec_subsys
 
 
 # REQUIRES SO INSTANCE
-def plot_snr(so,snrtype=0,savepath=SAVEPATH):
+def plot_snr(so,snrtype='pixel',savepath='./'):
 	"""
 	Plots SNR calculated in so instance
 	
@@ -260,9 +326,9 @@ def plot_snr(so,snrtype=0,savepath=SAVEPATH):
 	else: print('Choose pixel or res_element for snrtype'); return
 	ax.set_ylabel('SNR')
 	ax.set_xlabel('Wavelength (nm)')
-	ax.set_title('AO Mode: %s, %s=%s, t=4hr'%(so.ao.mode,so.filt.band,int(so.stel.mag)))
+	ax.set_title('AO Mode: %s, %s=%s, t=%shr'%(so.ao.mode_chosen,so.filt.band,round(so.stel.mag,1),np.round(so.obs.texp/3600,2)))
 	ax.axhline(y=30,color='k',ls='--')
-	plt.legend()
+	#plt.legend()
 	# duplicate axis to plot filter response
 	ax2 = ax.twinx()
 	# plot band
@@ -279,7 +345,7 @@ def plot_snr(so,snrtype=0,savepath=SAVEPATH):
 	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.stel.mag,so.obs.texp,so.inst.darknoise)
 	plt.savefig(savepath + figname)
 
-def plot_snr_orders(so,snrtype=0,mode='mean',height=0.055,savepath=SAVEPATH):
+def plot_snr_orders(so,snrtype='res_element',mode='mean',height=0.055,savepath=SAVEPATH):
 	"""
 	inputs:
 	-------
@@ -294,8 +360,8 @@ def plot_snr_orders(so,snrtype=0,mode='mean',height=0.055,savepath=SAVEPATH):
 		plots SNR as either the average ('mean') or the peak ('peak') of each order
 
 	"""
-	if snrtype=='pixel': cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so,so.obs.v,so.obs.snr,height=height)
-	if snrtype=='res_element':cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so,so.obs.v_res_element,so.obs.snr_res_element,height=height)
+	if snrtype=='pixel': cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so.obs.v,so.obs.snr,so.inst.order_bounds_file)
+	if snrtype=='res_element':cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so.obs.v_res_element,so.obs.snr_res_element,so.inst.order_bounds_file)
 
 	fig, ax = plt.subplots(1,1, figsize=(8,6))	
 	if mode=='peak': ax.plot(cen_lam, snr_peaks,lw=2)

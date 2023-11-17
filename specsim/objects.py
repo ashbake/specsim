@@ -73,8 +73,8 @@ class FILTER():
         self.filter_file=None
         self.zp_file = './data/filters/zeropoints.txt' #http://astroweb.case.edu/ssm/ASTR620/mags.html
         self.zp_unit = 'Jy'
-        self.band   = 'J' # band to pick, yJHK
-        self.family = '2mass' # family of filter band, see zeropoints file 'cfht', '2mass' for JHK
+        self.band    = 'J' # band to pick, yJHK
+        self.family  = '2mass' # family of filter band, see zeropoints file 'cfht', '2mass' for JHK
         #zps    = np.loadtxt(self.zp_file,dtype=str).T
         #self.options =[zps[0],zps[1]] # returns options for bands to pick
 
@@ -140,7 +140,7 @@ def load_object(configfile):
     """
     if not os.path.isfile(configfile): raise Exception("Config File is Not Found!")
     config = LoadConfig(configfile)
-    so = storage_object()
+    so     = storage_object()
 
     for key in config:
         s1,s2=key.split('.')

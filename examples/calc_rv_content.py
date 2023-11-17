@@ -15,7 +15,7 @@ from specsim.functions import *
 SPEEDOFLIGHT = 2.998e8 # m/s
 GAUSSCONST = (2. * (2. * np.log(2))**0.5)
 
-plt.ion()
+#plt.ion()
 
 
 
@@ -144,5 +144,5 @@ if __name__=='__main__':
 	axs[1].text(1500,.5,'$\sigma_{HK}$=%sm/s'%round(dv_hk_tot,1),fontsize=12,zorder=101)
 	ax2.legend(fontsize=8,loc=1)
 	#if savefig:
-	#	plt.savefig('./output/RV_precision_%s_%sK_%smag%s_%ss_vsini%skms.png'%(so.run.tag,so.stel.teff,so.filt.band,so.stel.mag,so.obs.texp,so.stel.vsini))
-
+	plt.savefig('./examples/output/RV_precision_%s_%sK_%smag%s_%ss_vsini%skms.png'%(so.run.tag,so.stel.teff,so.filt.band,so.stel.mag,so.obs.texp,so.stel.vsini))
+	plt.show()
