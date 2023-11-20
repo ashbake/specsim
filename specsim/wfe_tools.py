@@ -54,7 +54,7 @@ def load_WFE(ho_wfe_file, tt_wfe_file, zenith_angle, seeing):
     return data
 
 
-def calc_strehl(wfe,wavelength):
+def calc_strehl_marechal(wfe,wavelength):
     """
     inputs
     ------
@@ -66,6 +66,25 @@ def calc_strehl(wfe,wavelength):
     strehl at wavelength
     """
     strehl = np.exp(-(2*np.pi*wfe/wavelength)**2)
+
+    return strehl
+
+def calc_strehl(wfe,wavelength):
+    """
+    Extended Marechal equation - used function by code
+    as of No 20th
+
+    inputs
+    ------
+    wfe: nm
+    wavelength: nm, grid or single number
+
+    outputs
+    -------
+    strehl at wavelength
+    """
+    marechal = 2*np.pi*wfe/wavelength
+    strehl = np.exp(-(0.75 * (marechal + 0.2615))**2 + 0.05)
 
     return strehl
 
