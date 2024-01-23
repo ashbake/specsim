@@ -489,7 +489,7 @@ class fill_data():
 
 		# consider throughput impact of ao mode here
 		# dichroic gets applied to science
-		# pwfs_dichroic gets applied to tracking
+		# pywfs_dichroic gets applied to tracking
 		if '100H' in so.ao.mode_chosen:
 			so.ao.dichroic = 1 - tophat(self.x,so.inst.H[0],so.inst.H[1],1)
 		elif '100J' in so.ao.mode_chosen:
@@ -499,9 +499,9 @@ class fill_data():
 
 		# if pyramid,apply to tracking, otherwise LGS light 100J/H goes to tracking
 		if 'PyWFS' in so.ao.mode_chosen: 
-			so.ao.pwfs_dichroic = so.ao.dichroic.copy()
+			so.ao.pywfs_dichroic = so.ao.dichroic.copy()
 		else:
-			so.ao.pwfs_dichroic = np.ones_like(self.x)
+			so.ao.pywfs_dichroic = np.ones_like(self.x)
 
 	def instrument(self,so):
 		###########
@@ -559,10 +559,9 @@ class fill_data():
 			finterp = interpolate.interp1d(f['wavelength_um']*1000,coupling_data_raw,bounds_error=False,fill_value=0)
 			coupling_data = finterp(self.x)
 
-			so.inst.ho_strehl =  np.exp(-(2*np.pi*so.ao.ho_wfe/self.x)**2) # computed high order strehl per wavelength value. ho_wfe in nm as is self.x (wavelenght grid)
 			piaa_boost = 1.3 # based on Gary's sims, but needs updating because will be less for when Photonic lantern is being used
-			
-			so.inst.coupling = coupling_data  * so.inst.ho_strehl * piaa_boost
+			so.ao.ho_strehl = wfe_tools.calc_strehl(so.ao.ho_wfe,self.x)
+			so.inst.coupling = coupling_data  * so.ao.ho_strehl * piaa_boost
 
 			so.inst.xtransmit = self.x
 			so.inst.ytransmit = so.inst.base_throughput* so.inst.coupling * so.ao.dichroic # pywfs not being considered typically so pywfs_dichroic is one here
@@ -649,7 +648,8 @@ class fill_data():
 		# Calculate noise
 		#
 		if so.inst.pl_on: # 3 port lantern hack
-			noise_frame_yJ  = np.sqrt(3) * noise_tools.sum_total_noise(so.obs.s_frame/3,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.obs.speckle_frame) # flux split evenly over 3 traces for each of 3 PL outputs
+			#need to figure out what to do for sky and inst bkg bc depends on coupling
+			noise_frame_yJ  = np.sqrt(3) * noise_tools.sum_total_noise(so.obs.s_frame/3,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph/np.sqrt(3) , so.obs.sky_bg_ph/np.sqrt(3) , so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.obs.speckle_frame) # flux split evenly over 3 traces for each of 3 PL outputs
 			noise_frame     = noise_tools.sum_total_noise(so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.obs.speckle_frame)
 			yJ_sub          = np.where(so.obs.v < 1400)[0]
 			noise_frame[yJ_sub] = noise_frame_yJ[yJ_sub] # fill in yj with sqrt(3) times noise in PL case
@@ -724,7 +724,7 @@ class fill_data():
 		so.track.fwhm_units = 'pixel'
 		print('Tracking FWHM=%spix'%so.track.fwhm)
 		
-		so.track.strehl = np.exp(-(2*np.pi*so.ao.ho_wfe/so.track.center_wavelength)**2)
+		so.track.strehl = wfe_tools.calc_strehl(so.track.center_wavelength, so.ao.ho_wfe)
 
 		# get sky background and instrument background, spec is ph/nm/s
 		# fwhm must be in arcsec 
@@ -745,14 +745,14 @@ class fill_data():
 		print('Tracking photons: %s e-'%so.track.nphot)
 
 		# get noise
-		so.track.noise = noise_tools.sum_total_noise(so.track.nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix)
+		so.track.noise = noise_tools.sum_total_noise(so.track.nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix,0)
 		print('Tracking noise: %s e-'%so.track.noise)
 		so.track.snr = so.track.nphot/so.track.noise 
 		
 		# get centroid error, cap if saturated
 		if so.track.nphot/so.track.npix > so.track.saturation:
 			nphot_capped = so.inst.saturation * so.track.npix # cap nphot
-			noise_capped = noise_tools.sum_total_noise(nphot_capped,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix)
+			noise_capped = noise_tools.sum_total_noise(nphot_capped,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix,0)
 			snr_capped   = nphot_capped/noise_capped
 			so.track.centroid_err = (1/np.pi) * so.track.fwhm/snr_capped # same fwhm but snr is reduced to not saturate like if used an ND filter
 			so.track.noise  = noise_capped

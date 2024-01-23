@@ -62,6 +62,11 @@ def make_telluric_mask(so,cutoff=0.01,velocity_cutoff=5,water_only=False):
 
 def get_rv_content(v,s,n):
 	"""
+	@breif: calculate the RV content per pixel
+	@inputs: v - array of wavelengths
+			 s - array of fluxes
+			 n - array of noise
+	@outputs: all_w - array of RV content per pixel
 	"""
 	flux_interp = interpolate.InterpolatedUnivariateSpline(v,s, k=1)
 	dflux = flux_interp.derivative()
@@ -69,11 +74,29 @@ def get_rv_content(v,s,n):
 	sigma_ord = np.abs(n) #np.abs(s) ** 0.5 # np.abs(n)
 	sigma_ord[np.where(sigma_ord ==0)] = 1e10
 	all_w = (v ** 2.) * (spec_deriv ** 2.) / sigma_ord ** 2. # include read noise and dark here!!
-	
+
 	return all_w
+
+def round_to_sig_figs(x, n):
+	"""
+	@breif: round to significant figures
+	@inputs: x - number to round
+			 n - number of significant figures
+			 @outputs: rounded number
+	"""
+	return round(x, int(n - np.ceil(np.log10(abs(x)))))
 
 def get_rv_precision(all_w,order_cens,order_inds,noise_floor=0.5,mask=None):
 	"""
+	@breif: calculate the RV precision per order
+	@inputs: all_w - array of RV content per pixel
+			 order_cens - array of order centers
+			 order_inds - array of indices for each order
+			 noise_floor - noise floor for instrument
+			 mask - telluric mask
+	@outputs: dv_tot - total RV precision
+			  dv_spec - RV precision for spectrum
+			  dv_vals - RV precision per order
 	"""
 	if np.any(mask==None):
 		mask = np.ones_like(all_w)

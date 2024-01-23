@@ -16,7 +16,7 @@ all = {}
 
 
 
-def pick_coupling(w,dynwfe,ttStatic,ttDynamic,LO=30,PLon=0,piaa_boost=1.3,points=None,values=None):
+def pick_coupling(w,dynwfe,ttStatic,ttDynamic,LO=50,PLon=0,piaa_boost=1.3,points=None,values=None):
     """
     select correct coupling file
     to do:implement interpolation of coupling files instead of rounding variables
@@ -305,8 +305,8 @@ def plot_throughput_components_HK(telluric_file='/Users/ashbake/Documents/Resear
     teldata      = fits.getdata(telluric_file)
     _,ind  = np.unique(teldata['Wave/freq'],return_index=True)
     tck_tel   = interpolate.splrep(teldata['Wave/freq'][ind],teldata['Total'][ind], k=2, s=0)
-    telluric = interpolate.splev(1000*w,tck_tel,der=0,ext=1)
-    telluric_spec  = degrade_spec(w,telluric,2000)
+    telluric  = interpolate.splev(1000*w,tck_tel,der=0,ext=1)
+    telluric_spec  = degrade_spec(w,telluric,100)
     data['atm'] = telluric_spec
  
     #load coupling for two options
@@ -321,20 +321,20 @@ def plot_throughput_components_HK(telluric_file='/Users/ashbake/Documents/Resear
     # plot red only
     spec = 'red'
     plt.figure(figsize=(7,6))
-    plt.semilogy(w,data['atm'],c='royalblue',linewidth=1)
-    plt.plot(w,data['atm'] * data[spec]['tel'],c='darkorange',linewidth=1)
-    plt.plot(w,data['atm'] * data[spec]['tel'] * data[spec]['ao'],c='silver',linewidth=1)
-    plt.plot(w,data['atm'] * data[spec]['tel'] * data[spec]['ao']* \
+    #plt.semilogy(w,data['atm'],c='royalblue',linewidth=1)
+    plt.plot(w,data[spec]['tel'],c='darkorange',linewidth=1)
+    plt.plot(w, data[spec]['tel'] * data[spec]['ao'],c='silver',linewidth=1)
+    plt.plot(w, data[spec]['tel'] * data[spec]['ao']* \
                     data[spec]['feicom']*data[spec]['feired'],c='gold',linewidth=1)
     
-    plt.plot(w,data['atm'] * data[spec]['tel'] * data[spec]['ao']* \
+    plt.plot(w,data[spec]['tel'] * data[spec]['ao']* \
                     data[spec]['feicom']*data[spec]['feired']*data[spec]['fibred']*\
                     data['coupling_NGS'],c='steelblue',alpha=0.8,linewidth=1)
     
-    ngs = data['atm'] * data[spec]['tel'] * data[spec]['ao']* \
+    ngs =  data[spec]['tel'] * data[spec]['ao']* \
                     data[spec]['feicom']*data[spec]['feired']*data[spec]['fibred']*\
                     data[spec]['rspec']*data['coupling_NGS']
-    lgs = data['atm'] * data[spec]['tel'] * data[spec]['ao']* \
+    lgs =  data[spec]['tel'] * data[spec]['ao']* \
                     data[spec]['feicom']*data[spec]['feired']*data[spec]['fibred']*\
                     data[spec]['rspec']*data['coupling_LGS']
     np.savetxt(outputdir + 'ngs_throughput_HK.txt',np.vstack((w,ngs)).T)
@@ -362,7 +362,7 @@ def plot_throughput_components_HK(telluric_file='/Users/ashbake/Documents/Resear
     yticks = [0.01, 0.03, 0.05, 0.1, 0.2, 0.4, 0.8]
     #yticks = [0.01, 0.03, 0.09, 0.27, 0.81]
     xticks = np.round((np.arange(1.49, 2.45,0.04)),2)
-    plt.yticks(ticks=yticks,labels=yticks,color='k',fontsize=12)
+    #plt.yticks(ticks=yticks,labels=yticks,color='k',fontsize=12)
     plt.xticks(rotation=90,ticks=xticks,labels=xticks,color='k',fontsize=12)
     plt.grid(axis='y',alpha=0.4)
     plt.subplots_adjust(bottom=0.17)
@@ -409,7 +409,7 @@ def plot_throughput_components_YJ(telluric_file='/Users/ashbake/Documents/Resear
     _,ind  = np.unique(teldata['Wave/freq'],return_index=True)
     tck_tel   = interpolate.splrep(teldata['Wave/freq'][ind],teldata['Total'][ind], k=2, s=0)
     telluric = interpolate.splev(1000*w,tck_tel,der=0,ext=1)
-    telluric_spec  = degrade_spec(w,telluric,2000)
+    telluric_spec  = degrade_spec(w,telluric,100)
     data['atm'] = telluric_spec
  
     #load coupling for two options
@@ -424,20 +424,20 @@ def plot_throughput_components_YJ(telluric_file='/Users/ashbake/Documents/Resear
     # plot blue only
     spec = 'blue'
     plt.figure(figsize=(7,6))
-    plt.semilogy(w,data['atm'],c='royalblue',linewidth=1)
-    plt.plot(w,data['atm'] * data[spec]['tel'],c='darkorange',linewidth=1)
-    plt.plot(w,data['atm'] * data[spec]['tel'] * data[spec]['ao'],c='silver',linewidth=1)
-    plt.plot(w,data['atm'] * data[spec]['tel'] * data[spec]['ao']* \
+    #plt.semilogy(w,data['atm'],c='royalblue',linewidth=1)
+    plt.plot(w,data[spec]['tel'],c='darkorange',linewidth=1)
+    plt.plot(w, data[spec]['tel'] * data[spec]['ao'],c='silver',linewidth=1)
+    plt.plot(w,data[spec]['tel'] * data[spec]['ao']* \
                     data[spec]['feicom']*data[spec]['feiblue'],c='gold',linewidth=1)
     
-    plt.plot(w,data['atm'] * data[spec]['tel'] * data[spec]['ao']* \
+    plt.plot(w, data[spec]['tel'] * data[spec]['ao']* \
                     data[spec]['feicom']*data[spec]['feiblue']*data[spec]['fibblue']*\
                     data['coupling_NGS'],c='steelblue',alpha=0.8,linewidth=1)
     
-    ngs = data['atm'] * data[spec]['tel'] * data[spec]['ao']* \
+    ngs =  data[spec]['tel'] * data[spec]['ao']* \
                     data[spec]['feicom']*data[spec]['feiblue']*data[spec]['fibblue']*\
                     data[spec]['bspec']*data['coupling_NGS']
-    lgs = data['atm'] * data[spec]['tel'] * data[spec]['ao']* \
+    lgs = data[spec]['tel'] * data[spec]['ao']* \
                     data[spec]['feicom']*data[spec]['feiblue']*data[spec]['fibblue']*\
                     data[spec]['bspec']*data['coupling_LGS']
     
@@ -466,7 +466,7 @@ def plot_throughput_components_YJ(telluric_file='/Users/ashbake/Documents/Resear
     yticks = [0.01, 0.03, 0.05, 0.1, 0.2, 0.4, 0.8]
     #yticks = [0.01, 0.03, 0.09, 0.27, 0.81]
     xticks = np.round((np.arange(0.98, 1.49,0.04)),2)
-    plt.yticks(ticks=yticks,labels=yticks,color='k',fontsize=12)
+    #plt.yticks(ticks=yticks,labels=yticks,color='k',fontsize=12)
     plt.xticks(rotation=90,ticks=xticks,labels=xticks,color='k',fontsize=12)
     plt.grid(axis='y',alpha=0.4)
     plt.subplots_adjust(bottom=0.17)
@@ -476,3 +476,134 @@ def plot_throughput_components_YJ(telluric_file='/Users/ashbake/Documents/Resear
 
 
 
+def plot_throughput_components(telluric_file='/Users/ashbake/Documents/Research/_DATA/telluric/psg_out_2020.08.02_l0_800nm_l1_2700nm_res_0.001nm_lon_204.53_lat_19.82_pres_0.5826.fits',
+                                    transmission_path = '/Users/ashbake/Documents/Research/Projects/HISPEC/SNR_calcs/data/throughput/hispec_subsystems_11032022/',
+                                    outputdir='./output/',
+                                    ngs_wfe=[130,3],
+                                    lgs_wfe=[220,9.4],
+                                    atm=1,adc=1):
+    """
+    plot throughput plot for MRI proposal
+    """
+    data={}
+    data['red'] = {}
+    data['blue'] =  {}
+
+    colors = ['b','orange','gray','yellow','lightblue','green','k']
+    labels = ['Atmosphere','Telescope','Keck AO','FEI','Fiber \nCoupling','Fiber\nPropogation',]
+    for spec in ['red','blue']:
+        if spec=='red':
+            include = ['tel', 'ao', 'feicom', 'feired','fibred','rspec']#,'coupling']
+        if spec=='blue':
+            include = ['tel', 'ao', 'feicom', 'feiblue','fibblue','bspec']#,'coupling']
+
+        for i in include:
+            if i==include[0]:
+                w,s = np.loadtxt(transmission_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
+                data[spec][i] = s
+            else:
+                wtemp, stemp = np.loadtxt(transmission_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
+                # interpolate onto s
+                f = interpolate.interp1d(wtemp, stemp, bounds_error=False,fill_value=0)
+                data[spec][i] = f(w)
+                #plt.plot(w,s,label=i)
+
+    #load atmosphere and degrade to lower res, resample onto w
+    teldata      = fits.getdata(telluric_file)
+    _,ind  = np.unique(teldata['Wave/freq'],return_index=True)
+    tck_tel   = interpolate.splrep(teldata['Wave/freq'][ind],teldata['Total'][ind], k=2, s=0)
+    telluric  = interpolate.splev(1000*w,tck_tel,der=0,ext=1)
+    telluric_spec  = degrade_spec(w,telluric,100)
+    data['atm']    = telluric_spec
+ 
+    #load coupling for two options
+    # inputs : waves,dynwfe,ttStatic,ttDynamic
+    out = grid_interp_coupling(1,path=transmission_path  + 'coupling/',atm=atm,adc=adc)
+    data['coupling_NGS'],strehl  = pick_coupling(w,ngs_wfe[0],0,ngs_wfe[1],LO=50,PLon=0,points=out[0],values=out[1:])
+    
+    out = grid_interp_coupling(1,path=transmission_path +'coupling/',atm=atm,adc=adc)
+    data['coupling_LGS'],strehl2 = pick_coupling(w,lgs_wfe[0],0,lgs_wfe[1],LO=50,PLon=1,points=out[0],values=out[1:])
+
+    if np.max(w)>1000: w/=1000
+    lw=2
+    # save ngs,lgs total
+    allw,allngs,alllgs = [],[],[]
+    # plot red only
+    plt.figure(figsize=(9,6))
+    colors = ['blue','red','yellow','purple','green','cyan']
+    for spec in ['blue','red']:
+        if spec=='red':
+            include = ['tel', 'ao', 'feicom', 'feired', 'fibred','rspec']#,'coupling']
+        if spec=='blue':
+            include = ['tel', 'ao', 'feicom', 'feiblue','fibblue','bspec']#,'coupling']
+
+        #plt.semilogy(w,data['atm'],c='royalblue',linewidth=1)
+        # telescope
+        plt.plot(w,data[spec]['tel'],c='darkorange',linewidth=lw)
+        #nfiraos ao
+        plt.plot(w, data[spec]['tel'] * data[spec]['ao'],c='gray',linewidth=lw)
+        #fei
+        plt.plot(w, data[spec]['tel'] * data[spec]['ao']* \
+                        data[spec]['feicom']*data[spec][include[3]],c='gold',linewidth=lw)
+        #coupling
+        plt.plot(w,data[spec]['tel'] * data[spec]['ao']* \
+                        data[spec]['feicom']*data[spec][include[3]]*data['coupling_NGS'],\
+                        c='steelblue',alpha=0.8,linewidth=lw)
+        #fibers
+        plt.plot(w,data[spec]['tel'] * data[spec]['ao']* \
+                        data[spec]['feicom']*data[spec][include[3]]*data[spec][include[4]]*\
+                        data['coupling_NGS'],c='purple',alpha=0.8,linewidth=lw)
+        
+        ngs =  data[spec]['tel'] * data[spec]['ao']* \
+                        data[spec]['feicom']*data[spec][include[3]]*data[spec][include[4]]*\
+                        data[spec][include[5]]*data['coupling_NGS']
+        lgs =  data[spec]['tel'] * data[spec]['ao']* \
+                        data[spec]['feicom']*data[spec][include[3]]*data[spec][include[4]]*\
+                        data[spec][include[5]]*data['coupling_LGS']
+        np.savetxt(outputdir + 'ngs_throughput_%s.txt'%spec,np.vstack((w,ngs)).T)
+        np.savetxt(outputdir + 'lgs_throughput_%s.txt'%spec,np.vstack((w,lgs)).T)
+
+        ngs[np.where(ngs<0.015)[0]] = np.nan
+        lgs[np.where((ngs<0.015) & (w > 1.9))[0]] = np.nan
+        lgs[np.where(lgs<0.01)[0]] = np.nan
+        lgs[np.where((lgs<0.015) & (w > 1.9))[0]] = np.nan
+        #spec
+        plt.plot(w,ngs,c='seagreen',linewidth=lw)
+        allngs.append(ngs)
+        allw.append(w)
+        alllgs.append(lgs)
+        #plt.plot(w,lgs,c='seagreen',alpha=0.5,linewidth=lw)
+    
+    plt.ylim(0.01,1)
+    plt.xlim(0.985, 2.455)
+    plt.axhline(np.max(ngs),c='k',linestyle='--',linewidth=2)
+    plt.fill_between([1.327, 1.5],0.01,y2=1,facecolor='w',zorder=110)
+    plt.fill_between([1.490,1.780],0.01,y2=1,facecolor='gray',alpha=0.2,zorder=110)
+    plt.fill_between([1.990,2.460],0.01,y2=1,facecolor='gray',alpha=0.2,zorder=110)
+    plt.fill_between([0.98, 1.07],0.0,y2=1,facecolor='gray',alpha=0.2,zorder=-110)
+    plt.fill_between([1.170,1.327],0.0,y2=1,facecolor='gray',alpha=0.2,zorder=-110)
+
+    # add text to plot
+    plt.text(1.34,0.89,'Telescope',zorder=200,fontsize=10)
+    plt.text(1.34,0.74,'NFIRAOS',zorder=200,fontsize=10)
+    plt.text(1.34,0.45,'FEI Optics',zorder=200,fontsize=10)
+    plt.text(1.34,0.27,'Coupling',zorder=200,fontsize=10)
+    plt.text(1.34,0.23,'Fibers',zorder=200,fontsize=10)
+    plt.text(1.34,0.09,'SPEC',zorder=200,fontsize=10)
+
+
+    #plt.title("HISPEC E2E Except Coupling")
+    # y lines
+    yticks = [0.01, 0.03, 0.05, 0.1, 0.2, 0.4, 0.8]
+    #yticks = [0.01, 0.03, 0.09, 0.27, 0.81]
+    xticks = np.round((np.arange(1.49, 2.45,0.04)),2)
+    #plt.yticks(ticks=yticks,labels=yticks,color='k',fontsize=12)
+    #plt.xticks(rotation=90,ticks=xticks,labels=xticks,color='k',fontsize=12)
+    plt.grid(axis='y',alpha=0.4)
+    plt.subplots_adjust(bottom=0.17)
+    plt.title('Cumulative Throughput')
+    plt.xlabel('Wavelength (microns)',color='k')
+    plt.ylabel('Throughput',color='k')
+    plt.savefig(outputdir + 'e2e_plot_all.png')
+    plt.savefig(outputdir + 'e2e_plot_all.pdf')
+    return allw,allngs,alllgs

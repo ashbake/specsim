@@ -68,8 +68,8 @@ def plot_doppler_spectrographs(so,cload):
 
 def plot_rv_err(so,savefig=True):
 	"""
+
 	"""
-	dv_vals =	so.obs.rv_order.copy()
 	col_table = plt.get_cmap('Spectral_r')
 	fig, axs = plt.subplots(2,figsize=(7,7),sharex=True)
 	plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.85,top=0.85)
@@ -78,12 +78,12 @@ def plot_rv_err(so,savefig=True):
 	axs[1].fill_between([1450,2400],0,1e10,facecolor='gray',alpha=0.2)
 	axs[1].fill_between([980,1330],0,1e10,facecolor='gray',alpha=0.2)
 	axs[1].grid('True')
-	axs[1].set_ylim(-0,3*np.median(dv_vals))
+	axs[1].set_ylim(-0,3*np.median(so.obs.rv_order))
 	axs[1].set_xlim(950,2400)
 	axs[1].set_ylabel('$\sigma_{RV}$ [m/s]')
 	axs[1].set_xlabel('Wavelength [nm]')
 
-	axs[0].set_ylabel('SNR')
+	axs[0].set_ylabel('SNR/pixel')
 	axs[0].set_title('M$_%s$=%s, T$_{eff}$=%sK,\n $t_{exp}$=%ss, vsini=%skm/s'%(so.filt.band,so.stel.mag,int(so.stel.teff),int(so.obs.texp),so.stel.vsini))
 
 	axs[0].grid('True')
@@ -93,19 +93,18 @@ def plot_rv_err(so,savefig=True):
 	ax2.set_ylabel('Transmission',fontsize=12)
 	for i,lam_cen in enumerate(so.inst.order_cens):
 		wvl_norm = (lam_cen - 900.) / (2500. - 900.)
-		order_ind   = np.where((so.obs.v > lam_cen - so.inst.order_widths[i]/2) & (so.obs.v < lam_cen + so.inst.order_widths[i]/2))[0]
-		axs[0].plot(so.obs.v[order_ind],so.obs.s[order_ind]/so.obs.noise[order_ind],zorder=200,color=col_table(wvl_norm))
-		axs[1].plot(lam_cen,dv_vals[i],'o',zorder=100,color=col_table(wvl_norm),markeredgecolor='k')
+		axs[0].plot(so.obs.v_res_element[so.obs.order_inds[i]],so.obs.snr_res_element[so.obs.order_inds[i]]/np.sqrt(so.inst.res_samp),zorder=200,color=col_table(wvl_norm))
+		axs[1].plot(lam_cen,so.obs.rv_order[i],'o',zorder=100,color=col_table(wvl_norm),markeredgecolor='k')
 	
-	sub_yj = dv_vals[np.where((dv_vals!=np.inf) & (so.inst.order_cens < 1400))[0]]
-	sub_hk = dv_vals[np.where((dv_vals!=np.inf) & (so.inst.order_cens > 1400))[0]]
-	rvmed_yj = np.sqrt(np.sum(dv_vals[np.where((dv_vals!=np.inf) & (so.inst.order_cens < 1400))[0]]**2))/np.sum(sub_yj)
-	rvmed_hk = np.median(dv_vals[np.where((dv_vals!=np.inf) & (so.inst.order_cens > 1400))[0]])
+	sub_yj = so.obs.rv_order[np.where((so.obs.rv_order!=np.inf) & (so.inst.order_cens < 1400))[0]]
+	sub_hk = so.obs.rv_order[np.where((so.obs.rv_order!=np.inf) & (so.inst.order_cens > 1400))[0]]
+	rvmed_yj = np.sqrt(np.sum(so.obs.rv_order[np.where((so.obs.rv_order!=np.inf) & (so.inst.order_cens < 1400))[0]]**2))/np.sum(sub_yj)
+	rvmed_hk = np.median(so.obs.rv_order[np.where((so.obs.rv_order!=np.inf) & (so.inst.order_cens > 1400))[0]])
 	dv_yj = 1. / (np.nansum(1./sub_yj**2.))**0.5	# 
 	dv_hk = 1. / (np.nansum(1./sub_hk**2.))**0.5	# 
 	dv_yj_tot = (so.inst.rv_floor**2 +dv_yj**2.)**0.5	# 
 	dv_hk_tot = (so.inst.rv_floor**2 +dv_hk**2.)**0.5	# # 
-	# 2*np.median(dv_vals)
+	# 2*np.median(so.obs.rv_order)
 	axs[1].text(1050,.5,'$\sigma_{yJ}$=%sm/s'%round(dv_yj_tot,1),fontsize=12,zorder=101)
 	axs[1].text(1500,.5,'$\sigma_{HK}$=%sm/s'%round(dv_hk_tot,1),fontsize=12,zorder=101)
 	ax2.legend(fontsize=8,loc=1)
@@ -113,6 +112,9 @@ def plot_rv_err(so,savefig=True):
 		plt.savefig('./output/RV_precision_%s_%sK_%smag%s_%ss_vsini%skms.png'%(so.run.tag,so.stel.teff,so.filt.band,so.stel.mag,so.obs.texp,so.stel.vsini))
 
 	return fig,axs
+
+
+
 
 
 

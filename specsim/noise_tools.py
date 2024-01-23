@@ -138,7 +138,7 @@ def get_sky_bg_tracking(x,fwhm,airmass=1.5,pwv=1.5,area=76,skypath = '../../../.
     fwhm *= u.arcsec
     solidangle = fwhm**2 * 1.13 #corrected for Gaussian beam (factor 1.13)
 
-    sky_background_MK_tmp  = np.genfromtxt(skypath+'mk_skybg_zm_'+str(pwv)+'_'+str(airmass)+'_ph.dat', skip_header=0)
+    sky_background_MK_tmp  = np.genfromtxt(skypath+'mk_skybg_zm_'+str(pwv)+'_'+str(round(airmass,1))+'_ph.dat', skip_header=0)
     sky_background_MK      = sky_background_MK_tmp[:,1] * u.photon/(u.s*u.arcsec**2*u.nm*u.m**2) 
     sky_background_MK_wave = sky_background_MK_tmp[:,0] * u.nm
 
