@@ -72,7 +72,7 @@ def calc_strehl_marechal(wfe,wavelength):
 def calc_strehl(wfe,wavelength):
     """
     Extended extended Marechal equation - used function by code
-    as of No 20th
+    as of No 20th. See KOAN doc for info
 
     inputs
     ------

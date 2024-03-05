@@ -134,7 +134,6 @@ def scale_stellar(filt,stelv,stels,mag):
 
 
 
-
 def _load_stellar_model(x,mag,teff,vsini,so):
 	"""
 	Loads stellar model as sonora or phoenix based on temperature
@@ -427,13 +426,14 @@ class fill_data():
 
 		# now make getband mag take new stel file and factor 0
 
-		if type(so.ao.ttdynamic_set) is float or type(so.ao.ho_wfe_set) is float:
+		if type(so.ao.ttdynamic_set) is not str or type(so.ao.ho_wfe_set) is not str:
 			# set tt dynamic and ho wfe
 			# requires either both to be text file or both to be floats
 			so.ao.tt_dynamic = so.ao.ttdynamic_set
 			so.ao.ho_wfe     = so.ao.ho_wfe_set
 			if type(so.ao.ho_wfe) != type(so.ao.tt_dynamic): raise ValueError('HO WFE and TT Dynamic must *both* be set to float values or both to file paths to WFE files')
 			so.ao.mode_chosen = 'User Defined'
+			so.ao.band = 'N/A'
 		else:
 			# so.obs.zenith_angle = (180/np.pi) * np.arccos(1/so.tel.airmass) # if decide to take seeing
 			data = wfe_tools.load_WFE(so.ao.ho_wfe_set, so.ao.ttdynamic_set, so.obs.zenith_angle, so.tel.seeing_set)
@@ -478,7 +478,7 @@ class fill_data():
 			so.ao.band          = data[so.ao.mode_chosen]['band']
 			so.ao.ao_modes = ao_modes.copy()
 
-		print('AO mag is %s in %s band for %sK AO star (%s=%s)'%(round(so.ao.ao_mag,2),so.ao.band, so.ao.teff,so.filt.band,so.ao.mag))
+			print('AO mag is %s in %s band for %sK AO star (%s=%s)'%(round(so.ao.ao_mag,2),so.ao.band, so.ao.teff,so.filt.band,so.ao.mag))
 		# TODO: make name of mag in config to mag_set
 		print('AO mode chosen: %s'%so.ao.mode_chosen)
 
@@ -490,14 +490,16 @@ class fill_data():
 		# consider throughput impact of ao mode here
 		# dichroic gets applied to science
 		# pywfs_dichroic gets applied to tracking
+		"""
 		if '100H' in so.ao.mode_chosen:
 			so.ao.dichroic = 1 - tophat(self.x,so.inst.H[0],so.inst.H[1],1)
 		elif '100J' in so.ao.mode_chosen:
 			so.ao.dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.J[1],1)
 		else:
 			so.ao.dichroic = np.ones_like(self.x)
-
+		"""
 		# if pyramid,apply to tracking, otherwise LGS light 100J/H goes to tracking
+		so.ao.dichroic = np.ones_like(self.x)
 		if 'PyWFS' in so.ao.mode_chosen: 
 			so.ao.pywfs_dichroic = so.ao.dichroic.copy()
 		else:
@@ -560,7 +562,7 @@ class fill_data():
 			coupling_data = finterp(self.x)
 
 			piaa_boost = 1.3 # based on Gary's sims, but needs updating because will be less for when Photonic lantern is being used
-			so.ao.ho_strehl = wfe_tools.calc_strehl(so.ao.ho_wfe,self.x)
+			so.ao.ho_strehl  = wfe_tools.calc_strehl(so.ao.ho_wfe,self.x)
 			so.inst.coupling = coupling_data  * so.ao.ho_strehl * piaa_boost
 
 			so.inst.xtransmit = self.x
@@ -656,7 +658,6 @@ class fill_data():
 		else:
 			noise_frame  = noise_tools.sum_total_noise(so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.obs.speckle_frame)
 		
-
 		# Remove nans and 0s from noise frame, make these infinite
 		#
 		noise_frame[np.where(np.isnan(noise_frame))] = np.inf
@@ -719,12 +720,12 @@ class fill_data():
 		so.track.bandpass = bandpass * so.ao.pywfs_dichroic
 
 		# get fwhm (in pixels)
-		so.track.fwhm = float(obs_tools.get_fwhm(so.ao.ho_wfe,so.ao.tt_dynamic,so.track.center_wavelength,so.inst.tel_diam,so.track.platescale,field_r=so.track.field_r,camera=so.track.camera,getall=False,aberrations_file=so.track.aberrations_file))
+		so.track.fwhm  = float(obs_tools.get_fwhm(so.ao.ho_wfe,so.ao.tt_dynamic,so.track.center_wavelength,so.inst.tel_diam,so.track.platescale,field_r=so.track.field_r,camera=so.track.camera,getall=False,aberrations_file=so.track.aberrations_file))
 		so.track.npix  = np.pi* (so.track.fwhm/2)**2 # only take noise in circle of diameter FWHM 
 		so.track.fwhm_units = 'pixel'
 		print('Tracking FWHM=%spix'%so.track.fwhm)
 		
-		so.track.strehl = wfe_tools.calc_strehl(so.track.center_wavelength, so.ao.ho_wfe)
+		so.track.strehl = wfe_tools.calc_strehl(so.ao.ho_wfe,so.track.center_wavelength)
 
 		# get sky background and instrument background, spec is ph/nm/s
 		# fwhm must be in arcsec 
@@ -740,7 +741,7 @@ class fill_data():
 		 			so.inst.tel_area * so.track.ytransmit*\
 		 			np.abs(so.tel.s)
 	
-		fac = 0.8 # amount of light approx under gaussian FWHM
+		fac = 0.8 # amount of light approx under gaussian FWHM, which was used to get npix
 		so.track.nphot = fac * so.track.strehl * np.trapz(so.track.signal_spec * so.track.bandpass,so.stel.v)
 		print('Tracking photons: %s e-'%so.track.nphot)
 
@@ -751,7 +752,7 @@ class fill_data():
 		
 		# get centroid error, cap if saturated
 		if so.track.nphot/so.track.npix > so.track.saturation:
-			nphot_capped = so.inst.saturation * so.track.npix # cap nphot
+			nphot_capped = so.track.saturation * so.track.npix # cap nphot
 			noise_capped = noise_tools.sum_total_noise(nphot_capped,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix,0)
 			snr_capped   = nphot_capped/noise_capped
 			so.track.centroid_err = (1/np.pi) * so.track.fwhm/snr_capped # same fwhm but snr is reduced to not saturate like if used an ND filter
@@ -761,7 +762,9 @@ class fill_data():
 		else:
 			so.track.centroid_err = (1/np.pi) * so.track.fwhm/so.track.snr
 
-	def compute_rv(self,so):
+	def compute_rv(self,so,telluric_cutoff=0.01,velocity_cutoff=20):
+		"""
+		"""
 		# make telluric only spectrum, resample onto so.obs.v to match so.obs.s
 		so.tel.rayleigh[so.tel.rayleigh==0] = np.inf
 		telluric_spec = so.tel.s/so.tel.rayleigh #h2o only
@@ -771,8 +774,8 @@ class fill_data():
 		s_tel		 = filt_interp(so.obs.v)/np.max(filt_interp(so.obs.v))	# filter profile resampled to phoenix times phoenix flux density
 		
 		# run radial velocity precision
-		telluric_mask             = ccf_tools.make_telluric_mask(so.obs.v,s_tel,cutoff=0.01,velocity_cutoff=10)
-		dv_tot,dv_spec,dv_vals	  = ccf_tools.get_rv_precision(so.obs.v,so.obs.s,so.obs.noise,so.inst.order_cens,so.inst.order_widths,noise_floor=so.inst.rv_floor,mask=telluric_mask)
+		so.obs.telluric_mask      = ccf_tools.make_telluric_mask(so.obs.v,s_tel,cutoff=telluric_cutoff,velocity_cutoff=velocity_cutoff)
+		dv_tot,dv_spec,dv_vals	  = ccf_tools.get_rv_precision(so.obs.v,so.obs.s,so.obs.noise,so.inst.order_cens,so.inst.order_widths,noise_floor=so.inst.rv_floor,mask=so.obs.telluric_mask)
 
 		so.obs.rv_order = dv_tot # per order rv with noise floor
 		so.obs.rv_tot   = np.sqrt(dv_spec**2 + so.inst.rv_floor**2) # add noise floor
@@ -787,6 +790,7 @@ class fill_data():
 		so.obs.etc   = so.obs.texp_frame * (target_snr/snr_frame)**2  # texp per frame times nframes - per snr element
 		so.obs.etc_order_max  = so.obs.texp_frame * (target_snr/(so.obs.snr_max_orders/so.obs.nframes))**2  # per order max 
 		so.obs.etc_order_mean = so.obs.texp_frame * (target_snr/(so.obs.snr_mean_orders/so.obs.nframes))**2   # per 
+
 
 	def compute_ccf_snr(self, so, model=None,systematics_residuals=0.01,kernel_size=201,norm_cutoff=0.8):
 		'''

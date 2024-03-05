@@ -78,7 +78,6 @@ def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hi
     outputs:
     --------
     sky background (photons/s) already considering PSF sampling
-
     """
     em_red,em_blue, temps = get_emissivity(x,datapath=datapath)
 
@@ -365,7 +364,7 @@ def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg, darknoise,readnoise,npix,
     sig_bg   = background_noise(inst_bg,sky_bg, texp)
 
     # read noise  - reduces by number of ramps, limit to 6 at best
-    sig_read = read_noise(np.max((3,(readnoise/np.sqrt(nsamp)))), npix)
+    sig_read = read_noise(np.max((6,(readnoise/np.sqrt(nsamp)))), npix)
     
     # dark current - times time and pixels
     sig_dark = dark_noise(darknoise,npix,texp) #* get dark noise every sample

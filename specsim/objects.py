@@ -87,10 +87,10 @@ class INSTRUMENT():
         self.transmission_file= None # transmission file name
         self.xtransmit      = None # x array of throughput [nm]
         self.ytransmit      = None # throughput of instrument [0,1]
-        self.y              = None #y filter band
-        self.J              = None #J filter band
-        self.H              = None #H filter band
-        self.K              = None #K filter band
+        self.y              = None # y filter band
+        self.J              = None # J filter band
+        self.H              = None # H filter band
+        self.K              = None # K filter band
 
 
 class OBSERVATION():
