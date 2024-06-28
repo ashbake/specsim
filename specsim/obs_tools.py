@@ -156,6 +156,11 @@ def get_tracking_band(wave,band):
         center_wavelength = (l0+lf)/2
         bandpass = tophat(wave,l0,lf,1)
 
+    if band=='JHgapKPIC':
+        l0,lf= 1450-25,1450+25
+        center_wavelength = (l0+lf)/2
+        bandpass = tophat(wave,l0,lf,1)
+
     if band=='JHgap_minus':
         l0,lf= 1400,1490
         center_wavelength = (l0+lf)/2

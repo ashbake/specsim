@@ -14,7 +14,7 @@ class storage_object():
     def __init__(self):
         # Classes
         self.run  = RUN()
-        self.filt = FILTER()
+        self.filt = FILTER() 
         self.stel = STELLAR()
         self.tel  = TELLURIC()
         self.inst = INSTRUMENT()
@@ -34,35 +34,91 @@ class RUN():
 class AO():
     "float values"
     def __init__(self):
-        self.mode   = 'SH'     # AO mode corresponding to ao wfe load fxn
-        self.tt_static   = 0    # mas, static tip tilt error
-        self.tt_dynamic  = 'default' # mas or 'default', dynamic tip tilt error, default: takes from file based on stellar magnitdue
-        self.lo_wfe = 50  # nm, low order 
-        self.defocus = 25 #nm, low order
-        self.v_mag   = 'default' # magnitude or 'defaul't, magnitude of AO star, default: uses Vmag of target star
-        self.ho_wfe  = 'default' # nm or 'default', high order wave front error, default: loads from file
+        # user defined
+        self.mode        = 'auto'    # AO mode corresponding to ao wfe load fxn
+        self.tt_static   = 2         # mas, static tip tilt error
+        self.tt_dynamic_set  = None  # file with dynamic tip tilt error
+        self.ho_wfe_set  = None      # file with high order wfe error data
+        self.lo_wfe      = 50        # nm, low order 
+        self.defocus     = 25        # nm, defocus error
+        self.mag         = 'default' # magnitude of ao star, if 'default' uses mag of on axis star
+        self.teff        = 'default' # teff of ao star, if 'default' uses teff of on axis star
+        # filled in by code
+        self.band        = None      # band of ao star
+        self.dichroic    = None      # AO dichroic transmission, for HISPEC in case pyramid is used
+        self.ho_strehl   = None      # high order strehl
+        self.ho_wfe      = None      # high order wfe
+        self.tt_dynamic  = None      # dynamic tip tilt error
+        self.strehl_array= None      # strehl array as function of wavelength
+        self.ao_mag      = None      # magnitude of ao star in band selected
+        self.ao_modes    = None      # list of ao modes loaded from file
+        self.mode_chosen = None      # mode chosen from ao_modes as best ao mode
+
 
 
 class INSTRUMENT():
     "float values"
     def __init__(self):
+        # user defined
+        self.transmission_path = None # path to transmission files
+        self.order_bounds_file = None # file with order bound information
+        self.order_bounds      = None # order bounds of spectrograph
+        self.atm = 0        # keyword for transmission file, HISPEC=1, MODHIS=0 for now
+        self.adc = 0        # keyword for transmission file, HISPEC=1, MODHIS=0 for now
         self.l0   = 900     # nm, start of wavelengths to consider
         self.l1   = 2500    # nm, ending wavelength
         self.res  = 100000 # resolving power
-        self.pix_vert = 3 # pixels, vertical extent of spectrum in cross dispersion
-        self.tel_area = 76 # m2, telescope area, mauna kea is default
-        self.tel_diam = 10 #m ,telescope diameter,  mauna kea default
-        self.res_samp = 3 #pixels, sampling of resolution element
-        self.saturation = 100000 # electrons, saturation limit ofr detector
-        self.readnoise  = 12 # e-, CDS read noise of detector
+        self.pix_vert = 4  # pixels, vertical extent of spectrum in cross dispersion
+        self.extraction_frac = 0.925 # fraction of flux extracted for 4 vertical pixels, should have code calculate it
+        self.tel_area = 76 # m2, telescope area, keck is default
+        self.tel_diam = 10 # m ,telescope diameter,  keck is default
+        self.res_samp = 3  #pixels, sampling of resolution element
+        self.saturation = 100000 # electrons, saturation limit of detector
+        self.readnoise  = 12   # e-, CDS read noise of detector
         self.darknoise  = 0.01 # e-/pix/s, dark current to assume
+        self.pl_on      = 1    # 0 or 1, if 1 it will assume photonic lantern in use
+        self.rv_floor   = 0.5  # systematic noise floor of RV in m/s
+        # code filled in values
+        self.base_throughput = None # base throughput of instrument (no coupling)
+        self.coupling        = None # coupling of fiber 
+        self.order_cens      = None # order centers
+        self.order_widths    = None # order widths
+        self.sig             = None # resolution element in nm   
+        self.transmission_file= None # transmission file name
+        self.xtransmit      = None # x array of throughput [nm]
+        self.ytransmit      = None # throughput of instrument [0,1]
+        self.y              = None # y filter band
+        self.J              = None # J filter band
+        self.H              = None # H filter band
+        self.K              = None # K filter band
+
 
 class OBSERVATION():
     "float values, variables"
     def __init__(self):
-        self.texp      = 900  # seconds, total integrated exposure time 
-        self.texp_frame= 900  # seconds, maximum for a single exposure, 'max' will compute exposure to hit 50% full well 
-        self.nsamp = 1        # number of up the ramp samples per frame exposure
+        self.texp             = 900  # seconds, total integrated exposure time 
+        self.texp_frame_set   = 900  # seconds, maximum for a single exposure. default lets code choose it with max of 900
+        self.nsamp            = 1    # number of up the ramp samples per frame exposure
+        self.zenith_angle     = 45   # degrees, zenith angle of observation
+        # code filled in variables
+        self.frame_phot_per_nm = None # photons per nm in a single frame of texp_frame seconds long
+        self.inst_bg_ph    = None # background photons per nm in a single frame of texp_frame seconds long
+        self.nframes       = None # number of frames to reach texp
+        self.noise_frame   = None # noise per frame
+        self.noise         = None # noise spectrum, all frames combined
+        self.order_inds    = None # indices of each order of the spectrograph echelle
+        self.v             = None # wavelength array
+        self.s             = None # spectrum array
+        self.snr           = None # snr array
+        self.s_frame       = None # spectrum array per frame
+        self.speckle_frame    = None # speckle noise per frame
+        self.snr_max_orders   = None # max snr per order
+        self.snr_mean_orders  = None # mean snr per order
+        self.snr_res_element  = None # snr per resolution element
+        self.v_res_element    = None # wavelength per resolution element
+        self.texp_frame       = None # exposure time per frame
+
+
 
 class FILTER():
     "float values"
@@ -82,23 +138,40 @@ class STELLAR():
     "star info and spectrum"
     def __init__(self):
         # User optional define:
-        self.phoenix_file   = None       # stellar spec file name, **make this take temp value in future
+        self.phoenix_folder   = None       # Phoenix spec file path
+        self.sonora_folder    = None       # path to sonora files, used for T<2300K objects
+        self.vsini = 0     # km/s, vsini of star
+        self.mag   = 10    # mag, star magnitude defined in so.filt bandpass
+        self.teff = 3600   # K, star temperature
+        self.pl_teff = 800 # K, planet temperature
+        self.pl_mag = 19   # mag, planet magnitude defined in same bandpass as star
+        self.pl_sep = 0    # mas, if 0 it will assume on axis, if non zero it will assume off axis
+        self.pl_vsini = 0  # km/s, planet vsini
         # Filled in by code:
-        self.vraw = None # wavelength like normal (should match exoplanet and be in standard wavelength)
-        self.sraw = None #  spectrum
-        self.vsini = 0 # km/s
-        self.mag = 10
-        
+        self.vraw = None   # wavelength like normal (should match exoplanet and be in standard wavelength)
+        self.sraw = None   #  spectrum
+        self.units = None  # units of sraw
+        self.v = None      # wavelength
+        self.s = None      # spectrum in photons
+        self.model = None  # model chosen, 'phoenix' or 'sonora'
+        self.factor_0 = None # factor to scale spectrum by to match magnitude
+
 class TELLURIC():
     "telluric transmission file, static"
     def __init__(self):
         # User optional define:
         self.telluric_file   = None       # spec file name
-        self.airmass = 1.5
-        self.pwv     = 1.3
+        self.skypath         = None       # path to sky emission files
+        self.pwv             = 1.3
+        self.seeing_set      = 'average'  # seeing to set: options of average, best, worst options
         # Filled in by code:
-        self.v = None # wavelength 
-        self.s = None #  spectrum
+        self.airmass         = 1.5
+        self.v               = None      # wavelength 
+        self.s               = None      # spectrum
+        self.rayleigh        = None      # rayleigh scattering
+        self.seeing          = None      # seeing corresponding to the set value
+        self.h2o             = None      # water only transmission spectrum
+        self.o3              = None      # ozone only transmission spectrum
 
 
 class TRACK():

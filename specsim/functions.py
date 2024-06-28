@@ -124,11 +124,11 @@ def resample(x,y,sig=0.3, dx=0, eta=1,mode='variable'):
     dx - offset for taking first bin, defaul 0
     eta 0-1 for efficiency (amplitude of bin) default 1
     
-    modes: slow, fast
-    slow more accurate (maybe?), fast uses fft
+    modes: slow, fast, variable
+    slow more accurate (maybe?), fast uses fft, variable takes variable res element
 
     slow method uses trapz so slightly more accurate, i think? both return similar flux values
-
+    note specutils resampler will crash with big arrays here
     """
     if mode=='fast':
         dlam    = np.median(np.diff(x)) # nm per pixel, most accurate if x is uniformly sampled in wavelength
@@ -159,6 +159,12 @@ def resample(x,y,sig=0.3, dx=0, eta=1,mode='variable'):
             ynew = int_spec_oversample[::n]
             int_lam   = np.concatenate((int_lam,xnew))
             int_spec  = np.concatenate((int_spec,ynew))
+
+    if mode=='variable_smooth':
+        # sampling smoothly varies over spectrum
+        # works similar to variable except tophat has fractional values
+        # at edges to split boundary pixel flux appropriately
+        pass
 
     elif mode=='slow':
         i=0
