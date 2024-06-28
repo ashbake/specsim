@@ -367,7 +367,9 @@ def plot_snr(so,snrtype='pixel',savepath='./'):
 	else: print('Choose pixel or res_element for snrtype'); return
 	ax.set_ylabel('SNR')
 	ax.set_xlabel('Wavelength (nm)')
-	ax.set_title('AO Mode: %s, %s=%s, t=%shr'%(so.ao.mode_chosen,so.filt.band,round(so.stel.mag,1),np.round(so.obs.texp/3600,2)))
+	ax.set_title('AO Mode: %s, %s=%s, t=%shr, Teff=%sK'%(so.ao.mode_chosen,\
+			so.filt.band,round(so.stel.mag,1),np.round(so.obs.texp/3600,2),\
+			int(so.stel.teff)))
 	ax.axhline(y=30,color='k',ls='--')
 	#plt.legend()
 	# duplicate axis to plot filter response

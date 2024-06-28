@@ -134,7 +134,7 @@ def scale_stellar(filt,stelv,stels,mag):
 
 
 
-def _load_stellar_model(x,mag,teff,vsini,so):
+def _load_stellar_model(x,mag,teff,vsini,so,rv=0):
 	"""
 	Loads stellar model as sonora or phoenix based on temperature
 	Then scales to the designated magnitude
@@ -168,15 +168,23 @@ def _load_stellar_model(x,mag,teff,vsini,so):
 	#units = 'photons/s/m2/nm' # stellar spec is in photons/s/m2/nm
 
 	# broaden star spectrum with rotation kernal
+	SPEEDOFLIGHT   = 2.998e8 # m/s
 	if vsini > 0:
 		dwvl_mean = np.abs(np.nanmean(np.diff(x)))
-		SPEEDOFLIGHT   = 2.998e8 # m/s
 		dvel_mean      = (dwvl_mean / np.nanmean(x)) * SPEEDOFLIGHT / 1e3 # average sampling in km/s
 		vsini_kernel,_ = _lsf_rotate(dvel_mean,vsini,epsilon=0.6)
 		flux_vsini     = convolve(s,vsini_kernel,normalize_kernel=True)  # photons / second / Ang
 		s              = flux_vsini
 
-	return s, vraw, sraw, model, stel_file, factor_0
+	# Offset star by an RV (for CCF purposes to offset from tellurics)
+	if rv!= 0:
+		doppler_factor = (1.0 + ((rv * 1000) / SPEEDOFLIGHT)) # rv in km/s
+		tck = interpolate.splrep(x*doppler_factor,s, k=3, s=0)
+		shifted_spec = interpolate.splev(x,tck,der=0,ext=1)
+	else: 
+		shifted_spec=s.copy()
+
+	return shifted_spec, vraw, sraw, model, stel_file, factor_0
 
 def get_band_mag(so,family,band,factor_0):
     """
@@ -371,10 +379,10 @@ class fill_data():
 		print('%s band mag set to %s'%(so.filt.band,so.stel.mag))
 	
 		# load on axis target
-		so.stel.s, so.stel.vraw,so.stel.sraw,so.stel.model, so.stel.stel_file, so.stel.factor_0 = _load_stellar_model(self.x,so.stel.mag,so.stel.teff,so.stel.vsini,so)
+		so.stel.s, so.stel.vraw,so.stel.sraw,so.stel.model, so.stel.stel_file, so.stel.factor_0 = _load_stellar_model(self.x,so.stel.mag,so.stel.teff,so.stel.vsini,so,rv=so.stel.rv)
 		# load companion if there is one (requires separation>0)
 		if so.stel.pl_sep>0:
-			so.stel.pl_s, _,_,so.stel.pl_model, so.stel.pl_stel_file, so.stel.pl_factor_0 = _load_stellar_model(self.x,so.stel.pl_mag,so.stel.pl_teff,so.stel.pl_vsini,so)
+			so.stel.pl_s, _,_,so.stel.pl_model, so.stel.pl_stel_file, so.stel.pl_factor_0 = _load_stellar_model(self.x,so.stel.pl_mag,so.stel.pl_teff,so.stel.pl_vsini,so,rv=so.stel.rv)
 
 		so.stel.v   = self.x
 		so.stel.units = 'photons/s/m2/nm' # stellar spec is in photons/s/m2/nm
@@ -390,8 +398,9 @@ class fill_data():
 		so.tel.airmass = 1/np.cos(np.pi * so.obs.zenith_angle / 180.)
 
 		_,ind     = np.unique(data['Wave/freq'],return_index=True)
-		tck_tel   = interpolate.splrep(data['Wave/freq'][ind],data['Total'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
-		so.tel.v, so.tel.s = self.x, interpolate.splev(self.x,tck_tel,der=0,ext=1)
+		#tck_tel   = interpolate.splrep(data['Wave/freq'][ind],data['Total'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
+		so.tel.v = self.x
+		#so.tel.s = interpolate.splev(self.x,tck_tel,der=0,ext=1)
 		
 		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['H2O'][ind]**(so.tel.pwv * so.tel.airmass/pwv0/airmass0), k=2, s=0)
 		so.tel.h2o = interpolate.splev(self.x,tck_tel,der=0,ext=1)
@@ -402,7 +411,29 @@ class fill_data():
 		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['O3'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
 		so.tel.o3  = interpolate.splev(self.x,tck_tel,der=0,ext=1)
 
-		# seeing
+		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['O2'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
+		so.tel.o2  = interpolate.splev(self.x,tck_tel,der=0,ext=1)
+
+		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['N2'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
+		so.tel.n2  = interpolate.splev(self.x,tck_tel,der=0,ext=1)
+
+		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['CO'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
+		so.tel.co  = interpolate.splev(self.x,tck_tel,der=0,ext=1)
+
+		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['CH4'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
+		so.tel.ch4  = interpolate.splev(self.x,tck_tel,der=0,ext=1)
+		
+		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['CO2'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
+		so.tel.co2  = interpolate.splev(self.x,tck_tel,der=0,ext=1)
+
+		tck_tel    = interpolate.splrep(data['Wave/freq'][ind],data['N2O'][ind]**(so.tel.airmass/airmass0), k=2, s=0)
+		so.tel.n2o  = interpolate.splev(self.x,tck_tel,der=0,ext=1)
+		
+		so.tel.s = so.tel.h2o * so.tel.rayleigh * so.tel.o3 *so.tel.o2*\
+					so.tel.n2 * so.tel.co * so.tel.ch4 * so.tel.co2*\
+					so.tel.n2o
+
+		# seeing mapping
 		if so.tel.seeing_set=='good': so.tel.seeing=0.6
 		elif so.tel.seeing_set=='average': so.tel.seeing=0.8
 		elif so.tel.seeing_set=='bad': so.tel.seeing=1.1
@@ -456,6 +487,8 @@ class fill_data():
 				strehl.append(strehl_ho * strehl_tt)
 				ho_wfes.append(ho_wfe)
 				tt_wfes.append(tt_wfe)
+				if 'PyWFS' in ao_mode:
+					strehl[-1] *= 0 # hack to rid of pyramid mode for now
 
 			so.ao.strehl_array = np.array(strehl)
 			# if user wants the code to pick best mode:
@@ -741,31 +774,54 @@ class fill_data():
 		 			so.inst.tel_area * so.track.ytransmit*\
 		 			np.abs(so.tel.s)
 	
-		fac = 0.8 # amount of light approx under gaussian FWHM, which was used to get npix
-		so.track.nphot = fac * so.track.strehl * np.trapz(so.track.signal_spec * so.track.bandpass,so.stel.v)
-		print('Tracking photons: %s e-'%so.track.nphot)
+		fac = 0.5 # empirically the fraction of light approx under 2D gaussian of FWHM~4pix, which was used to get npix and matches expectation in toy centroiding model
+		nphot = fac * so.track.strehl * np.trapz(so.track.signal_spec * so.track.bandpass,so.stel.v)
+		#print('Tracking photons: %s e-'%so.track.nphot)
 
 		# get noise
-		so.track.noise = noise_tools.sum_total_noise(so.track.nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix,0)
+		so.track.noise = noise_tools.sum_total_noise(nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix,0)
 		print('Tracking noise: %s e-'%so.track.noise)
-		so.track.snr = so.track.nphot/so.track.noise 
 		
 		# get centroid error, cap if saturated
-		if so.track.nphot/so.track.npix > so.track.saturation:
-			nphot_capped = so.track.saturation * so.track.npix # cap nphot
-			noise_capped = noise_tools.sum_total_noise(nphot_capped,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix,0)
-			snr_capped   = nphot_capped/noise_capped
-			so.track.centroid_err = (1/np.pi) * so.track.fwhm/snr_capped # same fwhm but snr is reduced to not saturate like if used an ND filter
-			so.track.noise  = noise_capped
-			so.track.snr    = snr_capped
-			so.track.signal = nphot_capped
+		# peak of 2D Gaussian 4pix wide will be 1/10th of the flux in a 4pix diameter aperture (empirically derived)
+		flux_in_peak = nphot/10 # nphot is already times 0.5 to give flux in a 4 pix diameter aperture
+		if flux_in_peak > so.track.saturation:
+			# pick an ND filter
+			# compute OD of filter needed (neg neg computes ceiling)
+			so.track.od = -1*round(-1 * np.log10(flux_in_peak/so.track.saturation),0)
+			# Apply chosen nd filter
+			so.track.signal = 10**(-1*so.track.od) * nphot # cap nphot
+			so.track.noise  = noise_tools.sum_total_noise(so.track.signal,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix,0)
+			# save things related to saturation
+			so.track.saturation_flag = True
+			so.track.nphot_nocap     = nphot
 		else:
-			so.track.centroid_err = (1/np.pi) * so.track.fwhm/so.track.snr
+			so.track.nphot_nocap     = nphot
+			so.track.signal = nphot  # no blocking needed
+			so.track.saturation_flag = False
+		
+		print('Tracking photons: %s e-'%so.track.signal)
+
+		so.track.snr    = so.track.signal/so.track.noise
+		# for centroid error, care about the SNR in the peak
+		#signal_peak     = so.track.signal/20 # peak is 1/20th of Gaussian PSF flux assuming 4.1pix FWHM
+		#noise_peak      = noise_tools.sum_total_noise(so.track.signal,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,1,0) # hack for noise for one pixel
+		so.track.centroid_err = (1/np.pi) * so.track.fwhm/so.track.snr # same fwhm but snr is reduced to not saturate like if used an ND filter
 
 	def compute_rv(self,so,telluric_cutoff=0.01,velocity_cutoff=20):
 		"""
 		"""
+		# Create spectrum with continuum removed and tellurics removed
+		# the noise spectrum will consider tellurics but shouldnt be in the spectrum for computing RV
+		continuum = so.inst.ytransmit/np.max(so.inst.ytransmit)
+		telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm/np.abs(so.tel.s)/continuum
+		telcont_free_lores = degrade_spec(so.stel.v, telcont_free_hires, so.inst.res)
+		_, telcont_free    = resample(so.stel.v,telcont_free_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
+		telcont_free[np.where(np.isnan(telcont_free))] = 0
+		so.inst.s_telcont_free = telcont_free
+
 		# make telluric only spectrum, resample onto so.obs.v to match so.obs.s
+		# For making telluric mask
 		so.tel.rayleigh[so.tel.rayleigh==0] = np.inf
 		telluric_spec = so.tel.s/so.tel.rayleigh #h2o only
 		telluric_spec[np.where(np.isnan(telluric_spec))] = 0
@@ -775,7 +831,7 @@ class fill_data():
 		
 		# run radial velocity precision
 		so.obs.telluric_mask      = ccf_tools.make_telluric_mask(so.obs.v,s_tel,cutoff=telluric_cutoff,velocity_cutoff=velocity_cutoff)
-		dv_tot,dv_spec,dv_vals	  = ccf_tools.get_rv_precision(so.obs.v,so.obs.s,so.obs.noise,so.inst.order_cens,so.inst.order_widths,noise_floor=so.inst.rv_floor,mask=so.obs.telluric_mask)
+		dv_tot,dv_spec,dv_vals	  = ccf_tools.get_rv_precision(so.obs.v,telcont_free,so.obs.noise,so.inst.order_cens,so.inst.order_widths,noise_floor=so.inst.rv_floor,mask=so.obs.telluric_mask)
 
 		so.obs.rv_order = dv_tot # per order rv with noise floor
 		so.obs.rv_tot   = np.sqrt(dv_spec**2 + so.inst.rv_floor**2) # add noise floor
@@ -854,6 +910,19 @@ class fill_data():
 		# basically same thing for future me confused by not simplifying:
 		#so.obs.ccf_snr = np.sqrt((np.sum((model_filt*model_filt/total_noise_var))))
 		#so.obs.ccf_snr = np.sqrt((np.sum((signal_filt**2/total_noise_var))))
+		# by band ccf snr
+		sub_y = np.where(so.obs.v < 1100)[0]
+		sub_J = np.where((so.obs.v > 1100) & (so.obs.v < 1327))[0]
+		sub_H = np.where((so.obs.v > 1490) & (so.obs.v < 1780))[0]
+		sub_K = np.where((so.obs.v > 1990) & (so.obs.v < 2460))[0]
+		ccf_snr_y = np.sqrt((np.sum(signal_filt[sub_y] * model_filt[sub_y]/total_noise_var[sub_y]))**2 / np.sum(model_filt[sub_y] * model_filt[sub_y]/total_noise_var[sub_y]))
+		ccf_snr_J = np.sqrt((np.sum(signal_filt[sub_J] * model_filt[sub_J]/total_noise_var[sub_J]))**2 / np.sum(model_filt[sub_J] * model_filt[sub_J]/total_noise_var[sub_J]))
+		ccf_snr_H = np.sqrt((np.sum(signal_filt[sub_H] * model_filt[sub_H]/total_noise_var[sub_H]))**2 / np.sum(model_filt[sub_H] * model_filt[sub_H]/total_noise_var[sub_H]))
+		ccf_snr_K = np.sqrt((np.sum(signal_filt[sub_K] * model_filt[sub_K]/total_noise_var[sub_K]))**2 / np.sum(model_filt[sub_K] * model_filt[sub_K]/total_noise_var[sub_K]))
+		so.obs.ccf_snr_y= ccf_snr_y
+		so.obs.ccf_snr_J= ccf_snr_J
+		so.obs.ccf_snr_H= ccf_snr_H
+		so.obs.ccf_snr_K= ccf_snr_K					
 
 	def compute_ccf_snr_etc(self, so, goal_ccf, model=None,systematics_residuals=0.01,kernel_size=201,norm_cutoff=0.8):
 		'''

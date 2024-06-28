@@ -143,6 +143,7 @@ class STELLAR():
         self.vsini = 0     # km/s, vsini of star
         self.mag   = 10    # mag, star magnitude defined in so.filt bandpass
         self.teff = 3600   # K, star temperature
+        self.rv   = 0      # absolute rv of system [km/s]
         self.pl_teff = 800 # K, planet temperature
         self.pl_mag = 19   # mag, planet magnitude defined in same bandpass as star
         self.pl_sep = 0    # mas, if 0 it will assume on axis, if non zero it will assume off axis
