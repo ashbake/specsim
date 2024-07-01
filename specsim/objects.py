@@ -37,8 +37,8 @@ class AO():
         # user defined
         self.mode        = 'auto'    # AO mode corresponding to ao wfe load fxn
         self.tt_static   = 2         # mas, static tip tilt error
-        self.tt_dynamic_set  = None  # file with dynamic tip tilt error
-        self.ho_wfe_set  = None      # file with high order wfe error data
+        self.tt_dynamic_set  = None  # file with dynamic tip tilt error structured with seeing, ZA, AO mode
+        self.ho_wfe_set  = None      # file with high order wfe error data structured with seeing, ZA, AO mode
         self.lo_wfe      = 50        # nm, low order 
         self.defocus     = 25        # nm, defocus error
         self.mag         = 'default' # magnitude of ao star, if 'default' uses mag of on axis star
@@ -67,8 +67,8 @@ class INSTRUMENT():
         self.adc = 0        # keyword for transmission file, HISPEC=1, MODHIS=0 for now
         self.l0   = 900     # nm, start of wavelengths to consider
         self.l1   = 2500    # nm, ending wavelength
-        self.res  = 100000 # resolving power
-        self.pix_vert = 4  # pixels, vertical extent of spectrum in cross dispersion
+        self.res  = 100000  # resolving power
+        self.pix_vert = 4   # pixels, vertical extent of spectrum in cross dispersion
         self.extraction_frac = 0.925 # fraction of flux extracted for 4 vertical pixels, should have code calculate it
         self.tel_area = 76 # m2, telescope area, keck is default
         self.tel_diam = 10 # m ,telescope diameter,  keck is default
@@ -76,8 +76,8 @@ class INSTRUMENT():
         self.saturation = 100000 # electrons, saturation limit of detector
         self.readnoise  = 12   # e-, CDS read noise of detector
         self.darknoise  = 0.01 # e-/pix/s, dark current to assume
-        self.pl_on      = 1    # 0 or 1, if 1 it will assume photonic lantern in use
-        self.rv_floor   = 0.5  # systematic noise floor of RV in m/s
+        self.pl_on      = 1    # 0 or 1, if 1 it will assume photonic lantern in use for the blue channel
+        self.rv_floor   = 0.5  # m/s, systematic noise floor of RV measurement for instrument and telluric systematics, 0.5m/s for hispec and modhis
         # code filled in values
         self.base_throughput = None # base throughput of instrument (no coupling)
         self.coupling        = None # coupling of fiber 
@@ -99,7 +99,7 @@ class OBSERVATION():
         self.texp             = 900  # seconds, total integrated exposure time 
         self.texp_frame_set   = 900  # seconds, maximum for a single exposure. default lets code choose it with max of 900
         self.nsamp            = 1    # number of up the ramp samples per frame exposure
-        self.zenith_angle     = 45   # degrees, zenith angle of observation
+        self.zenith_angle     = 45   # degrees, zenith angle of observation. Used to define airmass
         # code filled in variables
         self.frame_phot_per_nm = None # photons per nm in a single frame of texp_frame seconds long
         self.inst_bg_ph    = None # background photons per nm in a single frame of texp_frame seconds long
@@ -127,8 +127,8 @@ class FILTER():
         self.y    = None # filter transmission (fraction)
         self.zp   = None # zeropoints storage object - will be loaded
         self.filter_file=None
-        self.zp_file = './data/filters/zeropoints.txt' #http://astroweb.case.edu/ssm/ASTR620/mags.html
-        self.zp_unit = 'Jy'
+        self.zp_file = './data/filters/zeropoints.txt' #band zeropoints from: http://astroweb.case.edu/ssm/ASTR620/mags.html
+        self.zp_unit = 'Jy' # jansky - units of file
         self.band    = 'J' # band to pick, yJHK
         self.family  = '2mass' # family of filter band, see zeropoints file 'cfht', '2mass' for JHK
         #zps    = np.loadtxt(self.zp_file,dtype=str).T
@@ -138,18 +138,19 @@ class STELLAR():
     "star info and spectrum"
     def __init__(self):
         # User optional define:
-        self.phoenix_folder   = None       # Phoenix spec file path
-        self.sonora_folder    = None       # path to sonora files, used for T<2300K objects
-        self.vsini = 0     # km/s, vsini of star
-        self.mag   = 10    # mag, star magnitude defined in so.filt bandpass
-        self.teff = 3600   # K, star temperature
-        self.pl_teff = 800 # K, planet temperature
-        self.pl_mag = 19   # mag, planet magnitude defined in same bandpass as star
-        self.pl_sep = 0    # mas, if 0 it will assume on axis, if non zero it will assume off axis
-        self.pl_vsini = 0  # km/s, planet vsini
+        self.phoenix_folder   = None  # Path to where Phoenix files live, T>=2300K objects
+        self.sonora_folder    = None  # path to Sonora files, used for T<2300K objects
+        self.vsini    = 0     # km/s, vsini of star
+        self.mag      = 10    # mag, star magnitude defined in so.filt bandpass
+        self.teff     = 3600  # K, star temperature
+        self.rv       = 0     # absolute rv of system [km/s]
+        self.pl_sep   = 0     # mas, if 0 it will assume on axis, if non zero it will assume off axis
+        self.pl_teff  = 800   # K, planet temperature, used if pl_sep>0
+        self.pl_mag   = 19    # mag, planet magnitude defined in same bandpass as star, used if pl_sep>0
+        self.pl_vsini = 0     # km/s, planet vsini, used if pl_sep>0
         # Filled in by code:
         self.vraw = None   # wavelength like normal (should match exoplanet and be in standard wavelength)
-        self.sraw = None   #  spectrum
+        self.sraw = None   # spectrum
         self.units = None  # units of sraw
         self.v = None      # wavelength
         self.s = None      # spectrum in photons
@@ -162,10 +163,10 @@ class TELLURIC():
         # User optional define:
         self.telluric_file   = None       # spec file name
         self.skypath         = None       # path to sky emission files
-        self.pwv             = 1.3
-        self.seeing_set      = 'average'  # seeing to set: options of average, best, worst options
+        self.pwv             = 1.3        # mm
+        self.seeing_set      = 'average'  # seeing to set: options of good (0.6), average (0.8), and bad (1.1) 
         # Filled in by code:
-        self.airmass         = 1.5
+        self.airmass         = None      # gets converted from ZA
         self.v               = None      # wavelength 
         self.s               = None      # spectrum
         self.rayleigh        = None      # rayleigh scattering
@@ -179,13 +180,13 @@ class TRACK():
     def __init__(self):
         # User optional defined
         self.transmission_file = None # output name
+        self.texp      = 1    # exposure time of tracking camera [s]
+        self.frat      = 35   # f ratio of tracking camera arm - 35 for HISPEC
+        self.band      = 'JHgap' # band being used, [JHgap,z,y,J,H,K] see fxn in obs_tools.py for more options
+        self.field_r   = 0    # radius across field for calculating aberrations
         # Filled in by code
         self.xtransmit = None # x array of throughput [nm]
         self.ytransmit = None # throughput of tracking camera [0,1]
-        self.texp      = None # exposure time of tracking camera [s]
-        self.frat      = 40 # f ratio of tracking camera arm
-        self.band      = 'JHgap' # band being used, [JHgap,z,y,J,H,K]
-        self.offset    = 0 # offset of guide star to science target, [mas] # not implemented correctly yet
 
 
 def LoadConfig(configfile, config={}):

@@ -37,7 +37,7 @@ def get_tracking_cam(camera='h2rg',x=None):
     if camera=='h2rg':
         rn = 12 #e-
         pixel_pitch = 18 #um
-        qe_mod = 1 # relative to what is assumed in the throughput model
+        qe_mod = 0.888 # relative to what is assumed in the throughput model
         dark=0.8 #e-/s/pix
         saturation = 80000
 
@@ -201,7 +201,7 @@ def get_tracking_band(wave,band):
         #bandpass[np.where(wave >1490)]=1 # could make jhgap 1 but would make filter more difficult maybe to make
 
     if band=='JHplus':
-        # for consideration for c-red2 ....meh
+        # J and H bands
         l0,lf= 1170,1780
         center_wavelength =  (l0+lf)/2
         bandpass = tophat(wave,l0,lf,1)
