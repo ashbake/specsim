@@ -51,7 +51,7 @@ def load_phoenix(stelname,stelpath,wav_start=750,wav_end=780):
 	spec *= conversion_factor # phot/cm2/s/angstrom
 	
 	# Take subarray requested
-	isub = np.where( (lam > wav_start*10.0) & (lam < wav_end*10.0))[0]
+	isub = np.where((lam > wav_start*10.0) & (lam < wav_end*10.0))[0]
 
 	# Convert 
 	return lam[isub]/10.0,spec[isub] * 10 * 100**2 #nm, phot/m2/s/nm
@@ -74,7 +74,7 @@ def load_sonora(stelname,wav_start=750,wav_end=780):
 	convert s from erg/cm2/s/Hz to phot/cm2/s/nm using
 	https://hea-www.harvard.edu/~pgreen/figs/Conversions.pdf
 
-	wavelenght loaded is microns high to low
+	wavelength loaded is microns high to low
 	"""
 	f = np.loadtxt(stelname,skiprows=2)
 
@@ -221,15 +221,22 @@ def _get_band_mag(so,vraw, sraw, model,stel_file,family,band,factor_0):
     xfilt,yfilt  = load_filter(so.filt.filter_path,family,band)
     filt_interp  = interpolate.interp1d(xfilt, yfilt, bounds_error=False,fill_value=0)
     dl_l         = np.mean(integrate(xfilt,yfilt)/xfilt) # dlambda/lambda to account for spectral fraction
-    
     # load stellar the multiply by scaling factor, factor_0, and filter. integrate
     # reload if filter extends past currently loaded stellar model
+    # if (np.min(xfilt) < np.min(vraw)) or (np.max(xfilt) > np.max(vraw)):
+	# 	if model=='phoenix':
+	#         vraw,sraw = load_phoenix(stel_file,so.stel.phoenix_folder,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
+	# 	elif model=='sonora':
+	#         vraw,sraw = load_sonora(stel_file,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
+	#     print('Note had to reload stellar model for _get_band_mag')
+
     if (np.min(xfilt) < np.min(vraw)) or (np.max(xfilt) > np.max(vraw)):
-	    if model=='phoenix':
-	        vraw,sraw = load_phoenix(stel_file,so.stel.phoenix_folder,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
-	    elif model=='sonora':
-	        vraw,sraw = load_sonora(stel_file,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
-	    print('Note had to reload stellar model for _get_band_mag')
+        if model=='phoenix':
+            vraw,sraw = load_phoenix(stel_file,so.stel.phoenix_folder,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
+            print('Note: had to reload Phoenix stellar model for _get_band_mag')
+        elif model=='sonora':
+            vraw,sraw = load_sonora(stel_file,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
+            print('Note: had to reload Sonora stellar model for _get_band_mag')
 
     filtered_stel = factor_0 * sraw * filt_interp(vraw)
     flux = integrate(vraw,filtered_stel)    #phot/m2/s
@@ -242,9 +249,9 @@ def _get_band_mag(so,vraw, sraw, model,stel_file,family,band,factor_0):
     zps          = np.loadtxt(so.filt.zp_file,dtype=str).T
     izp          = np.where((zps[0]==family) & (zps[1]==band))[0]
     zp           = float(zps[2][izp])
-
+	
     mag = -2.5*np.log10(flux_Jy/zp)
-
+	
     return mag
 
 
