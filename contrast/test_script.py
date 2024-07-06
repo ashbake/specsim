@@ -15,6 +15,20 @@ sys.path.insert(0, specsim_path)
 # from specsim.functions import *
 
 print('Current working directory is', os.getcwd())
-# from specsim.load_inputs import fill_data
+from specsim.load_inputs import fill_data
 
-import matplotlib.pylab as plt
+if 'CONDA_DEFAULT_ENV' in os.environ:
+    print("Current conda environment:", os.environ['CONDA_DEFAULT_ENV'])
+else:
+    print("Not running in a conda environment.")
+
+try:
+    import matplotlib
+    print("matplotlib is installed.")
+except ImportError:
+    print("matplotlib is not installed.")
+
+print("Python interpreter path:", sys.executable)
+
+print("Python version:", sys.version)
+# import matplotlib.pylab as plt
