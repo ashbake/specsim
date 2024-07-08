@@ -146,7 +146,8 @@ def _load_stellar_model(x,mag,teff,vsini,so):
 	l0,l1 = np.min((np.min(x),np.min(so.filt.xraw))),np.max((np.max(x),np.max(so.filt.xraw)))
 
 	if teff < 2300: # sonora models arent sampled as well so use phoenix as low as can
-		g    = '316' # mks units, np.log10(316 * 100)=4.5 to match what im holding for phoenix models.
+		# g    = '316' # mks units, np.log10(316 * 100)=4.5 to match what im holding for phoenix models.
+		g    = '10' # what is g?
 		teff = str(int(teff))
 		stel_file         = so.stel.sonora_folder + 'sp_t%sg%snc_m0.0' %(teff,g)
 		vraw,sraw = load_sonora(stel_file,wav_start=l0,wav_end=l1)
