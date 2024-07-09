@@ -14,7 +14,6 @@ from astropy import units as u
 from astropy import constants as c 
 
 from specsim.functions import tophat
-
 from specsim.throughput_tools import get_emissivity, get_emissivities
 
 all = {'get_sky_bg','get_inst_bg','sum_total_noise','plot_noise_components'}

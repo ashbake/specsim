@@ -1,9 +1,10 @@
 import os,sys
-# sys.path.append('../')
-# os.chdir('../')
+sys.path.append('./')
+os.chdir('./')
+print('Current working directory is', os.getcwd())
 
-specsim_path = os.path.join(os.environ['USERPROFILE'], 'Documents', 'GitHub', 'specsim')
-sys.path.insert(0, specsim_path)
+# specsim_path = os.path.join(os.environ['USERPROFILE'], 'Documents', 'GitHub', 'specsim')
+# sys.path.insert(0, specsim_path)
 
 # import numpy as np
 # import matplotlib.pylab as plt
