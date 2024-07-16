@@ -533,7 +533,7 @@ class fill_data():
 			print('')
 		except:
 			so.inst.base_throughput  = throughput_tools.get_base_throughput(self.x,datapath=so.inst.transmission_path) # everything except coupling
-			
+
 			# interp grid
 			#try: so.inst.points
 			#except AttributeError: 
