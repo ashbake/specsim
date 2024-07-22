@@ -3,8 +3,11 @@ import numpy as np
 from astropy.io import fits
 import matplotlib.pyplot as plt
 from scipy.stats import binned_statistic
+import pathlib
 import csv
 import re
+
+#First 4 functions are from Dimitri
 
 def radial_profile(data, center):
     """ Calculate the radial profile of a 2D array. """
@@ -81,3 +84,27 @@ def plot_radial_profiles(results):
             plt.legend()
             plt.grid(True)
             plt.show()
+
+def remove_left_of_first_underscore(string):
+    # Find the position of the first underscore
+    first_underscore_index = string.find('_')
+    
+    # Return the substring from the first underscore to the end
+    # If no underscore is found, return the original string
+    if first_underscore_index != -1:
+        return string[first_underscore_index + 1:]
+    return string
+
+def convert_path_to_name(file_path_str):
+    file_path = pathlib.Path(file_path_str)
+    parent_path = file_path.parent
+    subfolders_count = len([part for part in parent_path.parts if part != parent_path.drive])
+    names = []
+    new_name = ""
+    for i in range (0, subfolders_count+1):
+        names.append(test_path.parts[i])
+
+    new_name = "_".join(names)
+    new_name = remove_left_of_first_underscore(new_name)
+    
+    return new_name
