@@ -5,9 +5,10 @@ import matplotlib.pyplot as plt
 from scipy.stats import binned_statistic
 import pathlib
 import pandas as pd
+from scipy.interpolate import interp1d
 
-
-#First 4 functions are from Dimitri
+# Functions useful for converting FITS files to CSV radial profiles and plotting them
+# First 3 functions are from Dimitri. Other functions made by Will
 
 def radial_profile(data, center):
     """ Calculate the radial profile of a 2D array. """
@@ -208,3 +209,34 @@ def plot_from_csv(csv_file):
     plt.legend(fontsize=12)
     plt.grid(True)
     plt.show()
+
+
+def get_csv_name_parts(filename):
+    """Extract the relevant parts from the csv file name. 
+    Make sure the file name is in the correct format, see MODHIS SharePoint for non-diffraction limited csv files."""
+    parts = filename.split('_')
+
+    ao_mode = parts[0]
+    percentile = int(parts[2][0:2])
+    zenith_angle = int(parts[3][2:])
+    magnitude = int(parts[4][3:])
+    band = parts[9][0]
+    
+    return ao_mode, percentile, zenith_angle, magnitude, band
+
+
+def get_csv_contrast(file, radius):
+    """Interpolate over the radial profiles to get the intensity at a certain radius. Input radius in milliarcseconds."""
+    df = pd.read_csv(file)
+
+    radii = df.iloc[:, 0]  # First column
+    contrast = df.iloc[:, 1]  # Second column
+
+    interpolation_function = interp1d(radii, contrast, kind='linear', fill_value='extrapolate')
+
+    radius = radius / 1000  # Convert radius to arcseconds
+
+    # Interpolate to find the corresponding y-value for the given x-value
+    y_value = interpolation_function(radius)
+    
+    return y_value.item()

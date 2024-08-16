@@ -8,6 +8,8 @@
 
 import numpy as np
 from scipy import interpolate
+import os
+import pandas as pd
 
 from astropy.modeling.models import BlackBody
 from astropy import units as u
@@ -243,6 +245,80 @@ def get_contrast(wave,pl_sep,tel_diam,seeing,strehl):
     contrast[contrast>1] = 1.
 
     return contrast
+
+def get_MODHIS_contrast(folder, ao_mode, seeing, zenith_angle, magnitude, waves, radius):
+    """Function to get contrast from a particular file at a given radius.
+    Rounds to the nearest magnitude, interpolates to the given radius.
+    Uses the same calculated value for every wavelength in the same band.
+    
+    inputs
+    ------
+    folder         - string, folder containing the csv profiles
+    ao_mode        - adaptive optics mode, can be NGS, LGS, off, or auto
+    seeing         - string, seeing percentile. Can be good, average, or bad
+    zenith_angle   - float, zenith angle of observation
+    magnitude      - float, stellar magnitude
+    waves          - [nm] A list of wavelengths [float length m]
+    radius         - float, radius at which to get contrast in milliarcseconds
+    """
+
+    ao_mode_map = {'NGS': 'ngsao_ngsao', 'LGS_ON': 'mcao_pyttf'}
+    seeing_map = {'0.6': '25', '0.8': '50', '1.1': '75'} # Different conversion made my load_inputs for the seeing. Good/average/bad is already a number
+    # seeing_map = {'good': '25', 'average': '50', 'bad': '75'}
+    
+    ao_mode = ao_mode_map.get(ao_mode, ao_mode)
+    seeing_str = str(seeing)
+    seeing = seeing_map[seeing_str]
+    # seeing = seeing_map.get(seeing_str, seeing)
+
+    zenith_angle = str(int(zenith_angle))
+    magnitude = round(magnitude)
+    radius = radius / 1000  # Convert radius to arcseconds
+    overall_contrast = np.zeros_like(waves, dtype=float)
+    csv_filename_skeleton = '%s_%sp_za%s_mag%s_evlpsfcl_1_x0_y0_%s.csv'
+
+    # Define each band, with no gaps in between
+    bands = [
+        ('K', (1865, 2460)),
+        ('H', (1410, 1865)),
+        ('J', (1120, 1410)),
+        ('y', (970, 1120))
+    ]
+
+    # Dictionary to store contrast values for each band
+    band_contrast = {}
+
+    # Iterate over each band and calculate the contrast once per band
+    for band_name, (start, end) in bands:
+        # Filter the wavelengths that fall into the current band
+        wave_indices = np.where((waves >= start) & (waves < end))[0]
+
+        if wave_indices.size == 0:
+            continue  # Skip if no wavelengths are in this band
+
+        full_file = os.path.join(folder, csv_filename_skeleton % (ao_mode, seeing, zenith_angle, magnitude, band_name))
+
+        # Take out the error handling. If the file is missing, load_inputs will skip this function and use the old get_contrast
+        df = pd.read_csv(full_file)
+        radii = df.iloc[:, 0].values  # First column is radius
+        contrast = df.iloc[:, 1].values  # Second column is contrast (sum of intensity in annulus)
+        
+        interpolation_function = interpolate.interp1d(radii, contrast, kind='linear', fill_value='extrapolate')
+        contrast_value = interpolation_function(radius).item()
+
+        # Store the contrast value for this band
+        band_contrast[band_name] = contrast_value
+
+    # Assign contrast values to each wavelength based on their band
+    for i, wavelength in enumerate(waves):
+        for band_name, (start, end) in bands:
+            if start <= wavelength < end:
+                overall_contrast[i] = band_contrast.get(band_name, 1)
+                break
+        else:
+            overall_contrast[i] = 1
+
+    return overall_contrast
 
 
 def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,vortex_charge):

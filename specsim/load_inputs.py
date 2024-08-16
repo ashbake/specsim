@@ -133,8 +133,7 @@ def scale_stellar(filt,stelv,stels,mag):
 	return nphot_expected_0/nphot_model
 
 
-
-def _load_stellar_model(x,mag,teff,vsini,so):
+def _load_stellar_model(x,mag,teff,vsini,so,rv=0):
 	"""
 	Loads stellar model as sonora or phoenix based on temperature
 	Then scales to the designated magnitude
@@ -146,8 +145,7 @@ def _load_stellar_model(x,mag,teff,vsini,so):
 	l0,l1 = np.min((np.min(x),np.min(so.filt.xraw))),np.max((np.max(x),np.max(so.filt.xraw)))
 
 	if teff < 2300: # sonora models arent sampled as well so use phoenix as low as can
-		# g    = '316' # mks units, np.log10(316 * 100)=4.5 to match what im holding for phoenix models.
-		g    = '10' # what is g?
+		g    = '316' # mks units, np.log10(316 * 100)=4.5 to match what im holding for phoenix models.
 		teff = str(int(teff))
 		stel_file         = so.stel.sonora_folder + 'sp_t%sg%snc_m0.0' %(teff,g)
 		vraw,sraw = load_sonora(stel_file,wav_start=l0,wav_end=l1)
@@ -169,15 +167,28 @@ def _load_stellar_model(x,mag,teff,vsini,so):
 	#units = 'photons/s/m2/nm' # stellar spec is in photons/s/m2/nm
 
 	# broaden star spectrum with rotation kernal
+	SPEEDOFLIGHT   = 2.998e8 # m/s
 	if vsini > 0:
 		dwvl_mean = np.abs(np.nanmean(np.diff(x)))
-		SPEEDOFLIGHT   = 2.998e8 # m/s
 		dvel_mean      = (dwvl_mean / np.nanmean(x)) * SPEEDOFLIGHT / 1e3 # average sampling in km/s
 		vsini_kernel,_ = _lsf_rotate(dvel_mean,vsini,epsilon=0.6)
 		flux_vsini     = convolve(s,vsini_kernel,normalize_kernel=True)  # photons / second / Ang
 		s              = flux_vsini
 
-	return s, vraw, sraw, model, stel_file, factor_0
+	# Offset star by an RV (for CCF purposes to offset from tellurics)
+	if rv!= 0:
+		doppler_factor = (1.0 + ((rv * 1000) / SPEEDOFLIGHT)) # rv in km/s
+		tck = interpolate.splrep(x*doppler_factor,s, k=3, s=0)
+		shifted_spec = interpolate.splev(x,tck,der=0,ext=1)
+	else: 
+		shifted_spec=s.copy()
+
+	# some negatives are created when interpolating, change these to zero
+	ineg = np.where(shifted_spec<0)[0]
+	shifted_spec[ineg] = 0
+	
+	return shifted_spec, vraw, sraw, model, stel_file, factor_0
+
 
 def get_band_mag(so,family,band,factor_0):
     """
@@ -211,7 +222,6 @@ def get_band_mag(so,family,band,factor_0):
     mag = -2.5*np.log10(flux_Jy/zp)
 
     return mag
-
 
 
 def _get_band_mag(so,vraw, sraw, model,stel_file,family,band,factor_0):
@@ -528,11 +538,13 @@ class fill_data():
 			tck_thput   = interpolate.splrep(thput_x,thput_y, k=2, s=0)
 			so.inst.xtransmit   = self.x
 			so.inst.ytransmit   = interpolate.splev(self.x,tck_thput,der=0,ext=1)
+			so.inst.ytransmit   = np.where(so.inst.ytransmit < 0, 0, so.inst.ytransmit) # make negative throughput values to 0
 			so.inst.base_throughput = so.inst.ytransmit.copy() # store this here bc ya
 			#add airmass calc for strehl for seeing limited instruments?
 			print('')
 		except:
 			so.inst.base_throughput  = throughput_tools.get_base_throughput(self.x,datapath=so.inst.transmission_path) # everything except coupling
+			so.inst.base_throughput  = np.where(so.inst.base_throughput < 0, 0, so.inst.base_throughput) # make negative throughput values to 0
 
 			# interp grid
 			#try: so.inst.points
@@ -588,11 +600,32 @@ class fill_data():
 		phot_per_sec_nm = so.stel.s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
 		if so.stel.pl_sep>0:
 			phot_per_sec_nm_pl = so.stel.pl_s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
-			contrast = noise_tools.get_contrast(self.x,so.stel.pl_sep,so.inst.tel_diam,so.tel.seeing,so.ao.strehl)
+			try:
+				contrast = noise_tools.get_MODHIS_contrast(so.ao.contrast_profile_path, so.ao.mode_chosen, so.tel.seeing, so.obs.zenith_angle, so.stel.mag, self.x, so.stel.pl_sep) # new version, specific to MODHIS
+				print("Using new MODHIS contrast calculator with radial profile database.")
+			except Exception as e:
+				print(f"Error: {e}, using old contrast calculator with analytic method.")
+				contrast = noise_tools.get_contrast(self.x,so.stel.pl_sep,so.inst.tel_diam,so.tel.seeing,so.ao.strehl) # old version
+			
+			# contrast1 = noise_tools.get_MODHIS_contrast(so.ao.contrast_profile_path, so.ao.mode_chosen, so.tel.seeing, so.obs.zenith_angle, so.stel.mag, self.x, so.stel.pl_sep) # new version, specific to MODHIS
+			# contrast2 = noise_tools.get_contrast(self.x,so.stel.pl_sep,so.inst.tel_diam,so.tel.seeing,so.ao.strehl) # old version
+
+		# plt.xlabel('Wavelength (nm)', fontweight='bold', fontsize=12)
+		# plt.ylabel('Intensity', fontweight='bold', fontsize=12)
+		# start_index = int((980 - 500) / 0.0005)
+		# end_index = int((2460 - 500) / 0.0005)
+		# plt.plot(self.x[start_index:end_index], contrast1[start_index:end_index], label = 'New Method', color='darkorange')
+		# plt.plot(self.x, contrast2, label = 'Old Method', color='royalblue')
+		# plt.grid()
+		# plt.legend()
+		# output_folder = 'C:/Users/Willi/Documents/Research/Specsim/plots/'
+		# filename = 'Old_vs_New_Contrast_Partial_plsep1000_bad_mag16.png'
+		# # os.makedirs(output_folder, exist_ok=True)
+		# # plt.savefig(f'{output_folder}{filename}', dpi=300, bbox_inches='tight')
+		# plt.show()
 
 		# Figure out the exposure time per frame to avoid saturation
 		# Default case takes 900s as maximum frame exposure time length
-		#
 		if so.obs.texp_frame_set=='default':
 			if so.stel.pl_sep>0: # use estimated planet flux if off axis mode
 				max_ph_per_s  =  np.max((phot_per_sec_nm_pl + contrast * phot_per_sec_nm) * so.inst.sig)
@@ -634,6 +667,7 @@ class fill_data():
 			instrument_contrast_interp= interpolate.interp1d(so.inst.xtransmit,contrast)
 			so.obs.contrast  = instrument_contrast_interp(so.obs.v)
 		
+			so.obs.s_frame = np.where(so.obs.s_frame < 0, 0, so.obs.s_frame)
 			so.obs.speckle_frame = so.obs.contrast * so.obs.s_frame
 		else:
 			so.obs.speckle_frame = np.zeros_like(so.obs.s_frame)
