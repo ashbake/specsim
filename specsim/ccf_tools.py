@@ -204,3 +204,17 @@ def get_rv_precision(v,s,n,order_cens,order_widths,noise_floor=0.5,mask=None):
 	return dv_tot,dv_spec,dv_vals
 
 
+def doppler(v):
+	"""
+	Computer Doppler factor
+
+	inputs
+	------
+	v - velocity [m/s]
+		velocity for shift in m/s
+
+	outputs:
+	doppler factor (1 + v/c)
+	"""
+	return (1.0 + (v / SPEEDOFLIGHT))
+
