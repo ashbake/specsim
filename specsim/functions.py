@@ -136,8 +136,14 @@ def resample(x,y,sig=0.3, dx=0, eta=1,mode='variable'):
         nsamp   = int(sig / dlam)     # width of tophat
         tophat  = eta * np.ones(nsamp) # do i need to pad this?
 
-        int_spec_oversample    = dlam * signal.fftconvolve(y,tophat,mode='same') # dlam integrating factor
+        # make nans zero
+        inan = np.where(np.isnan(y))[0]
+        y[inan] = 0
         
+        # do the FFT
+        int_spec_oversample    = dlam * signal.fftconvolve(y,tophat,mode='same') # dlam integrating factor
+        int_spec_oversample[inan] = np.nan
+
         int_lam  = x[int(nsamp/2 + dx/dlam):][::nsamp] # shift over by dx/dlam (npoints) before taking every nsamp point
         int_spec =  int_spec_oversample[int(nsamp/2 + dx/dlam):][::nsamp]
 

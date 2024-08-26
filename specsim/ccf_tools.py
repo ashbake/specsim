@@ -189,7 +189,7 @@ def get_rv_precision(v,s,n,order_cens,order_widths,noise_floor=0.5,mask=None):
 	# go through each order
 	dv_vals = np.zeros_like(order_cens)
 	for i,lam_cen in enumerate(order_cens):
-		order_ind   = np.where((v > lam_cen - order_widths[i]/2) & (v < lam_cen + order_widths[i]/2))[0]
+		order_ind   = np.where((v > lam_cen - 0.9*order_widths[i]/2) & (v < lam_cen + 0.9*order_widths[i]/2))[0]
 		w_ord       = all_w[order_ind] * mask[order_ind]
 		denom       = (np.nansum(w_ord[1:-1])**0.5) # m/s
 		dv_order    = SPEEDOFLIGHT / (denom + 0.000001)

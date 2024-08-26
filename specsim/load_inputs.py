@@ -152,8 +152,9 @@ def _load_stellar_model(x,mag,teff,vsini,so,rv=0):
 		model             = 'sonora'
 	else:
 		teff = str(int(teff)).zfill(5)
+		logg = '{:.2f}'.format(so.stel.logg)
 		model             = 'phoenix' 
-		stel_file         = 'lte%s-4.50-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'%(teff)
+		stel_file         = 'lte%s-%s-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'%(teff,logg)
 		vraw,sraw = load_phoenix(stel_file,so.stel.phoenix_folder,wav_start=l0, wav_end=l1) #phot/m2/s/nm
 	
 
@@ -492,7 +493,7 @@ class fill_data():
 				tt_wfe  = float(f_ttwfe(wfe_mag))
 
 				#compute strehl and save total
-				strehl_ho = wfe_tools.calc_strehl(ho_wfe,so.filt.center_wavelength)
+				strehl_ho = wfe_tools.calc_strehl_marechal(ho_wfe,so.filt.center_wavelength)
 				strehl_tt = wfe_tools.tt_to_strehl(tt_wfe,so.filt.center_wavelength,so.inst.tel_diam)
 				strehl.append(strehl_ho * strehl_tt)
 				ho_wfes.append(ho_wfe)
@@ -591,11 +592,15 @@ class fill_data():
 			if int(tt_static_rounded)==tt_static_rounded: tt_static_rounded  = int(tt_static_rounded)
 			if int(tt_dynamic_rounded)==tt_dynamic_rounded: tt_dynamic_rounded  = int(tt_dynamic_rounded)
 			defocus_rounded =  int(100*np.round(4*(so.ao.defocus/100))/4)
-
+			
+			# cap on tt dynamic
 			if tt_dynamic_rounded < 20:
-				f = pd.read_csv(so.inst.transmission_path+filename_skeleton%(int(so.inst.atm),int(so.inst.adc),int(so.inst.pl_on),defocus_rounded,lo_wfe_rounded,tt_static_rounded,tt_dynamic_rounded)) # load file
+				so.inst.coupling_file = filename_skeleton%(int(so.inst.atm),int(so.inst.adc),int(so.inst.pl_on),defocus_rounded,lo_wfe_rounded,tt_static_rounded,tt_dynamic_rounded)
 			else:
-				f = pd.read_csv(so.inst.transmission_path+filename_skeleton%(int(so.inst.atm),int(so.inst.adc),int(so.inst.pl_on),defocus_rounded,lo_wfe_rounded,tt_static_rounded,19.5)) # load file
+				so.inst.coupling_file = filename_skeleton%(int(so.inst.atm),int(so.inst.adc),int(so.inst.pl_on),defocus_rounded,lo_wfe_rounded,tt_static_rounded,19.5)
+
+			# load and add coupling data
+			f = pd.read_csv(so.inst.transmission_path+so.inst.coupling_file) # load file
 
 			if so.inst.pl_on:
 				coupling_data_raw = f['coupling_eff_mode1'] + f['coupling_eff_mode2'] + f['coupling_eff_mode3']
@@ -603,11 +608,11 @@ class fill_data():
 				coupling_data_raw = f['coupling_eff_mode1']
 
 			# interpolate onto self.x
-			finterp = interpolate.interp1d(f['wavelength_um']*1000,coupling_data_raw,bounds_error=False,fill_value=0)
+			finterp = interpolate.interp1d(1000*f['wavelength_um'].values,coupling_data_raw,bounds_error=False,fill_value=0)
 			coupling_data = finterp(self.x)
 
 			piaa_boost = 1.3 # based on Gary's sims, but needs updating because will be less for when Photonic lantern is being used
-			so.ao.ho_strehl  = wfe_tools.calc_strehl(so.ao.ho_wfe,self.x)
+			so.ao.ho_strehl  = wfe_tools.calc_strehl_marechal(so.ao.ho_wfe,self.x)
 			so.inst.coupling = coupling_data  * so.ao.ho_strehl * piaa_boost
 
 			so.inst.xtransmit = self.x
@@ -682,10 +687,10 @@ class fill_data():
 
 		# Resample onto res element grid - new wavelength grid so.obs.v
 		# 
-		so.obs.v, so.obs.s_frame = resample(so.stel.v,s_ccd_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
+		so.obs.v, so.obs.s_frame = resample(so.stel.v,s_ccd_lores,sig=np.mean(so.inst.sig), dx=0, eta=1,mode='fast')
 		so.obs.s_frame    *=so.inst.extraction_frac # extraction fraction, reduce photons to mimic spectral extraction imperfection
 		if so.stel.pl_sep>0:
-			_, so.obs.s_frame_pl     = resample(so.stel.v,s_ccd_lores_pl,sig=so.inst.sig, dx=0, eta=1,mode='variable')
+			_, so.obs.s_frame_pl     = resample(so.stel.v,s_ccd_lores_pl,sig=np.mean(so.inst.sig), dx=0, eta=1,mode='fast')
 			so.obs.s_frame_pl *= so.inst.extraction_frac # extraction fraction, reduce photons to mimic spectral extraction imperfection
 		
 			# interpolate contrast curve onto new low res array
@@ -744,7 +749,7 @@ class fill_data():
 		order_snrs_max  = []
 		order_inds      = []
 		for i,lam_cen in enumerate(so.inst.order_cens):
-			order_ind   = np.where((so.obs.v_res_element> lam_cen - so.inst.order_widths[i]/2) & (so.obs.v_res_element< lam_cen + so.inst.order_widths[i]/2))[0]
+			order_ind   = np.where((so.obs.v_res_element > lam_cen - 0.9*so.inst.order_widths[i]/2) & (so.obs.v_res_element< lam_cen + 0.9*so.inst.order_widths[i]/2))[0]
 			order_inds.append(order_ind)
 			if np.nanmean(so.obs.snr_res_element[order_ind]) > 0.1:
 				order_snrs_mean.append(np.nanmean(so.obs.snr_res_element[order_ind]))
@@ -848,24 +853,25 @@ class fill_data():
 		# Create spectrum with continuum removed and tellurics removed
 		# the noise spectrum will consider tellurics but shouldnt be in the spectrum for computing RV
 		continuum = so.inst.ytransmit/np.max(so.inst.ytransmit)
-		telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm/np.abs(so.tel.s)/continuum
+		telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm/continuum/np.abs(so.tel.s)
 		telcont_free_lores = degrade_spec(so.stel.v, telcont_free_hires, so.inst.res)
-		_, telcont_free    = resample(so.stel.v,telcont_free_lores,sig=so.inst.sig, dx=0, eta=1,mode='variable')
+		v, telcont_free = resample(so.stel.v,telcont_free_lores,sig=np.mean(so.inst.sig), dx=0, eta=1,mode='fast')
 		telcont_free[np.where(np.isnan(telcont_free))] = 0
-		so.inst.s_telcont_free = telcont_free
+		f_interp	 = interpolate.interp1d(v, telcont_free, bounds_error=False,fill_value=0)
+		so.inst.s_telcont_free = f_interp(so.obs.v)
 
 		# make telluric only spectrum, resample onto so.obs.v to match so.obs.s
-		# For making telluric mask
 		so.tel.rayleigh[so.tel.rayleigh==0] = np.inf
 		telluric_spec = so.tel.s/so.tel.rayleigh #h2o only
 		telluric_spec[np.where(np.isnan(telluric_spec))] = 0
 		telluric_spec_lores = degrade_spec(so.stel.v, telluric_spec, so.inst.res)
-		filt_interp	 = interpolate.interp1d(so.stel.v, telluric_spec_lores, bounds_error=False,fill_value=0)
-		s_tel		 = filt_interp(so.obs.v)/np.max(filt_interp(so.obs.v))	# filter profile resampled to phoenix times phoenix flux density
+		v, telluric_spec_lores_resamp = resample(so.stel.v,telluric_spec_lores,sig=np.mean(so.inst.sig), dx=0, eta=1,mode='fast')
+		tel_interp	 = interpolate.interp1d(v, telluric_spec_lores_resamp, bounds_error=False,fill_value=0)
+		s_tel		 = tel_interp(so.obs.v)/np.max(tel_interp(so.obs.v))	
 		
 		# run radial velocity precision
 		so.obs.telluric_mask      = ccf_tools.make_telluric_mask(so.obs.v,s_tel,cutoff=telluric_cutoff,velocity_cutoff=velocity_cutoff)
-		dv_tot,dv_spec,dv_vals	  = ccf_tools.get_rv_precision(so.obs.v,telcont_free,so.obs.noise,so.inst.order_cens,so.inst.order_widths,noise_floor=so.inst.rv_floor,mask=so.obs.telluric_mask)
+		dv_tot,dv_spec,dv_vals	  = ccf_tools.get_rv_precision(so.obs.v,so.inst.s_telcont_free,so.obs.noise,so.inst.order_cens,so.inst.order_widths,noise_floor=so.inst.rv_floor,mask=so.obs.telluric_mask)
 
 		so.obs.rv_order = dv_tot # per order rv with noise floor
 		so.obs.rv_tot   = np.sqrt(dv_spec**2 + so.inst.rv_floor**2) # add noise floor
