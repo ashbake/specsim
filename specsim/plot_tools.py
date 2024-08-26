@@ -3,13 +3,20 @@
 ###############################################################
 
 import numpy as np
-from scipy.interpolate import interp1d
+from scipy import interpolate
 from scipy.integrate import trapz
 from scipy import signal
 import matplotlib.pylab as plt
+from astropy.io import fits
+import pandas as pd
+
+import os,sys
+sys.path.append('./')
+os.chdir('./')
 
 from specsim import ccf_tools, noise_tools, wfe_tools, obs_tools, throughput_tools
-
+from specsim.objects import load_object
+from specsim.load_inputs import fill_data
 from specsim.functions import *
 
 

@@ -51,7 +51,7 @@ def load_phoenix(stelname,stelpath,wav_start=750,wav_end=780):
 	spec *= conversion_factor # phot/cm2/s/angstrom
 	
 	# Take subarray requested
-	isub = np.where( (lam > wav_start*10.0) & (lam < wav_end*10.0))[0]
+	isub = np.where((lam > wav_start*10.0) & (lam < wav_end*10.0))[0]
 
 	# Convert 
 	return lam[isub]/10.0,spec[isub] * 10 * 100**2 #nm, phot/m2/s/nm
@@ -74,7 +74,7 @@ def load_sonora(stelname,wav_start=750,wav_end=780):
 	convert s from erg/cm2/s/Hz to phot/cm2/s/nm using
 	https://hea-www.harvard.edu/~pgreen/figs/Conversions.pdf
 
-	wavelenght loaded is microns high to low
+	wavelength loaded is microns high to low
 	"""
 	f = np.loadtxt(stelname,skiprows=2)
 
@@ -131,7 +131,6 @@ def scale_stellar(filt,stelv,stels,mag):
 	nphot_model        = integrate(stelv,filtered_stellar)            # what's the integrated flux now? in same units as ^
 	
 	return nphot_expected_0/nphot_model
-
 
 
 def _load_stellar_model(x,mag,teff,vsini,so,rv=0):
@@ -191,6 +190,7 @@ def _load_stellar_model(x,mag,teff,vsini,so,rv=0):
 	
 	return shifted_spec, vraw, sraw, model, stel_file, factor_0
 
+
 def get_band_mag(so,family,band,factor_0):
     """
     factor_0: scaling model to photons
@@ -225,7 +225,6 @@ def get_band_mag(so,family,band,factor_0):
     return mag
 
 
-
 def _get_band_mag(so,vraw, sraw, model,stel_file,family,band,factor_0):
     """
     REDO TO NOT ASSUME THE STAR!!
@@ -234,15 +233,22 @@ def _get_band_mag(so,vraw, sraw, model,stel_file,family,band,factor_0):
     xfilt,yfilt  = load_filter(so.filt.filter_path,family,band)
     filt_interp  = interpolate.interp1d(xfilt, yfilt, bounds_error=False,fill_value=0)
     dl_l         = np.mean(integrate(xfilt,yfilt)/xfilt) # dlambda/lambda to account for spectral fraction
-    
     # load stellar the multiply by scaling factor, factor_0, and filter. integrate
     # reload if filter extends past currently loaded stellar model
+    # if (np.min(xfilt) < np.min(vraw)) or (np.max(xfilt) > np.max(vraw)):
+	# 	if model=='phoenix':
+	#         vraw,sraw = load_phoenix(stel_file,so.stel.phoenix_folder,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
+	# 	elif model=='sonora':
+	#         vraw,sraw = load_sonora(stel_file,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
+	#     print('Note had to reload stellar model for _get_band_mag')
+
     if (np.min(xfilt) < np.min(vraw)) or (np.max(xfilt) > np.max(vraw)):
-	    if model=='phoenix':
-	        vraw,sraw = load_phoenix(stel_file,so.stel.phoenix_folder,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
-	    elif model=='sonora':
-	        vraw,sraw = load_sonora(stel_file,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
-	    print('Note had to reload stellar model for _get_band_mag')
+        if model=='phoenix':
+            vraw,sraw = load_phoenix(stel_file,so.stel.phoenix_folder,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
+            print('Note: had to reload Phoenix stellar model for _get_band_mag')
+        elif model=='sonora':
+            vraw,sraw = load_sonora(stel_file,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
+            print('Note: had to reload Sonora stellar model for _get_band_mag')
 
     filtered_stel = factor_0 * sraw * filt_interp(vraw)
     flux = integrate(vraw,filtered_stel)    #phot/m2/s
@@ -255,9 +261,9 @@ def _get_band_mag(so,vraw, sraw, model,stel_file,family,band,factor_0):
     zps          = np.loadtxt(so.filt.zp_file,dtype=str).T
     izp          = np.where((zps[0]==family) & (zps[1]==band))[0]
     zp           = float(zps[2][izp])
-
+	
     mag = -2.5*np.log10(flux_Jy/zp)
-
+	
     return mag
 
 
@@ -558,12 +564,14 @@ class fill_data():
 			tck_thput   = interpolate.splrep(thput_x,thput_y, k=2, s=0)
 			so.inst.xtransmit   = self.x
 			so.inst.ytransmit   = interpolate.splev(self.x,tck_thput,der=0,ext=1)
+			so.inst.ytransmit   = np.where(so.inst.ytransmit < 0, 0, so.inst.ytransmit) # make negative throughput values to 0
 			so.inst.base_throughput = so.inst.ytransmit.copy() # store this here bc ya
 			#add airmass calc for strehl for seeing limited instruments?
 			print('')
 		except:
-			so.inst.base_throughput, _  = throughput_tools.get_base_throughput(self.x,datapath=so.inst.transmission_path) # everything except coupling
-			
+			so.inst.base_throughput  = throughput_tools.get_base_throughput(self.x,datapath=so.inst.transmission_path) # everything except coupling
+			so.inst.base_throughput  = np.where(so.inst.base_throughput < 0, 0, so.inst.base_throughput) # make negative throughput values to 0
+
 			# interp grid
 			#try: so.inst.points
 			#except AttributeError: 
@@ -622,11 +630,32 @@ class fill_data():
 		phot_per_sec_nm = so.stel.s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
 		if so.stel.pl_sep>0:
 			phot_per_sec_nm_pl = so.stel.pl_s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
-			contrast = noise_tools.get_contrast(self.x,so.stel.pl_sep,so.inst.tel_diam,so.tel.seeing,so.ao.strehl)
+			try:
+				contrast = noise_tools.get_MODHIS_contrast(so.ao.contrast_profile_path, so.ao.mode_chosen, so.tel.seeing, so.obs.zenith_angle, so.stel.mag, self.x, so.stel.pl_sep) # new version, specific to MODHIS
+				print("Using new MODHIS contrast calculator with radial profile database.")
+			except Exception as e:
+				print(f"Error: {e}, using old contrast calculator with analytic method.")
+				contrast = noise_tools.get_contrast(self.x,so.stel.pl_sep,so.inst.tel_diam,so.tel.seeing,so.ao.strehl) # old version
+			
+			# contrast1 = noise_tools.get_MODHIS_contrast(so.ao.contrast_profile_path, so.ao.mode_chosen, so.tel.seeing, so.obs.zenith_angle, so.stel.mag, self.x, so.stel.pl_sep) # new version, specific to MODHIS
+			# contrast2 = noise_tools.get_contrast(self.x,so.stel.pl_sep,so.inst.tel_diam,so.tel.seeing,so.ao.strehl) # old version
+
+		# plt.xlabel('Wavelength (nm)', fontweight='bold', fontsize=12)
+		# plt.ylabel('Intensity', fontweight='bold', fontsize=12)
+		# start_index = int((980 - 500) / 0.0005)
+		# end_index = int((2460 - 500) / 0.0005)
+		# plt.plot(self.x[start_index:end_index], contrast1[start_index:end_index], label = 'New Method', color='darkorange')
+		# plt.plot(self.x, contrast2, label = 'Old Method', color='royalblue')
+		# plt.grid()
+		# plt.legend()
+		# output_folder = 'C:/Users/Willi/Documents/Research/Specsim/plots/'
+		# filename = 'Old_vs_New_Contrast_Partial_plsep1000_bad_mag16.png'
+		# # os.makedirs(output_folder, exist_ok=True)
+		# # plt.savefig(f'{output_folder}{filename}', dpi=300, bbox_inches='tight')
+		# plt.show()
 
 		# Figure out the exposure time per frame to avoid saturation
 		# Default case takes 900s as maximum frame exposure time length
-		#
 		if so.obs.texp_frame_set=='default':
 			if so.stel.pl_sep>0: # use estimated planet flux if off axis mode
 				max_ph_per_s  =  np.max((phot_per_sec_nm_pl + contrast * phot_per_sec_nm) * so.inst.sig)
@@ -668,6 +697,7 @@ class fill_data():
 			instrument_contrast_interp= interpolate.interp1d(so.inst.xtransmit,contrast)
 			so.obs.contrast  = instrument_contrast_interp(so.obs.v)
 		
+			so.obs.s_frame = np.where(so.obs.s_frame < 0, 0, so.obs.s_frame)
 			so.obs.speckle_frame = so.obs.contrast * so.obs.s_frame
 		else:
 			so.obs.speckle_frame = np.zeros_like(so.obs.s_frame)
