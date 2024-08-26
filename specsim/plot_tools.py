@@ -66,8 +66,15 @@ def plot_doppler_spectrographs(so,cload):
 		cload.filter(so)
 		ax.plot(so.filt.xraw,so.filt.yraw*.5,'darkgray',lw=0.8)
 
-def plot_rv_err(so,savefig=True):
+def plot_rv_err(so,savefig=True,savepath=SAVEPATH):
 	"""
+	plots RV precision and SNR spectrum 
+	
+	inputs
+	------
+	so
+	savefig  - bool
+	savepath - defaults SAVEPATH defined here 
 
 	"""
 	col_table = plt.get_cmap('Spectral_r')
@@ -109,7 +116,7 @@ def plot_rv_err(so,savefig=True):
 	axs[1].text(1500,.5,'$\sigma_{HK}$=%sm/s'%round(dv_hk_tot,1),fontsize=12,zorder=101)
 	ax2.legend(fontsize=8,loc=1)
 	if savefig:
-		plt.savefig('./output/RV_precision_%s_%sK_%smag%s_%ss_vsini%skms.png'%(so.run.tag,so.stel.teff,so.filt.band,so.stel.mag,so.obs.texp,so.stel.vsini))
+		plt.savefig(savepath + './RV_precision_%s_%sK_%smag%s_%ss_vsini%skms.png'%(so.run.tag,so.stel.teff,so.filt.band,so.stel.mag,so.obs.texp,so.stel.vsini))
 
 	return fig,axs
 
