@@ -60,6 +60,9 @@ We recommend downloading specific Phoenix models [here](http://phoenix.astro.phy
 
 These should be unzipped into any directory, which should be specified as the variable ```sonora_folder``` under ```[spec]``` in the configuration files. 
 
+### Contrast Files
+For nonzero planet separations, specsim can calculate the expected contrast between star and planet using a database of radial profile files. These are specified by contrast_profile_path under the ao section of the configuration file. In the case that these files are not installed, specsim will revert to using an analytical method of calculating the contrast based on input parameters. 
+
 
 
 # Running specsim

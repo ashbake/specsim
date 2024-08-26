@@ -2,6 +2,8 @@
 import os,sys
 sys.path.append('../')
 os.chdir('../')
+# specsim_path = os.path.join(os.environ['USERPROFILE'], 'Documents', 'GitHub', 'specsim')
+# sys.path.insert(0, specsim_path) # Setting the specsim path that works for me
 
 import numpy as np
 import matplotlib.pylab as plt
