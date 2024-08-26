@@ -148,6 +148,7 @@ class STELLAR():
         self.pl_teff  = 800   # K, planet temperature, used if pl_sep>0
         self.pl_mag   = 19    # mag, planet magnitude defined in same bandpass as star, used if pl_sep>0
         self.pl_vsini = 0     # km/s, planet vsini, used if pl_sep>0
+        self.logg = 4.5
         # Filled in by code:
         self.vraw = None   # wavelength like normal (should match exoplanet and be in standard wavelength)
         self.sraw = None   # spectrum
