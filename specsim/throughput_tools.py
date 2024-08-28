@@ -6,7 +6,6 @@ import numpy as np
 from scipy import signal, interpolate
 import pandas as pd
 
-from scipy.integrate import trapz
 import matplotlib.pylab as plt
 
 from specsim.functions import integrate, degrade_spec

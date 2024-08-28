@@ -4,7 +4,6 @@
 
 import numpy as np
 from scipy import interpolate
-from scipy.integrate import trapz
 from scipy import signal
 import matplotlib.pylab as plt
 from astropy.io import fits

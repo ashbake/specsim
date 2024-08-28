@@ -5,13 +5,12 @@
 import numpy as np
 import matplotlib.pylab as plt
 from scipy.interpolate import interp1d
-from scipy.integrate import trapz
 from scipy.signal import medfilt
 from astropy.io import fits
 from scipy import interpolate
 import sys,glob,os
 import pandas as pd
-from astropy.convolution import Gaussian1DKernel, convolve
+from astropy.convolution import convolve
 
 from specsim import throughput_tools# import pick_coupling, get_band_mag, get_base_throughput,grid_interp_coupling
 from specsim import obs_tools
@@ -569,7 +568,7 @@ class fill_data():
 			#add airmass calc for strehl for seeing limited instruments?
 			print('')
 		except:
-			so.inst.base_throughput  = throughput_tools.get_base_throughput(self.x,datapath=so.inst.transmission_path) # everything except coupling
+			so.inst.base_throughput,_  = throughput_tools.get_base_throughput(self.x,datapath=so.inst.transmission_path) # everything except coupling
 			so.inst.base_throughput  = np.where(so.inst.base_throughput < 0, 0, so.inst.base_throughput) # make negative throughput values to 0
 
 			# interp grid
