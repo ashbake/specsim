@@ -117,7 +117,7 @@ def resample(x,y,sig=0.3, dx=0, eta=1,mode='variable'):
     resample using convolution
 
     x: wavelength array in nm
-    y_in/y_out: two y arrays (evaluated at x) to resample, units in spectral density (e.g. photons/nm)
+    y: spectrum array (evaluated at x) to resample, units in spectral density (e.g. photons/nm)
 
     sig in nanometers - width of bin, default 0.3nm
     dx - offset for taking first bin, defaul 0

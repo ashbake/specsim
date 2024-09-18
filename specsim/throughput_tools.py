@@ -159,14 +159,20 @@ def get_emissivity(wave,datapath = './data/throughput/hispec_subsystems_11032022
 
     em_red, em_blue = [],[]
     for i in red_include:
-        wtemp, stemp = np.loadtxt(datapath + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
+        wtemp, stemp = np.loadtxt(datapath + i + '/%s_emissivity.csv'%i, delimiter=',',skiprows=1).T
         f = interpolate.interp1d(wtemp, stemp, bounds_error=False,fill_value=0)
-        em_red.append(1-f(x)) # 1 - interp throughput onto x
+        if i.startswith('fib'):
+            em_red.append(2*f(x)) # count fib twice because of integrating sphere
+        else:
+            em_red.append(f(x))
 
     for i in blue_include:
-        wtemp, stemp = np.loadtxt(datapath + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
+        wtemp, stemp = np.loadtxt(datapath + i + '/%s_emissivity.csv'%i, delimiter=',',skiprows=1).T
         f = interpolate.interp1d(wtemp, stemp, bounds_error=False,fill_value=0)
-        em_blue.append(1-f(x)) # 1 - interp throughput onto x
+        if i.startswith('fib'):
+            em_blue.append(2*f(x)) # count fib twice bc of integrating sphere
+        else:
+            em_blue.append(f(x)) #
 
     return em_red,em_blue,temps
 

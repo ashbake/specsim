@@ -626,7 +626,7 @@ class fill_data():
 		"""
 		# flux density is stellar flux * telescope area * instrument throughput * atmospheric absorption 
 		# If planet separation is >0, compute for the planet also
-		phot_per_sec_nm = so.stel.s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
+		phot_per_sec_nm = so.stel.s * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
 		if so.stel.pl_sep>0:
 			phot_per_sec_nm_pl = so.stel.pl_s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
 			try:
@@ -639,19 +639,6 @@ class fill_data():
 			# contrast1 = noise_tools.get_MODHIS_contrast(so.ao.contrast_profile_path, so.ao.mode_chosen, so.tel.seeing, so.obs.zenith_angle, so.stel.mag, self.x, so.stel.pl_sep) # new version, specific to MODHIS
 			# contrast2 = noise_tools.get_contrast(self.x,so.stel.pl_sep,so.inst.tel_diam,so.tel.seeing,so.ao.strehl) # old version
 
-		# plt.xlabel('Wavelength (nm)', fontweight='bold', fontsize=12)
-		# plt.ylabel('Intensity', fontweight='bold', fontsize=12)
-		# start_index = int((980 - 500) / 0.0005)
-		# end_index = int((2460 - 500) / 0.0005)
-		# plt.plot(self.x[start_index:end_index], contrast1[start_index:end_index], label = 'New Method', color='darkorange')
-		# plt.plot(self.x, contrast2, label = 'Old Method', color='royalblue')
-		# plt.grid()
-		# plt.legend()
-		# output_folder = 'C:/Users/Willi/Documents/Research/Specsim/plots/'
-		# filename = 'Old_vs_New_Contrast_Partial_plsep1000_bad_mag16.png'
-		# # os.makedirs(output_folder, exist_ok=True)
-		# # plt.savefig(f'{output_folder}{filename}', dpi=300, bbox_inches='tight')
-		# plt.show()
 
 		# Figure out the exposure time per frame to avoid saturation
 		# Default case takes 900s as maximum frame exposure time length
@@ -826,7 +813,7 @@ class fill_data():
 		if flux_in_peak > so.track.saturation:
 			# pick an ND filter
 			# compute OD of filter needed (neg neg computes ceiling)
-			so.track.od = -1*round(-1 * np.log10(flux_in_peak/so.track.saturation),0)
+			so.track.od = np.max((-1*round(-1 * np.log10(flux_in_peak/so.track.saturation),0),0))
 			# Apply chosen nd filter
 			so.track.signal = 10**(-1*so.track.od) * nphot # cap nphot
 			so.track.noise  = noise_tools.sum_total_noise(so.track.signal,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix,0)
@@ -834,6 +821,7 @@ class fill_data():
 			so.track.saturation_flag = True
 			so.track.nphot_nocap     = nphot
 		else:
+			so.track.od              = 0.0
 			so.track.nphot_nocap     = nphot
 			so.track.signal = nphot  # no blocking needed
 			so.track.saturation_flag = False
@@ -852,7 +840,10 @@ class fill_data():
 		# Create spectrum with continuum removed and tellurics removed
 		# the noise spectrum will consider tellurics but shouldnt be in the spectrum for computing RV
 		continuum = so.inst.ytransmit/np.max(so.inst.ytransmit)
-		telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm/continuum/np.abs(so.tel.s)
+		if so.stel.pl_sep>0:
+			telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm_pl/continuum/np.abs(so.tel.s)			
+		else:
+			telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm/continuum/np.abs(so.tel.s)
 		telcont_free_lores = degrade_spec(so.stel.v, telcont_free_hires, so.inst.res)
 		v, telcont_free = resample(so.stel.v,telcont_free_lores,sig=np.mean(so.inst.sig), dx=0, eta=1,mode='fast')
 		telcont_free[np.where(np.isnan(telcont_free))] = 0

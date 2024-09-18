@@ -499,7 +499,7 @@ def plot_coupling(so,savepath=SAVEPATH):
 	ax.set_ylim(0,peak)
 	plt.savefig(savepath + figname)
 
-def plot_background_spectra(so,savepath=SAVEPATH):
+def plot_track_background(so,savepath=SAVEPATH):
 	"""
 	
 	"""
@@ -540,6 +540,46 @@ def plot_background_spectra(so,savepath=SAVEPATH):
 	axs[0].set_title('Tracking Camera Noise \n  %s mag = %s, Teff=%sK '%(so.filt.band,so.stel.mag,int(so.stel.teff)))
 	#plt.savefig('./output/trackingcamera/noise_flux_%sK_%s_%smag.pdf'%(so.stel.teff,so.filt.band,so.stel.mag))
 	plt.savefig(savepath + 'noise_flux_%sK_%s_%smag.png'%(so.stel.teff,so.filt.band,so.stel.mag))
+
+def plot_spec_background(so,savepath=SAVEPATH):
+	"""
+	
+	"""
+	col_table = plt.get_cmap('Spectral_r')
+	fig, ax = plt.subplots(1,figsize=(7,4),sharex=True)
+	axs = [ax,]
+	plt.subplots_adjust(bottom=0.15,hspace=0.1,left=0.15,right=0.85,top=0.85)
+
+	axs[0].plot([950,2400],[0.5,0.5],'k--',lw=0.7)
+	#axs[0].fill_between([1450,2400],0,1000,facecolor='gray',alpha=0.2)
+	#axs[0].fill_between([980,1330],0,1000,facecolor='gray',alpha=0.2)
+	axs[0].grid('True')
+	axs[0].set_xlim(950,2450)
+	#axs[1].set_ylabel('Sky Bkg \n(phot/nm/s)')
+	axs[0].set_ylim(-0.001,0.6)
+	#axs[1].set_ylim(-0,20)
+	#axs[1].plot(so.stel.v,so.obs.sky_bg_ph,'m',alpha=0.5,zorder=100,label='Sky Background')
+	#axs[0].plot(so.obs.v,so.obs.inst_bg_ph,'b',lw=2,alpha=0.5,zorder=100,label='Instrument Background')
+	axs[0].plot(so.obs.v,so.obs.sky_bg_ph,'b',lw=2,alpha=0.5,zorder=100,label='Instrument Background')
+	axs[0].set_xlabel('Wavelength [nm]')
+	axs[0].set_ylabel('Instrument + Sky Bkg \n(phot/s)')
+
+	# plot band
+	for ax in axs:
+		ax2 = ax.twinx()
+		ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+		ax2.text(20+np.min(so.inst.y),0.9, 'y')
+		ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+		ax2.text(50+np.min(so.inst.J),0.9, 'J')
+		ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+		ax2.text(50+np.min(so.inst.H),0.9, 'H')
+		ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.1)
+		ax2.text(50+np.min(so.inst.K),0.9, 'K')
+		ax2.set_ylim(0.1,1)
+
+	plt.savefig(savepath + 'noise_flux_%sK_%s_%smag.png'%(so.stel.teff,so.filt.band,so.stel.mag))
+	#np.savetxt('inst_background.txt',np.vstack((so.obs.v,so.obs.inst_bg_ph)).T,header='wave[nm],bkg[ph/s]')
+	#np.savetxt('sky_background.txt',np.vstack((so.obs.v,so.obs.sky_bg_ph)).T,header='wave[nm],bkg[ph/s]')
 
 def plot_tracking_bands(so,trackbands=['J','JHgap','H'],savepath=SAVEPATH):
 	"""
