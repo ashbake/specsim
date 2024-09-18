@@ -4,7 +4,6 @@
 
 import numpy as np
 from scipy.interpolate import interp1d
-from scipy.integrate import trapz
 from scipy import signal
 
 all = {'integrate','gaussian', 'define_lsf', 'vac_to_stand', 'setup_band', 'resample'}
@@ -16,7 +15,7 @@ def integrate(x,y):
     """
     Integrate y wrt x
     """
-    return trapz(y,x=x)
+    return np.trapz(y,x=x)
 
 def gaussian(x, shift, sig):
     ' Return normalized gaussian with mean shift and var = sig^2 '
@@ -118,7 +117,7 @@ def resample(x,y,sig=0.3, dx=0, eta=1,mode='variable'):
     resample using convolution
 
     x: wavelength array in nm
-    y_in/y_out: two y arrays (evaluated at x) to resample, units in spectral density (e.g. photons/nm)
+    y: spectrum array (evaluated at x) to resample, units in spectral density (e.g. photons/nm)
 
     sig in nanometers - width of bin, default 0.3nm
     dx - offset for taking first bin, defaul 0

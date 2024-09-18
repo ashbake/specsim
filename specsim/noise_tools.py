@@ -15,7 +15,7 @@ from astropy.modeling.models import BlackBody
 from astropy import units as u
 from astropy import constants as c 
 
-from specsim.functions import tophat
+from specsim.functions import tophat, resample
 from specsim.throughput_tools import get_emissivity, get_emissivities
 
 all = {'get_sky_bg','get_inst_bg','sum_total_noise','plot_noise_components'}
@@ -29,17 +29,21 @@ def get_sky_bg(x,airmass=1.3,pwv=1.5,npix=3,R=100000,diam=10,area=76,skypath = '
     -------
     x : array [nm]
         wavelength in nanometers
-
     airmass: float [1,inf)
         airmass of the observation. Defaults to 1.3
-
     pwv: float [mm] [0,inf)
         precipitable water vapor in millimeters during 
         the observation. Defaults to 1.5
-
     npix: integer 
         number of pixels, defaults to 3
-    
+    R: float
+        resolving power of instrument, default is 100,000
+    diam: float
+        diameter of telescope in meters
+    area: float
+        area of telescope in meters squared
+    datapath: string
+        path to where throughput data in HISPEC format is
 
     outputs:
     --------
@@ -72,31 +76,38 @@ def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hi
     -------
     x : array [nm]
         wavelength in nanometers
-
     npix: integer
         number of pixels
+    R: float
+        resolving power of instrument, default is 100,000
+    diam: float
+        diameter of telescope in meters
+    area: float
+        area of telescope in meters squared
+    datapath: string
+        path to where throughput data in HISPEC format is
 
     outputs:
     --------
-    sky background (photons/s) already considering PSF sampling
+    sky background (photons/s) per reduced pixel (already considering PSF sampling)
     """
     em_red,em_blue, temps = get_emissivity(x,datapath=datapath)
 
-    # telescope
+    # assign units
     diam *= u.m
     area *= u.m * u.m
     wave = x*u.nm
 
+    # compute pixel width in nanometers
     fwhm = ((wave  / diam) * u.radian).to(u.arcsec)
     solidangle = fwhm**2 * 1.13 #corrected for Gaussian beam (factor 1.13)
     pix_width_nm  = (wave/R/npix) #* u.nm 
 
     # step through temperatures and emissivities for red and blue
-    # red
+    # em_red and em_blue are indexed matching temp index
     for i,temp in enumerate(temps):
         bbtemp_fxn  = BlackBody(temp * u.K, scale=1.0 * u.erg / (u.micron * u.s * u.cm**2 * u.arcsec**2)) 
         bbtemp      = bbtemp_fxn(wave) *  area.to(u.cm**2) * solidangle
-        #bbtemp = blackbody_lambda(wave, temp).to(u.erg/(u.micron * u.s * u.cm**2 * u.arcsec**2)) * area.to(u.cm**2) * solidangle
         if i==0:
             tel_thermal_red  = em_red[i] * bbtemp.to(u.photon/u.s/u.micron, equivalencies=u.spectral_density(wave)) * pix_width_nm
             tel_thermal_blue = em_blue[i] * bbtemp.to(u.photon/u.s/u.micron, equivalencies=u.spectral_density(wave)) * pix_width_nm
@@ -112,9 +123,11 @@ def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hi
     isubblue = np.where(wave <1.4*u.um)[0]
     em_blue_tot  = tel_thermal_blue[isubblue].decompose()
 
+    # w,s
     w = np.concatenate([x[isubblue],x[isubred]])
     s = np.concatenate([em_blue_tot,em_red_tot])
 
+    # interpolate onto input x array
     tck        = interpolate.splrep(w,s.value, k=2, s=0)
     em_total   = interpolate.splev(x,tck,der=0,ext=1)
 
