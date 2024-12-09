@@ -32,6 +32,9 @@ def define_lsf(v,res):
     x = np.arange(sigma*10)
     gaussian = (1./sigma/np.sqrt(2*np.pi)) * np.exp(-0.5*( (x - 0.5*len(x))/sigma)**2 )
 
+    if len(gaussian)<20:
+        raise(ValueError('Wavelength sampling too coarse for requestion resolving power - resample wavelength grid finer or lower resolution'))
+    
     return gaussian
 
 def degrade_spec(x,y,res):

@@ -72,7 +72,7 @@ def plot_doppler_spectrographs(so,cload):
 		cload.filter(so)
 		ax.plot(so.filt.xraw,so.filt.yraw*.5,'darkgray',lw=0.8)
 
-def plot_rv_err(so,savefig=True,savepath=SAVEPATH):
+def plot_rv_err(so,savefig=True,savepath=SAVEPATH,text_pos=0):
 	"""
 	plots RV precision and SNR spectrum 
 	
@@ -91,7 +91,7 @@ def plot_rv_err(so,savefig=True,savepath=SAVEPATH):
 	axs[1].fill_between([1450,2400],0,1e10,facecolor='gray',alpha=0.2)
 	axs[1].fill_between([980,1330],0,1e10,facecolor='gray',alpha=0.2)
 	axs[1].grid('True')
-	axs[1].set_ylim(-0,3*np.median(so.obs.rv_order))
+	axs[1].set_ylim(-0.1,3*np.median(so.obs.rv_order))
 	axs[1].set_xlim(950,2400)
 	axs[1].set_ylabel('$\sigma_{RV}$ [m/s]')
 	axs[1].set_xlabel('Wavelength [nm]')
@@ -118,8 +118,8 @@ def plot_rv_err(so,savefig=True,savepath=SAVEPATH):
 	dv_yj_tot = (so.inst.rv_floor**2 +dv_yj**2.)**0.5	# 
 	dv_hk_tot = (so.inst.rv_floor**2 +dv_hk**2.)**0.5	# # 
 	# 2*np.median(so.obs.rv_order)
-	axs[1].text(1050,.5,'$\sigma_{yJ}$=%sm/s'%round(dv_yj_tot,1),fontsize=12,zorder=101)
-	axs[1].text(1500,.5,'$\sigma_{HK}$=%sm/s'%round(dv_hk_tot,1),fontsize=12,zorder=101)
+	axs[1].text(1050,text_pos,'$\sigma_{yJ}$=%sm/s'%round(dv_yj_tot,1),fontsize=12,zorder=101)
+	axs[1].text(1500,text_pos,'$\sigma_{HK}$=%sm/s'%round(dv_hk_tot,1),fontsize=12,zorder=101)
 	ax2.legend(fontsize=8,loc=1)
 	if savefig:
 		plt.savefig(savepath + './RV_precision_%s_%sK_%smag%s_%ss_vsini%skms.png'%(so.run.tag,so.stel.teff,so.filt.band,so.stel.mag,so.obs.texp,so.stel.vsini))
