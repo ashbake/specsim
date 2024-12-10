@@ -351,7 +351,7 @@ class fill_data():
 		self.observe(so)
 		if so.run.mode=='snr_on' or so.run.mode=='snr_off':
 			self.compute_rv(so)
-			self.etc(so)
+			self.compute_ccf_snr(so)
 		if so.run.mode=='etc_off' or so.run.mode=='etc_on':
 			self.compute_etc(so)
 			self.compute_ccf_snr_etc(so)
