@@ -349,9 +349,13 @@ class fill_data():
 		self.ao(so)
 		self.instrument(so)
 		self.observe(so)
+		if so.run.mode=='snr_on' or so.run.mode=='snr_off':
+			self.compute_rv(so)
+		
 		if so.run.mode=='etc_off' or so.run.mode=='etc_on':
 			self.etc(so)
-		
+			self.compute_ccf_snr_etc(so)
+
 		# turn off tracking for now, not needed
 		if track_on:
 			self.tracking(so)
@@ -750,6 +754,14 @@ class fill_data():
 		so.obs.snr_max_orders  = np.array(order_snrs_max)
 		so.obs.snr_mean_orders = np.array(order_snrs_mean)
 		so.obs.order_inds = order_inds
+
+		# define indices in passbands care about TODO check these, from Huihao
+		ind_1 = np.where((so.obs.v>940)&(so.obs.v<1090))[0]
+		ind_2 = np.where((so.obs.v>1100)&(so.obs.v<1360))[0]
+		ind_3 = np.where((so.obs.v>1480)&(so.obs.v<1820))[0]
+		ind_4 = np.where((so.obs.v>1950)&(so.obs.v<2350))[0]
+		so.obs.ind_filter = np.array(ind_1.tolist()+ind_2.tolist()+ind_3.tolist()+ind_4.tolist())
+
 
 	def tracking(self,so):
 		"""
