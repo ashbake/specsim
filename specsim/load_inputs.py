@@ -349,10 +349,17 @@ class fill_data():
 		self.ao(so)
 		self.instrument(so)
 		self.observe(so)
+		if so.run.mode=='snr_on' or so.run.mode=='snr_off':
+			self.compute_rv(so)
+			self.compute_ccf_snr(so)
+		if so.run.mode=='etc_off' or so.run.mode=='etc_on':
+			self.compute_etc(so)
+			self.compute_ccf_snr_etc(so)
 
 		# turn off tracking for now, not needed
 		if track_on:
 			self.tracking(so)
+
 		self.track_on=track_on
 
 	def filter(self,so):
@@ -569,7 +576,7 @@ class fill_data():
 			print('')
 		except:
 			so.inst.base_throughput,_  = throughput_tools.get_base_throughput(self.x,datapath=so.inst.transmission_path) # everything except coupling
-			so.inst.base_throughput  = np.where(so.inst.base_throughput < 0, 0, so.inst.base_throughput) # make negative throughput values to 0
+			so.inst.base_throughput    = np.where(so.inst.base_throughput < 0, 0, so.inst.base_throughput) # make negative throughput values to 0
 
 			# interp grid
 			#try: so.inst.points
@@ -748,6 +755,14 @@ class fill_data():
 		so.obs.snr_mean_orders = np.array(order_snrs_mean)
 		so.obs.order_inds = order_inds
 
+		# define indices in passbands care about TODO check these, from Huihao
+		ind_1 = np.where((so.obs.v>940)&(so.obs.v<1090))[0]
+		ind_2 = np.where((so.obs.v>1100)&(so.obs.v<1360))[0]
+		ind_3 = np.where((so.obs.v>1480)&(so.obs.v<1820))[0]
+		ind_4 = np.where((so.obs.v>1950)&(so.obs.v<2350))[0]
+		so.obs.ind_filter = np.array(ind_1.tolist()+ind_2.tolist()+ind_3.tolist()+ind_4.tolist())
+
+
 	def tracking(self,so):
 		"""
 		Gets the tracking centroid precision based 
@@ -844,6 +859,7 @@ class fill_data():
 			telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm_pl/continuum/np.abs(so.tel.s)			
 		else:
 			telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm/continuum/np.abs(so.tel.s)
+		
 		telcont_free_lores = degrade_spec(so.stel.v, telcont_free_hires, so.inst.res)
 		v, telcont_free = resample(so.stel.v,telcont_free_lores,sig=np.mean(so.inst.sig), dx=0, eta=1,mode='fast')
 		telcont_free[np.where(np.isnan(telcont_free))] = 0
@@ -852,7 +868,7 @@ class fill_data():
 
 		# make telluric only spectrum, resample onto so.obs.v to match so.obs.s
 		so.tel.rayleigh[so.tel.rayleigh==0] = np.inf
-		telluric_spec = so.tel.s/so.tel.rayleigh #h2o only
+		telluric_spec = so.tel.s/so.tel.rayleigh/so.tel.o3 #no continuum altering things! 
 		telluric_spec[np.where(np.isnan(telluric_spec))] = 0
 		telluric_spec_lores = degrade_spec(so.stel.v, telluric_spec, so.inst.res)
 		v, telluric_spec_lores_resamp = resample(so.stel.v,telluric_spec_lores,sig=np.mean(so.inst.sig), dx=0, eta=1,mode='fast')
