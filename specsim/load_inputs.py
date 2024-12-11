@@ -640,7 +640,7 @@ class fill_data():
 				contrast = noise_tools.get_MODHIS_contrast(so.ao.contrast_profile_path, so.ao.mode_chosen, so.tel.seeing, so.obs.zenith_angle, so.stel.mag, self.x, so.stel.pl_sep) # new version, specific to MODHIS
 				print("Using new MODHIS contrast calculator with radial profile database.")
 			except Exception as e:
-				print(f"Error: {e}, using old contrast calculator with analytic method.")
+				print(f"Warning: {e}, using old contrast calculator with analytic method.")
 				contrast = noise_tools.get_contrast(self.x,so.stel.pl_sep,so.inst.tel_diam,so.tel.seeing,so.ao.strehl) # old version
 			
 			# contrast1 = noise_tools.get_MODHIS_contrast(so.ao.contrast_profile_path, so.ao.mode_chosen, so.tel.seeing, so.obs.zenith_angle, so.stel.mag, self.x, so.stel.pl_sep) # new version, specific to MODHIS
