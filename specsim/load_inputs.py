@@ -1,5 +1,5 @@
 ##############################################################
-# Load variables into storage object
+# All computations happen here in fill_data class
 ###############################################################
 
 import numpy as np
@@ -336,7 +336,7 @@ class fill_data():
 		self.bands['K'] = [1990,2460]
 
 		# define bands here
-		# this should become deprecated
+		# this should become deprecated - plot_tools.py uses it
 		so.inst.y=[980,1100]
 		so.inst.J=[1170,1327]
 		so.inst.H=[1490,1780]
@@ -849,7 +849,7 @@ class fill_data():
 		#noise_peak      = noise_tools.sum_total_noise(so.track.signal,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,1,0) # hack for noise for one pixel
 		so.track.centroid_err = (1/np.pi) * so.track.fwhm/so.track.snr # same fwhm but snr is reduced to not saturate like if used an ND filter
 
-	def compute_rv(self,so,telluric_cutoff=0.01,velocity_cutoff=20):
+	def compute_rv(self,so,telluric_cutoff=0.01,velocity_cutoff=1):
 		"""
 		"""
 		# Create spectrum with continuum removed and tellurics removed
@@ -889,6 +889,7 @@ class fill_data():
 		inan = np.where(snr_frame < 1)[0]
 		snr_frame[inan] = np.nan
 
+		# result is in seconds
 		so.obs.etc   = so.obs.texp_frame * (target_snr/snr_frame)**2  # texp per frame times nframes - per snr element
 		so.obs.etc_order_max  = so.obs.texp_frame * (target_snr/(so.obs.snr_max_orders/so.obs.nframes))**2  # per order max 
 		so.obs.etc_order_mean = so.obs.texp_frame * (target_snr/(so.obs.snr_mean_orders/so.obs.nframes))**2   # per 

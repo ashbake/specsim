@@ -63,18 +63,18 @@ class INSTRUMENT():
         self.transmission_path = None # path to transmission files
         self.order_bounds_file = None # file with order bound information
         self.order_bounds      = None # order bounds of spectrograph
-        self.atm = 0        # keyword for transmission file, HISPEC=1, MODHIS=0 for now
-        self.adc = 0        # keyword for transmission file, HISPEC=1, MODHIS=0 for now
+        self.atm = 1        # keyword for transmission file, HISPEC=1, MODHIS=0 for now
+        self.adc = 1        # keyword for transmission file, HISPEC=1, MODHIS=0 for now
         self.l0   = 900     # nm, start of wavelengths to consider
         self.l1   = 2500    # nm, ending wavelength
         self.res  = 100000  # resolving power
         self.pix_vert = 4   # pixels, vertical extent of spectrum in cross dispersion
-        self.extraction_frac = 0.925 # fraction of flux extracted for 4 vertical pixels, should have code calculate it
+        self.extraction_frac = 0.925 # fraction of flux extracted for 4 vertical pixels, TODO should have code calculate it
         self.tel_area = 76 # m2, telescope area, keck is default
         self.tel_diam = 10 # m ,telescope diameter,  keck is default
         self.res_samp = 3  #pixels, sampling of resolution element
         self.saturation = 100000 # electrons, saturation limit of detector
-        self.readnoise  = 12   # e-, CDS read noise of detector
+        self.readnoise  = 12   # e-, default is CDS read noise of detector
         self.darknoise  = 0.01 # e-/pix/s, dark current to assume
         self.pl_on      = 1    # 0 or 1, if 1 it will assume photonic lantern in use for the blue channel
         self.rv_floor   = 0.5  # m/s, systematic noise floor of RV measurement for instrument and telluric systematics, 0.5m/s for hispec and modhis
@@ -180,7 +180,7 @@ class TRACK():
     "tracking camera storage"
     def __init__(self):
         # User optional defined
-        self.transmission_file = None # output name
+        self.transmission_file = None # path to ATC transmission file
         self.texp      = 1    # exposure time of tracking camera [s]
         self.frat      = 35   # f ratio of tracking camera arm - 35 for HISPEC
         self.band      = 'JHgap' # band being used, [JHgap,z,y,J,H,K] see fxn in obs_tools.py for more options
