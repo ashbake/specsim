@@ -353,8 +353,8 @@ class fill_data():
 			self.compute_rv(so)
 			self.compute_ccf_snr(so)
 		if so.run.mode=='etc_off' or so.run.mode=='etc_on':
-			self.compute_etc(so)
-			self.compute_ccf_snr_etc(so)
+			self.compute_etc(so,so.obs.target_snr)
+			self.compute_ccf_snr_etc(so,so.obs.target_ccf_snr)
 
 		# turn off tracking for now, not needed
 		if track_on:

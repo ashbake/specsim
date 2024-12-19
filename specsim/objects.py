@@ -100,6 +100,8 @@ class OBSERVATION():
         self.texp_frame_set   = 900  # seconds, maximum for a single exposure. default lets code choose it with max of 900
         self.nsamp            = 1    # number of up the ramp samples per frame exposure
         self.zenith_angle     = 45   # degrees, zenith angle of observation. Used to define airmass
+        self.target_snr       = 100  # target snr for ETC calculation
+        self.target_ccf_snr   = 5    # target ccf snr for ETC calculation
         # code filled in variables
         self.frame_phot_per_nm = None # photons per nm in a single frame of texp_frame seconds long
         self.inst_bg_ph    = None # background photons per nm in a single frame of texp_frame seconds long

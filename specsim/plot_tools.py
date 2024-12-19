@@ -91,7 +91,10 @@ def plot_rv_err(so,savefig=True,savepath=SAVEPATH,text_pos=0):
 	axs[1].fill_between([1450,2400],0,1e10,facecolor='gray',alpha=0.2)
 	axs[1].fill_between([980,1330],0,1e10,facecolor='gray',alpha=0.2)
 	axs[1].grid('True')
-	axs[1].set_ylim(-0.1,3*np.median(so.obs.rv_order))
+	dv_vals = so.obs.rv_order
+	max_y_lim = 3*np.median(dv_vals[np.where(~np.isinf(dv_vals))])
+	if np.isnan(max_y_lim): max_y_lim = 1	
+	axs[1].set_ylim(0,max_y_lim)
 	axs[1].set_xlim(950,2400)
 	axs[1].set_ylabel('$\sigma_{RV}$ [m/s]')
 	axs[1].set_xlabel('Wavelength [nm]')
