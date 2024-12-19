@@ -3,314 +3,19 @@
 ###############################################################
 
 import numpy as np
-import matplotlib.pylab as plt
 from scipy.interpolate import interp1d
 from scipy.signal import medfilt
 from astropy.io import fits
 from scipy import interpolate
-import sys,glob,os
+import glob
 import pandas as pd
-from astropy.convolution import convolve
 
-from specsim import throughput_tools# import pick_coupling, get_band_mag, get_base_throughput,grid_interp_coupling
-from specsim import obs_tools
-from specsim import noise_tools
-from specsim import wfe_tools 
-from specsim import ccf_tools 
+
+from specsim import throughput_tools, obs_tools, noise_tools, wfe_tools, ccf_tools, source_tools
 
 from specsim.functions import *
 
 __all__ = ['fill_data','load_phoenix']
-
-def load_phoenix(stelname,stelpath,wav_start=750,wav_end=780):
-	"""
-	load fits file stelname with stellar spectrum from phoenix 
-	http://phoenix.astro.physik.uni-goettingen.de/?page_id=15
-	
-	return subarray 
-	
-	wav_start, wav_end specified in nm
-	
-	convert s from egs/s/cm2/cm to phot/cm2/s/nm using
-	https://hea-www.harvard.edu/~pgreen/figs/Conversions.pdf
-	"""
-	# conversion factor
-
-	f = fits.open(stelpath + stelname)
-	spec = f[0].data / (1e8) # ergs/s/cm2/cm to ergs/s/cm2/Angstrom for conversion
-	f.close()
-	
-	wave_file = os.path.join(stelpath + 'WAVE_PHOENIX-ACES-AGSS-COND-2011.fits') #assume wave in same folder
-	f = fits.open(wave_file)
-	lam = f[0].data # angstroms
-	f.close()
-	
-	# Convert
-	conversion_factor = 5.03*10**7 * lam #lam in angstrom here
-	spec *= conversion_factor # phot/cm2/s/angstrom
-	
-	# Take subarray requested
-	isub = np.where((lam > wav_start*10.0) & (lam < wav_end*10.0))[0]
-
-	# Convert 
-	return lam[isub]/10.0,spec[isub] * 10 * 100**2 #nm, phot/m2/s/nm
-
-def load_filter(filter_path,family,band):
-	"""
-	"""
-	filter_file    = glob.glob(filter_path + '*' + family + '*' + band + '.dat')[0]
-	xraw, yraw     = np.loadtxt(filter_file).T # nm, transmission out of 1
-	return xraw/10, yraw
-
-def load_sonora(stelname,wav_start=750,wav_end=780):
-	"""
-	load sonora model file
-	
-	return subarray 
-	
-	wav_start, wav_end specified in nm
-	
-	convert s from erg/cm2/s/Hz to phot/cm2/s/nm using
-	https://hea-www.harvard.edu/~pgreen/figs/Conversions.pdf
-
-	wavelength loaded is microns high to low
-	"""
-	f = np.loadtxt(stelname,skiprows=2)
-
-	lam  = 10000* f[:,0][::-1] #microns to angstroms, needed for conversiosn
-	spec = f[:,1][::-1] # erg/cm2/s/Hz
-	
-	spec *= 3e18/(lam**2)# convert spec to erg/cm2/s/angstrom
-	
-	conversion_factor = 5.03*10**7 * lam #lam in angstrom here
-	spec *= conversion_factor # phot/cm2/s/angstrom
-	
-	isub = np.where( (lam > wav_start*10.0) & (lam < wav_end*10.0))[0]
-
-	return lam[isub]/10.0,spec[isub] * 10 * 100**2 #nm, phot/m2/s/nm (my fave)
-
-def calc_nphot(dl_l, zp, mag):
-	"""
-	http://astroweb.case.edu/ssm/ASTR620/mags.html
-
-	Values are all for a specific bandpass, can refer to table at link ^ for values
-	for some bands. Function will return the photons per second per meter squared
-	at the top of Earth atmosphere for an object of specified magnitude
-
-	inputs:
-	-------
-	dl_l: float, delta lambda over lambda for the passband
-	zp: float, flux at m=0 in Jansky
-	mag: stellar magnitude
-
-	outputs:
-	--------
-	photon flux
-	"""
-	phot_per_s_m2_per_Jy = 1.51*10**7 # convert to phot/s/m2 from Jansky
-
-	return dl_l * zp * 10**(-0.4*mag) * phot_per_s_m2_per_Jy
-
-def scale_stellar(filt,stelv,stels,mag):
-	"""
-	scale spectrum by magnitude
-	inputs: 
-	filt: so.filt object
-	mag: magnitude in filter desired
-
-	load new stellar to match bounds of filter since may not match working badnpass elsewhere
-	"""
-	if (np.min(filt.xraw) < np.min(stelv)) or (np.max(filt.xraw) > np.max(stelv)):
-		raise Warning('Check that stellar model in scale_stellar extends past filter profile')
-	
-	filt_interp       =  interpolate.interp1d(filt.xraw,filt.yraw, bounds_error=False,fill_value=0)
-
-	filtered_stellar   = stels * filt_interp(stelv)    # filter profile resampled to phoenix times phoenix flux density
-	nphot_expected_0   = calc_nphot(filt.dl_l, filt.zp, mag)    # what's the integrated flux supposed to be in photons/m2/s?
-	nphot_model        = integrate(stelv,filtered_stellar)            # what's the integrated flux now? in same units as ^
-	
-	return nphot_expected_0/nphot_model
-
-
-def _load_stellar_model(x,mag,teff,vsini,so,rv=0):
-	"""
-	Loads stellar model as sonora or phoenix based on temperature
-	Then scales to the designated magnitude
-	then broadens by vsini
-
-	so only used for paths and filter information
-	"""
-	# wavelength bounds should incldue filter entirely
-	l0,l1 = np.min((np.min(x),np.min(so.filt.xraw))),np.max((np.max(x),np.max(so.filt.xraw)))
-
-	if teff < 2300: # sonora models arent sampled as well so use phoenix as low as can
-		g    = '316' # mks units, np.log10(316 * 100)=4.5 to match what im holding for phoenix models.
-		teff = str(int(teff))
-		stel_file         = so.stel.sonora_folder + 'sp_t%sg%snc_m0.0' %(teff,g)
-		vraw,sraw = load_sonora(stel_file,wav_start=l0,wav_end=l1)
-		model             = 'sonora'
-	else:
-		teff = str(int(teff)).zfill(5)
-		logg = '{:.2f}'.format(so.stel.logg)
-		model             = 'phoenix' 
-		stel_file         = 'lte%s-%s-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'%(teff,logg)
-		vraw,sraw = load_phoenix(stel_file,so.stel.phoenix_folder,wav_start=l0, wav_end=l1) #phot/m2/s/nm
-	
-
-	# apply scaling factor to match filter zeropoint
-	factor_0   = scale_stellar(so.filt,vraw,sraw,mag) # loads spectrum over selected filter and finds scaling to get correct magnitude
-	
-	# interpolate file onto x, apply factor
-	tck_stel    = interpolate.splrep(vraw,sraw, k=2, s=0)
-	s           = factor_0 * interpolate.splev(x,tck_stel,der=0,ext=1)
-	
-	#units = 'photons/s/m2/nm' # stellar spec is in photons/s/m2/nm
-
-	# broaden star spectrum with rotation kernal
-	SPEEDOFLIGHT   = 2.998e8 # m/s
-	if vsini > 0:
-		dwvl_mean = np.abs(np.nanmean(np.diff(x)))
-		dvel_mean      = (dwvl_mean / np.nanmean(x)) * SPEEDOFLIGHT / 1e3 # average sampling in km/s
-		vsini_kernel,_ = _lsf_rotate(dvel_mean,vsini,epsilon=0.6)
-		flux_vsini     = convolve(s,vsini_kernel,normalize_kernel=True)  # photons / second / Ang
-		s              = flux_vsini
-
-	# Offset star by an RV (for CCF purposes to offset from tellurics)
-	if rv!= 0:
-		doppler_factor = (1.0 + ((rv * 1000) / SPEEDOFLIGHT)) # rv in km/s
-		tck = interpolate.splrep(x*doppler_factor,s, k=3, s=0)
-		shifted_spec = interpolate.splev(x,tck,der=0,ext=1)
-	else: 
-		shifted_spec=s.copy()
-
-	# some negatives are created when interpolating, change these to zero
-	ineg = np.where(shifted_spec<0)[0]
-	shifted_spec[ineg] = 0
-	
-	return shifted_spec, vraw, sraw, model, stel_file, factor_0
-
-
-def get_band_mag(so,family,band,factor_0):
-    """
-    factor_0: scaling model to photons
-    """
-    x,y          = load_filter(so.filt.filter_path,family,band)
-    filt_interp  = interpolate.interp1d(x, y, bounds_error=False,fill_value=0)
-    dl_l         = np.mean(integrate(x,y)/x) # dlambda/lambda to account for spectral fraction
-    
-    # load stellar the multiply by scaling factor, factor_0, and filter. integrate
-    if (np.min(x) < so.inst.l0) or (np.max(x) > so.inst.l1):
-        if so.stel.model=='phoenix':
-            vraw,sraw = load_phoenix(so.stel.stel_file,so.stel.phoenix_folder,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
-        elif so.stel.model=='sonora':
-            vraw,sraw = load_sonora(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
-    else:
-        vraw,sraw = so.stel.vraw, so.stel.sraw
-
-    filtered_stel = factor_0 * sraw * filt_interp(vraw)
-    flux = integrate(vraw,filtered_stel)    #phot/m2/s
-
-    phot_per_s_m2_per_Jy = 1.51*10**7 # convert to phot/s/m2 from Jansky
-    
-    flux_Jy = flux/phot_per_s_m2_per_Jy/dl_l
-    
-    # get zps
-    zps          = np.loadtxt(so.filt.zp_file,dtype=str).T
-    izp          = np.where((zps[0]==family) & (zps[1]==band))[0]
-    zp           = float(zps[2][izp])
-
-    mag = -2.5*np.log10(flux_Jy/zp)
-
-    return mag
-
-
-def _get_band_mag(so,vraw, sraw, model,stel_file,family,band,factor_0):
-    """
-    REDO TO NOT ASSUME THE STAR!!
-    factor_0: scaling model to photons
-    """
-    xfilt,yfilt  = load_filter(so.filt.filter_path,family,band)
-    filt_interp  = interpolate.interp1d(xfilt, yfilt, bounds_error=False,fill_value=0)
-    dl_l         = np.mean(integrate(xfilt,yfilt)/xfilt) # dlambda/lambda to account for spectral fraction
-    # load stellar the multiply by scaling factor, factor_0, and filter. integrate
-    # reload if filter extends past currently loaded stellar model
-    # if (np.min(xfilt) < np.min(vraw)) or (np.max(xfilt) > np.max(vraw)):
-	# 	if model=='phoenix':
-	#         vraw,sraw = load_phoenix(stel_file,so.stel.phoenix_folder,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
-	# 	elif model=='sonora':
-	#         vraw,sraw = load_sonora(stel_file,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
-	#     print('Note had to reload stellar model for _get_band_mag')
-
-    if (np.min(xfilt) < np.min(vraw)) or (np.max(xfilt) > np.max(vraw)):
-        if model=='phoenix':
-            vraw,sraw = load_phoenix(stel_file,so.stel.phoenix_folder,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
-            print('Note: had to reload Phoenix stellar model for _get_band_mag')
-        elif model=='sonora':
-            vraw,sraw = load_sonora(stel_file,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
-            print('Note: had to reload Sonora stellar model for _get_band_mag')
-
-    filtered_stel = factor_0 * sraw * filt_interp(vraw)
-    flux = integrate(vraw,filtered_stel)    #phot/m2/s
-
-    phot_per_s_m2_per_Jy = 1.51*10**7 # convert to phot/s/m2 from Jansky
-    
-    flux_Jy = flux/phot_per_s_m2_per_Jy/dl_l
-    
-    # get zps
-    zps          = np.loadtxt(so.filt.zp_file,dtype=str).T
-    izp          = np.where((zps[0]==family) & (zps[1]==band))[0]
-    zp           = float(zps[2][izp])
-	
-    mag = -2.5*np.log10(flux_Jy/zp)
-	
-    return mag
-
-
-
-def _lsf_rotate(deltav,vsini,epsilon=0.6):
-    '''
-    Computes vsini rotation kernel.
-    Based on the IDL routine LSF_ROTATE.PRO
-
-    Parameters
-    ----------
-    deltav : float
-        Velocity sampling for kernel (x-axis) [km/s]
-
-    vsini : float
-        Stellar vsini value [km/s]
-
-    epsilon : float
-        Limb darkening value (default is 0.6)
-
-    Returns
-    -------
-    kernel : array
-        Computed kernel profile
-
-    velgrid : float
-        x-values for kernel [km/s]
-
-    '''
-
-    # component calculations
-    ep1 = 2.0*(1.0 - epsilon)
-    ep2 = np.pi*epsilon/2.0
-    ep3 = np.pi*(1.0 - epsilon/3.0)
-
-    # make x-axis
-    npts = np.ceil(2*vsini/deltav)
-    if npts % 2 == 0:
-        npts += 1
-    nwid = np.floor(npts/2)
-    x_vals = (np.arange(npts) - nwid) * deltav/vsini
-    xvals_abs = np.abs(1.0 - x_vals**2)
-    velgrid = xvals_abs*vsini
-
-    # compute kernel
-    kernel = (ep1*np.sqrt(xvals_abs) + ep2*xvals_abs)/ep3
-
-    return kernel, velgrid
 
 
 class fill_data():
@@ -396,10 +101,10 @@ class fill_data():
 		print('%s band mag set to %s'%(so.filt.band,so.stel.mag))
 	
 		# load on axis target
-		so.stel.s, so.stel.vraw,so.stel.sraw,so.stel.model, so.stel.stel_file, so.stel.factor_0 = _load_stellar_model(self.x,so.stel.mag,so.stel.teff,so.stel.vsini,so,rv=so.stel.rv)
+		so.stel.s, so.stel.vraw,so.stel.sraw,so.stel.model, so.stel.stel_file, so.stel.factor_0 = source_tools.load_stellar_model(self.x,so.stel.mag,so.stel.teff,so.stel.vsini,so,rv=so.stel.rv)
 		# load companion if there is one (requires separation>0)
 		if so.stel.pl_sep>0:
-			so.stel.pl_s, _,_,so.stel.pl_model, so.stel.pl_stel_file, so.stel.pl_factor_0 = _load_stellar_model(self.x,so.stel.pl_mag,so.stel.pl_teff,so.stel.pl_vsini,so,rv=so.stel.rv)
+			so.stel.pl_s, _,_,so.stel.pl_model, so.stel.pl_stel_file, so.stel.pl_factor_0 = source_tools.load_stellar_model(self.x,so.stel.pl_mag,so.stel.pl_teff,so.stel.pl_vsini,so,rv=so.stel.rv)
 
 		so.stel.v   = self.x
 		so.stel.units = 'photons/s/m2/nm' # stellar spec is in photons/s/m2/nm
@@ -470,7 +175,7 @@ class fill_data():
 				# scale to find factor_0 for new mag if teff is the same
 				factor_0 = so.stel.factor_0 * 10**(0.4*(so.stel.mag - so.ao.mag))
 		else: # if new teff, load new model
-			_, vraw, sraw, model, stel_file, factor_0 = _load_stellar_model(self.x,so.ao.mag,so.ao.teff,0,so)
+			_, vraw, sraw, model, stel_file, factor_0 = source_tools.load_stellar_model(self.x,so.ao.mag,so.ao.teff,0,so)
 
 		# now make getband mag take new stel file and factor 0
 
@@ -489,7 +194,7 @@ class fill_data():
 			strehl, ho_wfes, tt_wfes, aomags = [], [], [],[]
 			for ao_mode in ao_modes:
 				# get magnitude in band the AO mode is defined in 
-				wfe_mag  = _get_band_mag(so, vraw, sraw, model,stel_file,'Johnson',data[ao_mode]['band'],factor_0)
+				wfe_mag  = source_tools.get_band_mag(so, vraw, sraw, model,stel_file,'Johnson',data[ao_mode]['band'],factor_0)
 				#wfe_mag  = get_band_mag(so,'Johnson',data[ao_mode]['band'],factor_0)
 				aomags.append(wfe_mag)
 				# interpolate over WFEs and sample HO and TT at correct mag
@@ -630,6 +335,9 @@ class fill_data():
 		in pixels and the noise spectrum to compute the 
 		snr per pixel (so.obs.v,so.obs.snr) 
 		and snr per resolution element (so.obs.v_res_element,so.obs.snr_res_element)
+		
+		If planet separation is >0, it will compute planet and star fluxes which
+		gets a little complicated
 		"""
 		# flux density is stellar flux * telescope area * instrument throughput * atmospheric absorption 
 		# If planet separation is >0, compute for the planet also
@@ -654,6 +362,7 @@ class fill_data():
 				max_ph_per_s  =  np.max((phot_per_sec_nm_pl + contrast * phot_per_sec_nm) * so.inst.sig)
 			else:
 				max_ph_per_s  =  np.max(phot_per_sec_nm * so.inst.sig)
+			# set text frame
 			if so.obs.texp < 900: 
 				texp_frame_tmp = np.min((so.obs.texp,so.inst.saturation/max_ph_per_s))
 			else:
@@ -680,42 +389,41 @@ class fill_data():
 
 		# Resample onto res element grid - new wavelength grid so.obs.v
 		# 
-		so.obs.v, so.obs.s_frame = resample(so.stel.v,s_ccd_lores,sig=np.mean(so.inst.sig), dx=0, eta=1,mode='fast')
-		so.obs.s_frame    *=so.inst.extraction_frac # extraction fraction, reduce photons to mimic spectral extraction imperfection
+		so.obs.v, so.obs.s_frame_star =  resample(so.stel.v,s_ccd_lores,sig=np.mean(so.inst.sig), dx=0, eta=1,mode='fast')
+		so.obs.s_frame_star *= so.inst.extraction_frac
+		# remove negatives from star spectrum
+		so.obs.s_frame_star = np.where(so.obs.s_frame_star < 0, 0, so.obs.s_frame_star)
 		if so.stel.pl_sep>0:
-			_, so.obs.s_frame_pl     = resample(so.stel.v,s_ccd_lores_pl,sig=np.mean(so.inst.sig), dx=0, eta=1,mode='fast')
-			so.obs.s_frame_pl *= so.inst.extraction_frac # extraction fraction, reduce photons to mimic spectral extraction imperfection
+			_, so.obs.s_frame  = resample(so.stel.v,s_ccd_lores_pl,sig=np.mean(so.inst.sig), dx=0, eta=1,mode='fast')
+			so.obs.s_frame *= so.inst.extraction_frac # extraction fraction, reduce photons to mimic spectral extraction imperfection
 		
 			# interpolate contrast curve onto new low res array
 			instrument_contrast_interp= interpolate.interp1d(so.inst.xtransmit,contrast)
 			so.obs.contrast  = instrument_contrast_interp(so.obs.v)
-		
-			so.obs.s_frame = np.where(so.obs.s_frame < 0, 0, so.obs.s_frame)
-			so.obs.speckle_frame = so.obs.contrast * so.obs.s_frame
-		else:
+			# speckle is the star flux times contrast
+			so.obs.speckle_frame = so.obs.contrast * so.obs.s_frame_star
+		else: # sframe is the star when on axis,  speckle is zeros
+			so.obs.s_frame = so.obs.s_frame_star
 			so.obs.speckle_frame = np.zeros_like(so.obs.s_frame)
 
 		# Get total spectrum for all frames
 		# save planet spectrum as main science spectrum
-		s_star    =  so.obs.s_frame * so.obs.nframes
-		if so.stel.pl_sep>0:
-			so.obs.s =  so.obs.s_frame_pl * so.obs.nframes
-			so.obs.s_star = s_star
-		else:
-			so.obs.s = s_star
+		so.obs.s =  so.obs.s_frame * so.obs.nframes
+
 		# Resample throughput for applying to sky background
 		#
 		base_throughput_interp = interpolate.interp1d(so.inst.xtransmit,so.inst.base_throughput)
+		so.obs.ytransmit = base_throughput_interp(so.obs.v) # save throughput sampled to final spectrum
 		
-		# Load background spectrum - sky is top of telescope and will be reduced by inst BASE throughput. Coupling already accounted for in solid angle of fiber. Does inst bkg need throughput applied?
+		# Load background spectrum - sky is top of telescope and will be reduced by inst BASE throughput. Coupling already accounted for in solid angle of fiber. Does inst bkg needs partial throughput applied - ignored for now to be conservative
 		#
-		so.obs.sky_bg_ph    = base_throughput_interp(so.obs.v) * noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
+		so.obs.sky_bg_ph    = so.obs.ytransmit * noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
 		so.obs.inst_bg_ph   = noise_tools.get_inst_bg(so.obs.v,npix=so.inst.pix_vert,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area,datapath=so.inst.transmission_path)
 		
 		# Calculate noise
 		#
 		if so.inst.pl_on: # 3 port lantern hack
-			#need to figure out what to do for sky and inst bkg bc depends on coupling
+			# need to figure out what to do for sky and inst bkg bc depends on coupling
 			noise_frame_yJ  = np.sqrt(3) * noise_tools.sum_total_noise(so.obs.s_frame/3,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph/np.sqrt(3) , so.obs.sky_bg_ph/np.sqrt(3) , so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.obs.speckle_frame) # flux split evenly over 3 traces for each of 3 PL outputs
 			noise_frame     = noise_tools.sum_total_noise(so.obs.s_frame,so.obs.texp_frame, so.obs.nsamp,so.obs.inst_bg_ph, so.obs.sky_bg_ph, so.inst.darknoise,so.inst.readnoise,so.inst.pix_vert,so.obs.speckle_frame)
 			yJ_sub          = np.where(so.obs.v < 1400)[0]
@@ -738,13 +446,14 @@ class fill_data():
 		so.obs.v_res_element, so.obs.snr_res_element = resample(so.obs.v,so.obs.snr,sig=so.inst.res_samp, dx=0, eta=1/np.sqrt(so.inst.res_samp),mode='pixels')
 
 		# compute median and max snr per order
+		#
 		order_snrs_mean = []
 		order_snrs_max  = []
 		order_inds      = []
 		for i,lam_cen in enumerate(so.inst.order_cens):
 			order_ind   = np.where((so.obs.v_res_element > lam_cen - 0.9*so.inst.order_widths[i]/2) & (so.obs.v_res_element< lam_cen + 0.9*so.inst.order_widths[i]/2))[0]
 			order_inds.append(order_ind)
-			if np.nanmean(so.obs.snr_res_element[order_ind]) > 0.1:
+			if np.nanmean(so.obs.snr_res_element[order_ind]) > 0.001:
 				order_snrs_mean.append(np.nanmean(so.obs.snr_res_element[order_ind]))
 				order_snrs_max.append(np.nanmax(so.obs.snr_res_element[order_ind]))
 			else:
@@ -754,13 +463,12 @@ class fill_data():
 		so.obs.snr_max_orders  = np.array(order_snrs_max)
 		so.obs.snr_mean_orders = np.array(order_snrs_mean)
 		so.obs.order_inds = order_inds
-
-		# define indices in passbands care about TODO check these, from Huihao
-		ind_1 = np.where((so.obs.v>940)&(so.obs.v<1090))[0]
-		ind_2 = np.where((so.obs.v>1100)&(so.obs.v<1360))[0]
-		ind_3 = np.where((so.obs.v>1480)&(so.obs.v<1820))[0]
-		ind_4 = np.where((so.obs.v>1950)&(so.obs.v<2350))[0]
-		so.obs.ind_filter = np.array(ind_1.tolist()+ind_2.tolist()+ind_3.tolist()+ind_4.tolist())
+		so.obs.order_cens = so.inst.order_cens.copy() # nice to have this in obs too
+		# define indices in passbands that actually fall on detectors (TODO should tweak these?)
+		#
+		ind_yj = np.where((so.obs.v>980)&(so.obs.v<1335))[0]
+		ind_hk = np.where((so.obs.v>1480)&(so.obs.v<2450))[0]
+		so.obs.ind_filter = np.array(ind_yj.tolist()+ind_hk.tolist())
 
 
 	def tracking(self,so):
@@ -860,10 +568,11 @@ class fill_data():
 		else:
 			telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm/continuum/np.abs(so.tel.s)
 		
+		# remove telurics
 		telcont_free_lores = degrade_spec(so.stel.v, telcont_free_hires, so.inst.res)
-		v, telcont_free = resample(so.stel.v,telcont_free_lores,sig=np.mean(so.inst.sig), dx=0, eta=1,mode='fast')
+		v, telcont_free    = resample(so.stel.v,telcont_free_lores,sig=np.mean(so.inst.sig), dx=0, eta=1,mode='fast')
 		telcont_free[np.where(np.isnan(telcont_free))] = 0
-		f_interp	 = interpolate.interp1d(v, telcont_free, bounds_error=False,fill_value=0)
+		f_interp	       = interpolate.interp1d(v, telcont_free, bounds_error=False,fill_value=0)
 		so.inst.s_telcont_free = f_interp(so.obs.v)
 
 		# make telluric only spectrum, resample onto so.obs.v to match so.obs.s
@@ -886,7 +595,7 @@ class fill_data():
 		# exposure time calculator
 		snr_frame = np.sqrt(so.inst.res_samp) * so.obs.s_frame/so.obs.noise_frame # per resolution element
 		# make 0s nans so doesnt blow up
-		inan = np.where(snr_frame < 1)[0]
+		inan = np.where(snr_frame ==0)[0]
 		snr_frame[inan] = np.nan
 
 		# result is in seconds
@@ -894,8 +603,7 @@ class fill_data():
 		so.obs.etc_order_max  = so.obs.texp_frame * (target_snr/(so.obs.snr_max_orders/so.obs.nframes))**2  # per order max 
 		so.obs.etc_order_mean = so.obs.texp_frame * (target_snr/(so.obs.snr_mean_orders/so.obs.nframes))**2   # per 
 
-
-	def compute_ccf_snr(self, so, model=None,systematics_residuals=0.01,kernel_size=201,norm_cutoff=0.8):
+	def compute_ccf_snr(self, so, model=None,systematics_residuals=0.01,kernel_size=201,norm_cutoff=0.95):
 		'''
 		Calculate the Cross-correlation function signal to noise ration with a matched filter
 
@@ -971,11 +679,14 @@ class fill_data():
 		so.obs.ccf_snr_H= ccf_snr_H
 		so.obs.ccf_snr_K= ccf_snr_K					
 
-	def compute_ccf_snr_etc(self, so, goal_ccf, model=None,systematics_residuals=0.01,kernel_size=201,norm_cutoff=0.8):
+	def compute_ccf_snr_etc(self, so, goal_ccf, model=None,systematics_residuals=0.01,kernel_size=201,norm_cutoff=0.95):
 		'''
 		{    Calculate the time required to achieve a desired CCF SNR with a matched filter
+		
+		Basically a copy of compute_ccf_snr but for a single frame and then needed exp time is derived by scaling 
 
 		Inputs:
+		--------
 		so
 		goal_ccf    - CCF SNR for which exposure time will be computed
 		systematics_residuals - A multiplicative factor that estimates the residual level of the host star spectrum and telluric lines in your signal (Default of 1%)
@@ -986,24 +697,25 @@ class fill_data():
 		# To account for read_noise, we need to change how the number of frames is done in PSISIM
 		# For systematics, we need to find a nice way to invert the CCF SNR equation when systematics are present
 		#warnings.warn('ccf snr etc function is incomplete at the moment. Double check all results for accuracy.')
-		
+		# Remove time to get flux
+		signal = so.obs.s_frame.copy()
+		noise  = so.obs.noise_frame.copy()
+
 		#make telluirc spec sampled to obs.s
 		so.tel.rayleigh[so.tel.rayleigh==0] = np.inf
 		telluric_spec = so.tel.s/so.tel.rayleigh #h2o only
 		telluric_spec[np.where(np.isnan(telluric_spec))] = 0
 		telluric_spec_lores = degrade_spec(so.stel.v, telluric_spec, so.inst.res)
 		filt_interp	 = interpolate.interp1d(so.stel.v, telluric_spec_lores, bounds_error=False,fill_value=0)
-		sky_trans		 = filt_interp(so.obs.v)/np.max(filt_interp(so.obs.v))	# filter profile resampled to phoenix times phoenix flux density
+		sky_trans    = filt_interp(so.obs.v)/np.max(filt_interp(so.obs.v))	# filter profile resampled to phoenix times phoenix flux density
 
-		# Remove time to get flux
-		signal = so.obs.s_frame
+		# define model as signal with no sky, this is not ideal
 		model  = signal / sky_trans
-		noise  = so.obs.noise_frame
 
 		#Get the noise variance
-		total_noise_flux = noise**2
-		bad_noise = np.isnan(total_noise_flux)
-		total_noise_flux[bad_noise]=np.inf
+		total_noise_var = noise**2
+		bad_noise = np.isnan(total_noise_var)
+		total_noise_var[bad_noise]=np.inf
 
 		#Calculate some normalization factor
 		#Dimitri to explain this better. 
@@ -1025,9 +737,21 @@ class fill_data():
 		signal_filt[np.isnan(signal_filt)] = 0.
 		signal_filt[norm<norm_cutoff] = 0.
 		signal_filt[bad_noise] = 0.
+		
+		sub_y = np.where(so.obs.v < 1100)[0]
+		sub_J = np.where((so.obs.v > 1100) & (so.obs.v < 1327))[0]
+		sub_H = np.where((so.obs.v > 1490) & (so.obs.v < 1780))[0]
+		sub_K = np.where((so.obs.v > 1990) & (so.obs.v < 2460))[0]
+		ccf_snr_y = np.sqrt((np.sum(signal_filt[sub_y] * model_filt[sub_y]/total_noise_var[sub_y]))**2 / np.sum(model_filt[sub_y] * model_filt[sub_y]/total_noise_var[sub_y]))
+		ccf_snr_J = np.sqrt((np.sum(signal_filt[sub_J] * model_filt[sub_J]/total_noise_var[sub_J]))**2 / np.sum(model_filt[sub_J] * model_filt[sub_J]/total_noise_var[sub_J]))
+		ccf_snr_H = np.sqrt((np.sum(signal_filt[sub_H] * model_filt[sub_H]/total_noise_var[sub_H]))**2 / np.sum(model_filt[sub_H] * model_filt[sub_H]/total_noise_var[sub_H]))
+		ccf_snr_K = np.sqrt((np.sum(signal_filt[sub_K] * model_filt[sub_K]/total_noise_var[sub_K]))**2 / np.sum(model_filt[sub_K] * model_filt[sub_K]/total_noise_var[sub_K]))
 
-		#Now the actual ccf_snr
-		so.obs.ccf_snr_etc = so.obs.texp_frame *  goal_ccf**2 / ((np.sum(signal_filt * model_filt/total_noise_flux))**2 / np.sum(model_filt * model_filt/total_noise_flux))
+		so.obs.etc_ccf_snr_y= so.obs.texp_frame *  goal_ccf**2 /ccf_snr_y**2
+		so.obs.etc_ccf_snr_J= so.obs.texp_frame *  goal_ccf**2 /ccf_snr_J**2
+		so.obs.etc_ccf_snr_H= so.obs.texp_frame *  goal_ccf**2 /ccf_snr_H**2
+		so.obs.etc_ccf_snr_K= so.obs.texp_frame *  goal_ccf**2 /ccf_snr_K**2					
+
 
 		
 	def set_teff_aomode(self,so,temp,aomode,trackonly=False):

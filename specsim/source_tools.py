@@ -3,12 +3,14 @@
 ###############################################################
 
 import numpy as np
-from scipy import signal
-from scipy import signal, interpolate
-import matplotlib.pylab as plt
-import pandas as pd 
+from astropy.io import fits
+from scipy import interpolate
+import glob,os
+from astropy.convolution import convolve
 
-all = {}
+from specsim.functions import *
+
+#all = {}
 
 
 
@@ -122,7 +124,7 @@ def scale_stellar(filt,stelv,stels,mag):
 	return nphot_expected_0/nphot_model
 
 
-def _load_stellar_model(x,mag,teff,vsini,so,rv=0):
+def load_stellar_model(x,mag,teff,vsini,so,rv=0):
 	"""
 	Loads stellar model as sonora or phoenix based on temperature
 	Then scales to the designated magnitude
@@ -180,7 +182,7 @@ def _load_stellar_model(x,mag,teff,vsini,so,rv=0):
 	return shifted_spec, vraw, sraw, model, stel_file, factor_0
 
 
-def get_band_mag(so,family,band,factor_0):
+def get_band_mag2(so,family,band,factor_0):
     """
     factor_0: scaling model to photons
     """
@@ -214,9 +216,9 @@ def get_band_mag(so,family,band,factor_0):
     return mag
 
 
-def _get_band_mag(so,vraw, sraw, model,stel_file,family,band,factor_0):
+def get_band_mag(so,vraw, sraw, model,stel_file,family,band,factor_0):
     """
-    REDO TO NOT ASSUME THE STAR!!
+    REDO TO NOT ASSUME SO!
     factor_0: scaling model to photons
     """
     xfilt,yfilt  = load_filter(so.filt.filter_path,family,band)
