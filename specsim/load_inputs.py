@@ -59,6 +59,7 @@ class fill_data():
 			self.compute_ccf_snr(so)
 		if so.run.mode=='etc_off' or so.run.mode=='etc_on':
 			self.compute_etc(so,so.obs.target_snr)
+		if so.run.mode=='etc_off':
 			self.compute_ccf_snr_etc(so,so.obs.target_ccf_snr)
 
 		# turn off tracking for now, not needed
@@ -600,8 +601,8 @@ class fill_data():
 
 		# result is in seconds
 		so.obs.etc   = so.obs.texp_frame * (target_snr/snr_frame)**2  # texp per frame times nframes - per snr element
-		so.obs.etc_order_max  = so.obs.texp_frame * (target_snr/(so.obs.snr_max_orders/so.obs.nframes))**2  # per order max 
-		so.obs.etc_order_mean = so.obs.texp_frame * (target_snr/(so.obs.snr_mean_orders/so.obs.nframes))**2   # per 
+		so.obs.etc_order_max  = so.obs.texp_frame * (target_snr/(so.obs.snr_max_orders/np.sqrt(so.obs.nframes)))**2  # per order max 
+		so.obs.etc_order_mean = so.obs.texp_frame * (target_snr/(so.obs.snr_mean_orders/np.sqrt(so.obs.nframes)))**2   # per 
 
 	def compute_ccf_snr(self, so, model=None,systematics_residuals=0.01,kernel_size=201,norm_cutoff=0.95):
 		'''

@@ -1,5 +1,5 @@
 ##############################################################
-# 
+# Tools for loading spectra and scaling to correct magnitude
 ###############################################################
 
 import numpy as np
