@@ -25,6 +25,17 @@ def gaussian(x, shift, sig):
 def define_lsf(v,res):
     """
     define gaussian in pixel elements to convolve resolved spectrum with to get rightish resolution
+
+    inputs
+    ------
+    v - wavelength array  [1D array]
+    res - resolving power [int or float]
+
+    outputs
+    -------
+    gaussian - [1D array]
+        array of a gaussian with a sigma spanning N pixels where 
+        N times the wavelength sampling gives a FWHM matching res
     """
     dlam  = np.median(v)/res
     fwhm  = dlam/np.mean(np.diff(v)) # desired lambda spacing over current lambda spacing resolved to give sigma in array elements
@@ -40,6 +51,16 @@ def define_lsf(v,res):
 def degrade_spec(x,y,res):
     """
     given wavelength, flux array, and resolving power R, return  spectrum at that R
+
+    inputs
+    ------
+    x - wavelength array
+    y - flux array
+    res - resolving power
+
+    output
+    ------
+    y_lowres - convolved y array at the new resolving power, res
     """
     lsf      = define_lsf(x,res=res)
     y_lowres = np.convolve(y,lsf,mode='same')

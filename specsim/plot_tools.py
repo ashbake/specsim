@@ -130,6 +130,23 @@ def plot_rv_err(so,savefig=True,savepath=SAVEPATH,text_pos=0):
 	return fig,axs
 
 
+def plot_telluric_mask(so):
+	"""
+	not tested
+	plots telluric mask
+	"""
+	plt.figure()
+	plt.fill_between(so.obs.v,1-so.obs.telluric_mask,facecolor='k',alpha=0.8,label='Masked')
+	plt.plot(so.obs.v,so.obs.s_tel,label='Telluric')
+	#plt.plot(so.obs.v,20*all_w/np.max(all_w),label='IC')
+	plt.plot(so.obs.v,so.obs.s/np.max(so.obs.s),'k',label='Stellar')
+	plt.xlim(2192,2198)
+	plt.legend()
+	plt.xlabel('Wavelength (nm)')
+	plt.subplots_adjust(bottom=0.15)
+	plt.ylabel('Flux (arb. units)')
+
+
 def plot_rv_err_gen(v,s,order_cens,rv_order,rv_floor=0.3,savefig=True,tag='test',annotate=False):
 	"""
 

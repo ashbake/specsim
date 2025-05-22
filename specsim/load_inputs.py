@@ -272,14 +272,14 @@ class fill_data():
 		# THROUGHPUT
 		try: # if config has transmission file, use it, otherwise load HISPEC version
 			thput_x, thput_y = np.loadtxt(so.inst.transmission_file,delimiter=',').T
-			if np.max(thput_x) < 5: thput_x*=1000
-			tck_thput   = interpolate.splrep(thput_x,thput_y, k=2, s=0)
+			if np.max(thput_x) < 5: thput_x*=1000 # convert to nanometers
+			tck_thput   = interpolate.splrep(thput_x,thput_y, k=1, s=0)
 			so.inst.xtransmit   = self.x
 			so.inst.ytransmit   = interpolate.splev(self.x,tck_thput,der=0,ext=1)
 			so.inst.ytransmit   = np.where(so.inst.ytransmit < 0, 0, so.inst.ytransmit) # make negative throughput values to 0
 			so.inst.base_throughput = so.inst.ytransmit.copy() # store this here bc ya
 			#add airmass calc for strehl for seeing limited instruments?
-			print('')
+			print('Loaded Custom Transmission File')
 		except:
 			so.inst.base_throughput,_  = throughput_tools.get_base_throughput(self.x,datapath=so.inst.transmission_path) # everything except coupling
 			so.inst.base_throughput    = np.where(so.inst.base_throughput < 0, 0, so.inst.base_throughput) # make negative throughput values to 0
@@ -374,9 +374,11 @@ class fill_data():
 			print('Texp per frame set to %s'%so.obs.texp_frame)
 		# user defined exposure time per frame case:
 		else:
-			so.obs.texp_frame = so.obs.texp_frame_set
+			if so.obs.texp < so.obs.texp_frame_set:
+				print('Exposure time is less than the set exposure time per frame, will set frame time to the total exposure time')
+			so.obs.texp_frame = np.min((so.obs.texp_frame_set, so.obs.texp))
 			so.obs.nframes = int(np.ceil(so.obs.texp/so.obs.texp_frame))
-			print('Texp per frame set to %s'%so.obs.texp_frame)
+			print('Texp per frame set to user defined value %s'%so.obs.texp_frame)
 			print('Nframes set to %s'%so.obs.nframes)
 		
 		# Degrade to instrument resolution after applying frame exposure time
@@ -560,6 +562,8 @@ class fill_data():
 
 	def compute_rv(self,so,telluric_cutoff=0.01,velocity_cutoff=1):
 		"""
+		telluric_cutofff - depth of telluric lines to start cut 
+		velocity_cutoff  - km/s around a telluric line to cut
 		"""
 		# Create spectrum with continuum removed and tellurics removed
 		# the noise spectrum will consider tellurics but shouldnt be in the spectrum for computing RV
