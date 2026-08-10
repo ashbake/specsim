@@ -16,15 +16,38 @@ from specsim.functions import *
 
 def load_phoenix(stelname,stelpath,wav_start=750,wav_end=780):
 	"""
-	load fits file stelname with stellar spectrum from phoenix 
+	Load a PHOENIX stellar spectrum fits file and return the requested
+	wavelength subarray, converted to photon flux units.
+
 	http://phoenix.astro.physik.uni-goettingen.de/?page_id=15
-	
-	return subarray 
-	
-	wav_start, wav_end specified in nm
-	
-	convert s from egs/s/cm2/cm to phot/cm2/s/nm using
+
+	Converts flux from ergs/s/cm2/cm to phot/cm2/s/nm using
 	https://hea-www.harvard.edu/~pgreen/figs/Conversions.pdf
+	then to phot/m2/s/nm.
+
+	inputs:
+	-------
+	stelname - str
+		filename of the PHOENIX spectrum fits file (flux only; the
+		wavelength grid is loaded separately from
+		'WAVE_PHOENIX-ACES-AGSS-COND-2011.fits' in stelpath)
+
+	stelpath - str
+		directory path containing stelname and the PHOENIX wavelength file
+
+	wav_start - float
+		lower wavelength bound of the returned subarray [nm] (default 750)
+
+	wav_end - float
+		upper wavelength bound of the returned subarray [nm] (default 780)
+
+	returns:
+	--------
+	wavelength - array
+		wavelength subarray [nm]
+
+	flux - array
+		photon flux subarray [phot/m2/s/nm]
 	"""
 	# conversion factor
 
@@ -49,6 +72,33 @@ def load_phoenix(stelname,stelpath,wav_start=750,wav_end=780):
 
 def load_filter(filter_path,family,band):
 	"""
+	Load a photometric filter transmission curve from a data file matching
+	the given filter family and band.
+
+	Searches filter_path for a file matching '*<family>*<band>.dat' and
+	loads its two columns as wavelength [nm, converted from the file's
+	Angstrom-like units by dividing by 10] and transmission.
+
+	inputs:
+	-------
+	filter_path - str
+		directory to search for the filter file
+
+	family - str
+		filter family name (e.g. 'Johnson', 'SLOAN'), matched as a
+		substring of the filter filename
+
+	band - str
+		filter band name (e.g. 'V', 'uprime_filter'), matched as a
+		substring of the filter filename
+
+	returns:
+	--------
+	xraw - array
+		filter wavelength grid [nm]
+
+	yraw - array
+		filter transmission, unitless (out of 1)
 	"""
 	filter_file    = glob.glob(filter_path + '*' + family + '*' + band + '.dat')[0]
 	xraw, yraw     = np.loadtxt(filter_file).T # nm, transmission out of 1
@@ -56,16 +106,35 @@ def load_filter(filter_path,family,band):
 
 def load_sonora(stelname,wav_start=750,wav_end=780):
 	"""
-	load sonora model file
-	
-	return subarray 
-	
-	wav_start, wav_end specified in nm
-	
-	convert s from erg/cm2/s/Hz to phot/cm2/s/nm using
-	https://hea-www.harvard.edu/~pgreen/figs/Conversions.pdf
+	Load a Sonora stellar/substellar atmosphere model file and return the
+	requested wavelength subarray, converted to photon flux units.
 
-	wavelength loaded is microns high to low
+	The file's wavelength column is loaded in microns, high to low, and is
+	reversed and converted to Angstroms internally. Flux is converted from
+	erg/cm2/s/Hz to erg/cm2/s/Angstrom (via c/lambda^2) and then to
+	phot/cm2/s/Angstrom using
+	https://hea-www.harvard.edu/~pgreen/figs/Conversions.pdf, before being
+	returned as phot/m2/s/nm.
+
+	inputs:
+	-------
+	stelname - str
+		path to the Sonora model file (whitespace-delimited, 2 header rows,
+		columns: wavelength [micron], flux [erg/cm2/s/Hz])
+
+	wav_start - float
+		lower wavelength bound of the returned subarray [nm] (default 750)
+
+	wav_end - float
+		upper wavelength bound of the returned subarray [nm] (default 780)
+
+	returns:
+	--------
+	wavelength - array
+		wavelength subarray [nm]
+
+	flux - array
+		photon flux subarray [phot/m2/s/nm]
 	"""
 	f = np.loadtxt(stelname,skiprows=2)
 
@@ -91,13 +160,14 @@ def calc_nphot(dl_l, zp, mag):
 
 	inputs:
 	-------
-	dl_l: float, delta lambda over lambda for the passband
-	zp: float, flux at m=0 in Jansky
-	mag: stellar magnitude
+	dl_l: float, delta lambda over lambda for the passband, unitless
+	zp: float, flux at m=0 in Jansky (zero-point flux)
+	mag: float, stellar magnitude in the passband
 
 	outputs:
 	--------
-	photon flux
+	photon flux: float, photons per second per square meter [phot/s/m2]
+	at the top of Earth's atmosphere for an object of the given magnitude
 	"""
 	phot_per_s_m2_per_Jy = 1.51*10**7 # convert to phot/s/m2 from Jansky
 
@@ -105,12 +175,36 @@ def calc_nphot(dl_l, zp, mag):
 
 def scale_stellar(filt,stelv,stels,mag):
 	"""
-	scale spectrum by magnitude
-	inputs: 
-	filt: so.filt object
-	mag: magnitude in filter desired
+	Compute the scale factor needed to normalize a model stellar spectrum
+	so that its integrated flux through a given filter matches a specified
+	magnitude.
 
-	load new stellar to match bounds of filter since may not match working badnpass elsewhere
+	Interpolates the filter transmission onto the stellar wavelength grid,
+	integrates the filtered stellar spectrum, and compares it to the
+	expected photon flux for the requested magnitude (via calc_nphot) to
+	derive a single multiplicative scale factor. Raises a Warning if the
+	stellar model does not fully cover the filter bandpass.
+
+	inputs:
+	-------
+	filt - object
+		so.filt object; must provide xraw/yraw (filter wavelength [nm] and
+		transmission) as well as dl_l and zp attributes used by calc_nphot
+
+	stelv - array
+		stellar model wavelength grid [nm]
+
+	stels - array
+		stellar model flux density [phot/m2/s/nm] evaluated at stelv
+
+	mag - float
+		desired magnitude of the star in the filter bandpass
+
+	returns:
+	--------
+	factor - float
+		multiplicative scale factor to apply to stels so that its
+		integrated flux through the filter matches mag
 	"""
 	if (np.min(filt.xraw) < np.min(stelv)) or (np.max(filt.xraw) > np.max(stelv)):
 		raise Warning('Check that stellar model in scale_stellar extends past filter profile')
@@ -126,11 +220,67 @@ def scale_stellar(filt,stelv,stels,mag):
 
 def load_stellar_model(x,mag,teff,vsini,so,rv=0):
 	"""
-	Loads stellar model as sonora or phoenix based on temperature
-	Then scales to the designated magnitude
-	then broadens by vsini
+	Load a model stellar spectrum (Sonora or PHOENIX, chosen by effective
+	temperature), scale it to the designated magnitude, broaden it by
+	rotational velocity, optionally apply a radial-velocity Doppler shift,
+	and interpolate the result onto the requested wavelength grid x.
 
-	so only used for paths and filter information
+	Sonora models are used for teff < 2300 K (assuming log g = log10(316*100)
+	= 4.5), otherwise a PHOENIX model at so.stel.logg is used.
+
+	inputs:
+	-------
+	x - array
+		wavelength grid [nm] onto which the final spectrum is interpolated
+
+	mag - float
+		desired stellar magnitude in the filter so.filt (used to scale the
+		model via scale_stellar)
+
+	teff - float
+		stellar effective temperature [K]; selects Sonora (teff < 2300) or
+		PHOENIX (teff >= 2300) model grid
+
+	vsini - float
+		projected stellar rotational velocity [km/s]; if > 0, the spectrum
+		is convolved with a rotational broadening kernel (see
+		_lsf_rotate)
+
+	so - object
+		storage object; used only for paths and filter information
+		(so.filt.xraw, so.stel.sonora_folder, so.stel.phoenix_folder,
+		so.stel.logg)
+
+	rv - float
+		radial velocity offset to apply to the spectrum via a Doppler shift
+		[km/s], used e.g. to offset the star from tellurics for CCF
+		purposes (default 0)
+
+	returns:
+	--------
+	shifted_spec - array
+		final stellar spectrum [phot/s/m2/nm] interpolated onto x, scaled
+		to mag, broadened by vsini, and Doppler-shifted by rv (negative
+		values from interpolation artifacts are clipped to zero)
+
+	vraw - array
+		raw (unscaled, unbroadened) model wavelength grid [nm] as loaded
+		from the Sonora/PHOENIX file
+
+	sraw - array
+		raw (unscaled, unbroadened) model flux density [phot/m2/s/nm] as
+		loaded from the Sonora/PHOENIX file
+
+	model - str
+		which model grid was used, 'sonora' or 'phoenix'
+
+	stel_file - str
+		full path to the loaded model file (Sonora), or just the filename
+		within so.stel.phoenix_folder (PHOENIX)
+
+	factor_0 - float
+		multiplicative scale factor applied to match mag (from
+		scale_stellar)
 	"""
 	# wavelength bounds should incldue filter entirely
 	l0,l1 = np.min((np.min(x),np.min(so.filt.xraw))),np.max((np.max(x),np.max(so.filt.xraw)))
@@ -184,7 +334,38 @@ def load_stellar_model(x,mag,teff,vsini,so,rv=0):
 
 def get_band_mag2(so,family,band,factor_0):
     """
-    factor_0: scaling model to photons
+    Compute the apparent magnitude of the currently loaded stellar model
+    (scaled by factor_0) in a requested photometric filter band.
+
+    Loads the filter transmission curve, reloads the stellar model over the
+    filter's wavelength range if it extends beyond the instrument's
+    wavelength range [so.inst.l0, so.inst.l1] (otherwise reuses the
+    already-loaded so.stel.vraw/so.stel.sraw), integrates the scaled and
+    filtered stellar spectrum to get flux in phot/m2/s, converts to Jansky,
+    and compares to the filter's zero point to get magnitude.
+
+    inputs:
+    -------
+    so - object
+        storage object; uses so.filt.filter_path, so.filt.zp_file,
+        so.inst.l0/so.inst.l1 [nm], and so.stel.model/so.stel.stel_file/
+        so.stel.phoenix_folder/so.stel.vraw/so.stel.sraw as needed
+
+    family - str
+        filter family name (e.g. 'Johnson', 'SLOAN'), passed to load_filter
+
+    band - str
+        filter band name (e.g. 'V'), passed to load_filter
+
+    factor_0 - float
+        multiplicative scale factor applied to the stellar model flux
+        (scaling model to photons; from scale_stellar/load_stellar_model)
+
+    returns:
+    --------
+    mag - float
+        apparent magnitude of the scaled stellar model in the requested
+        filter band
     """
     x,y          = load_filter(so.filt.filter_path,family,band)
     filt_interp  = interpolate.interp1d(x, y, bounds_error=False,fill_value=0)
@@ -218,8 +399,55 @@ def get_band_mag2(so,family,band,factor_0):
 
 def get_band_mag(so,vraw, sraw, model,stel_file,family,band,factor_0):
     """
+    Compute the apparent magnitude of a given (already-loaded) stellar
+    model spectrum, scaled by factor_0, in a requested photometric filter
+    band.
+
+    Like get_band_mag2, but takes the stellar model arrays/metadata
+    explicitly rather than always pulling them from so.stel. Loads the
+    filter transmission curve, reloads the stellar model (via load_phoenix
+    or load_sonora) over the filter's wavelength range if it extends beyond
+    the range of the passed-in vraw, integrates the scaled and filtered
+    stellar spectrum to get flux in phot/m2/s, converts to Jansky, and
+    compares to the filter's zero point to get magnitude.
+
     REDO TO NOT ASSUME SO!
-    factor_0: scaling model to photons
+
+    inputs:
+    -------
+    so - object
+        storage object; uses so.filt.filter_path, so.filt.zp_file, and
+        (if a reload is needed) so.stel.phoenix_folder
+
+    vraw - array
+        stellar model wavelength grid [nm]
+
+    sraw - array
+        stellar model flux density [phot/m2/s/nm] evaluated at vraw
+
+    model - str
+        which model grid vraw/sraw came from, 'phoenix' or 'sonora'; used
+        to pick the reload function if the filter extends past vraw
+
+    stel_file - str
+        model filename/path used to reload the stellar model if needed
+        (passed to load_phoenix or load_sonora)
+
+    family - str
+        filter family name (e.g. 'Johnson', 'SLOAN'), passed to load_filter
+
+    band - str
+        filter band name (e.g. 'V'), passed to load_filter
+
+    factor_0 - float
+        multiplicative scale factor applied to the stellar model flux
+        (scaling model to photons; from scale_stellar/load_stellar_model)
+
+    returns:
+    --------
+    mag - float
+        apparent magnitude of the scaled stellar model in the requested
+        filter band
     """
     xfilt,yfilt  = load_filter(so.filt.filter_path,family,band)
     filt_interp  = interpolate.interp1d(xfilt, yfilt, bounds_error=False,fill_value=0)
@@ -262,7 +490,9 @@ def get_band_mag(so,vraw, sraw, model,stel_file,family,band,factor_0):
 def _lsf_rotate(deltav,vsini,epsilon=0.6):
     '''
     Computes vsini rotation kernel.
-    Based on the IDL routine LSF_ROTATE.PRO
+    Based on the IDL routine LSF_ROTATE.PRO, which implements the
+    analytic rotational broadening profile of Gray, D. F. 1992,
+    "The Observation and Analysis of Stellar Photospheres".
 
     Parameters
     ----------
@@ -278,9 +508,10 @@ def _lsf_rotate(deltav,vsini,epsilon=0.6):
     Returns
     -------
     kernel : array
-        Computed kernel profile
+        Computed rotational broadening kernel profile, unitless, sampled
+        on velgrid (suitable for use as a convolution kernel)
 
-    velgrid : float
+    velgrid : array
         x-values for kernel [km/s]
 
     '''

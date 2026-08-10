@@ -9,9 +9,16 @@ all = {'storage_object','load_object'}
 
 class storage_object():
     """
-    Main storage object for organization
+    Top-level container passed through the whole pipeline. Holds one
+    sub-object per physical component (so.run, so.filt, so.stel, so.tel,
+    so.inst, so.ao, so.obs, so.track), each of which starts with default
+    values and is progressively filled in by load_object/fill_data.
     """
     def __init__(self):
+        """
+        Instantiate and attach all sub-storage objects (run, filt, stel,
+        tel, inst, ao, obs, track) as attributes
+        """
         # Classes
         self.run  = RUN()
         self.filt = FILTER() 
@@ -26,29 +33,39 @@ class storage_object():
 
 
 class RUN():
-    "star info and spectrum"
+    "output/run settings: output path, plot tag, and base data folder"
     def __init__(self):
+        """
+        Set default run/output settings (outpath, tag, data_folder)
+        """
         self.outpath      = './'   # output path
         self.tag          = 'test' # tag for plot saving
-        
+        self.data_folder  = './'   # base folder that all *_file/*_folder/*_path attrs (outside so.run) are joined onto, unless already absolute
+
+
 class AO():
-    "float values"
+    "AO system parameters: mode, tip/tilt and high order WFE, coupling inputs"
     def __init__(self):
+        """
+        Set default AO system parameters (mode, static/dynamic tip-tilt,
+        low order wfe, defocus, etc.) and placeholders for values filled
+        in later by the code
+        """
         # user defined
         self.mode        = 'auto'    # AO mode corresponding to ao wfe load fxn
         self.tt_static   = 2         # mas, static tip tilt error
-        self.tt_dynamic_set  = None  # file with dynamic tip tilt error structured with seeing, ZA, AO mode
-        self.ho_wfe_set  = None      # file with high order wfe error data structured with seeing, ZA, AO mode
+        self.tt_dynamic_file  = None      # file with dynamic tip tilt error structured with seeing, ZA, AO mode
+        self.ho_wfe_file      = None      # file with high order wfe error data structured with seeing, ZA, AO mode
         self.lo_wfe      = 50        # nm, low order 
         self.defocus     = 25        # nm, defocus error
         self.mag         = 'default' # magnitude of ao star, if 'default' uses mag of on axis star
         self.teff        = 'default' # teff of ao star, if 'default' uses teff of on axis star
+        self.ho_wfe      = None      # high order wfe, will be filled in by code
+        self.tt_dynamic  = None      # dynamic tip tilt error
         # filled in by code
         self.band        = None      # band of ao star
         self.dichroic    = None      # AO dichroic transmission, for HISPEC in case pyramid is used
         self.ho_strehl   = None      # high order strehl
-        self.ho_wfe      = None      # high order wfe
-        self.tt_dynamic  = None      # dynamic tip tilt error
         self.strehl_array= None      # strehl array as function of wavelength
         self.ao_mag      = None      # magnitude of ao star in band selected
         self.ao_modes    = None      # list of ao modes loaded from file
@@ -57,8 +74,13 @@ class AO():
 
 
 class INSTRUMENT():
-    "float values"
+    "spectrograph parameters: wavelength range, resolution, detector, throughput"
     def __init__(self):
+        """
+        Set default instrument parameters (wavelength range, resolving
+        power, detector properties, etc.) and placeholders for throughput
+        and order information filled in later by the code
+        """
         # user defined
         self.transmission_path = None # path to transmission files
         self.order_bounds_file = None # file with order bound information
@@ -94,9 +116,14 @@ class INSTRUMENT():
 
 
 class OBSERVATION():
-    "float values, variables"
+    "observation setup (exposure time, zenith angle) and computed spectra/SNR/noise arrays"
     def __init__(self):
-        self.texp             = 900  # seconds, total integrated exposure time 
+        """
+        Set default observation parameters (exposure time, zenith angle,
+        target SNR, etc.) and placeholders for spectra and noise arrays
+        filled in later by the code
+        """
+        self.texp             = 900  # seconds, total integrated exposure time
         self.texp_frame_set   = 900  # seconds, maximum for a single exposure. default lets code choose it with max of 900
         self.nsamp            = 1    # number of up the ramp samples per frame exposure
         self.zenith_angle     = 45   # degrees, zenith angle of observation. Used to define airmass
@@ -123,8 +150,12 @@ class OBSERVATION():
 
 
 class FILTER():
-    "float values"
+    "photometric filter band/family selection, curve, and zeropoint"
     def __init__(self):
+        """
+        Set default photometric filter selection (band, family) and
+        placeholders for the loaded filter curve and zeropoint
+        """
         self.x    = None # wavelength array
         self.y    = None # filter transmission (fraction)
         self.zp   = None # zeropoints storage object - will be loaded
@@ -139,6 +170,11 @@ class FILTER():
 class STELLAR():
     "star info and spectrum"
     def __init__(self):
+        """
+        Set default stellar/companion parameters (Teff, magnitude, vsini,
+        rv, separation, etc.) and placeholders for the loaded spectrum
+        filled in later by the code
+        """
         # User optional define:
         self.phoenix_folder   = None  # Path to where Phoenix files live, T>=2300K objects
         self.sonora_folder    = None  # path to Sonora files, used for T<2300K objects
@@ -163,9 +199,13 @@ class STELLAR():
 class TELLURIC():
     "telluric transmission file, static"
     def __init__(self):
+        """
+        Set default telluric parameters (pwv, seeing) and placeholders
+        for the loaded telluric transmission spectrum and its components
+        """
         # User optional define:
         self.telluric_file   = None       # spec file name
-        self.skypath         = None       # path to sky emission files
+        self.sky_path        = None       # path to sky emission files
         self.pwv             = 1.3        # mm
         self.seeing_set      = 'average'  # seeing to set: options of good (0.6), average (0.8), and bad (1.1) 
         # Filled in by code:
@@ -181,6 +221,10 @@ class TELLURIC():
 class TRACK():
     "tracking camera storage"
     def __init__(self):
+        """
+        Set default tracking camera parameters (exposure time, f ratio,
+        band, field radius) and placeholders for the loaded throughput
+        """
         # User optional defined
         self.transmission_file = None # path to ATC transmission file
         self.texp      = 1    # exposure time of tracking camera [s]
@@ -194,9 +238,19 @@ class TRACK():
 
 def LoadConfig(configfile, config={}):
     """
-    Reads configuration file 'XXX.cfg'
-    returns a dictionary with keys of the form
-    <section>.<option> and the corresponding values
+    Read a configuration file 'XXX.cfg' into a flat dictionary
+
+    inputs
+    ------
+    configfile : str
+        path to a .cfg file with [section] headers and option=value lines
+    config : dict, optional
+        existing dict to extend (not mutated in place; a copy is returned)
+
+    output
+    ------
+    config : dict
+        keys of the form '<section>.<option>', values as stripped strings
     """
     config = config.copy(  )
     cp = configparser.ConfigParser(  )
@@ -209,11 +263,27 @@ def LoadConfig(configfile, config={}):
     return config
 
 
+PATH_ATTR_SUFFIXES = ('_file', '_folder', '_path')
+
+
 def load_object(configfile):
     """
-    Loads config file as dictionary using LoadConfig function
-    Then loads stoar_object and fills in user-defined
-    quantities
+    Build a storage_object and populate it with user-defined values from
+    a config file
+
+    inputs
+    ------
+    configfile : str
+        path to a .cfg file, parsed by LoadConfig into '<section>.<option>'
+        keys matching the storage_object's sub-object attribute names
+        (e.g. 'inst.res' sets so.inst.res)
+
+    output
+    ------
+    so : storage_object
+        with each config value set (as float where possible, else string),
+        and any *_file/*_folder/*_path attribute (outside so.run) resolved
+        relative to so.run.data_folder if not already absolute
     """
     if not os.path.isfile(configfile): raise Exception("Config File is Not Found!")
     config = LoadConfig(configfile)
@@ -226,6 +296,12 @@ def load_object(configfile):
         except ValueError:
             setattr(getattr(so,s1),s2,config[key])
 
+    # Any attribute named *_file/*_folder/*_path (outside so.run) is treated
+    # as living under so.run.data_folder unless it's already an absolute path.
+    for section in (so.filt, so.stel, so.tel, so.inst, so.ao, so.obs, so.track):
+        for attr, value in vars(section).items():
+            if attr.endswith(PATH_ATTR_SUFFIXES) and isinstance(value, str) and not os.path.isabs(value):
+                setattr(section, attr, os.path.join(so.run.data_folder, value))
 
     return so
 

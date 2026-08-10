@@ -13,12 +13,42 @@ all = {'integrate','gaussian', 'define_lsf', 'vac_to_stand', 'setup_band', 'resa
 
 def integrate(x,y):
     """
-    Integrate y wrt x
+    Integrate y with respect to x using the trapezoidal rule.
+
+    inputs
+    ------
+    x - array
+        independent variable (e.g. wavelength)
+    y - array
+        dependent variable to integrate, evaluated at x
+
+    output
+    ------
+    integral - float
+        definite integral of y over the range of x (trapezoidal approximation)
     """
     return np.trapz(y,x=x)
 
 def gaussian(x, shift, sig):
-    ' Return normalized gaussian with mean shift and var = sig^2 '
+    """
+    Return a normalized (unit-area) gaussian probability density function
+    evaluated at x, with mean `shift` and variance sig^2.
+
+    Parameters
+    ----------
+    x : array or float
+        Input dependent variable array (points at which to evaluate the gaussian)
+    shift : float
+        Mean (center) of the gaussian distribution, same units as x
+    sig : float
+        Standard deviation (sigma) of the gaussian, same units as x
+
+    Returns
+    -------
+    g : array or float
+        Normalized gaussian values evaluated at x, with peak amplitude
+        1/(sig*sqrt(2*pi)) such that the integral over x equals 1
+    """
     return np.exp(-.5*((x - shift)/sig)**2)/(sig * np.sqrt(2*np.pi))
 
 
@@ -28,19 +58,22 @@ def define_lsf(v,res):
 
     inputs
     ------
-    v - wavelength array  [1D array]
+    v - wavelength array [nm], 1D array
+        wavelength grid the LSF will be applied to; must be sampled finely
+        enough that the resulting gaussian kernel spans at least ~20 pixels
     res - resolving power [int or float]
+        spectral resolving power R = lambda / delta_lambda to represent
 
     outputs
     -------
     gaussian - [1D array]
-        array of a gaussian with a sigma spanning N pixels where 
+        array of a gaussian with a sigma spanning N pixels where
         N times the wavelength sampling gives a FWHM matching res
     """
     dlam  = np.median(v)/res
     fwhm  = dlam/np.mean(np.diff(v)) # desired lambda spacing over current lambda spacing resolved to give sigma in array elements
     sigma = fwhm/2.634 # FWHM is dl/l but feed sigma    
-    x = np.arange(sigma*10)
+    x = np.arange(sigma*10) # sigma is defined in pixels so this will be an integer
     gaussian = (1./sigma/np.sqrt(2*np.pi)) * np.exp(-0.5*( (x - 0.5*len(x))/sigma)**2 )
 
     if len(gaussian)<20:
@@ -50,17 +83,23 @@ def define_lsf(v,res):
 
 def degrade_spec(x,y,res):
     """
-    given wavelength, flux array, and resolving power R, return  spectrum at that R
+    Degrade a spectrum to a lower resolving power by convolving it with a
+    gaussian line spread function (LSF) matched to the requested resolution.
 
     inputs
     ------
-    x - wavelength array
-    y - flux array
-    res - resolving power
+    x - array
+        wavelength array [nm]
+    y - array
+        flux array evaluated at x
+    res - float or int
+        resolving power (R) to degrade the spectrum to
 
     output
     ------
-    y_lowres - convolved y array at the new resolving power, res
+    y_lowres - array
+        y convolved with the gaussian LSF for the requested resolving power,
+        res (same length and sampling as input y)
     """
     lsf      = define_lsf(x,res=res)
     y_lowres = np.convolve(y,lsf,mode='same')
@@ -68,6 +107,25 @@ def degrade_spec(x,y,res):
     return y_lowres
 
 def tophat(x,l0,lf,throughput):
+    """
+    Return a tophat (rectangular) bandpass over x
+
+    inputs
+    ------
+    x - array
+        wavelength array
+    l0 - float
+        lower bound of the bandpass
+    lf - float
+        upper bound of the bandpass
+    throughput - float
+        constant value assigned to the bandpass between l0 and lf
+
+    output
+    ------
+    bandpass - array
+        array same shape as x, equal to throughput within (l0, lf) and 0 elsewhere
+    """
     ion = np.where((x > l0) & (x<lf))[0]
     bandpass = np.zeros_like(x)
     bandpass[ion] = throughput
@@ -75,20 +133,22 @@ def tophat(x,l0,lf,throughput):
 
 
 def vac_to_stand(wave_vac):
-    """Convert vacuum wavelength (Ang) to standard wavelength in air since we're
-    doing ground based stuff. 
+    """Convert vacuum wavelength to standard (air) wavelength, since we're
+    doing ground based observations where air wavelengths are appropriate.
 
 	https://idlastro.gsfc.nasa.gov/ftp/pro/astro/vactoair.pro
     Equation from Prieto 2011 Apogee technical note
     and equation and parametersfrom Cidor 1996
-    
-    inputs: 
+
+    inputs:
     -------
-    wave_fac: 1D array, wavelength [A]
+    wave_vac: 1D array, vacuum wavelength [Angstrom]
 
     outputs:
     -------
-    
+    wave_air: 1D array, wavelength converted to standard air [Angstrom]
+        computed as wave_vac / n, where n is the index of refraction of
+        air given by the Cidor 1996 dispersion formula
     """
     # eqn
     sigma2= (1e4/wave_vac)**2.
@@ -101,13 +161,24 @@ def vac_to_stand(wave_vac):
 
 def setup_band(x, x0=0, sig=0.3, eta=1):
     """
-    give step function
+    Generate a tophat (step function) bandpass centered on x0, evaluated
+    over the array x.
 
     inputs:
     ------
-    x0
-    sig
-    eta
+    x - array
+        independent variable array (e.g. wavelength [nm]) the bandpass is evaluated over
+    x0 - float
+        center of the bandpass, same units as x. default 0
+    sig - float
+        full width of the bandpass, same units as x. default 0.3
+    eta - float
+        amplitude (e.g. throughput, 0-1) assigned within the bandpass. default 1
+
+    outputs:
+    -------
+    y : array
+        array same shape as x, equal to eta within (x0-sig/2, x0+sig/2) and 0 elsewhere
     """
     y = np.zeros_like(x)
 
@@ -118,13 +189,27 @@ def setup_band(x, x0=0, sig=0.3, eta=1):
 
 def rebin(x,y,nbin=3, eta=1):
     """
-    resample using convolution
+    Resample (bin down) a spectrum by a fixed integer number of pixels,
+    using a boxcar (tophat) convolution followed by decimation.
 
-    x: wavelength array in nm
-    y: y values evaluated at x
+    inputs
+    ------
+    x - array
+        wavelength array [nm]
+    y - array
+        y values (e.g. flux) evaluated at x
+    nbin - int
+        number of pixels to combine into each output bin. default 3
+    eta - float
+        factor to multiply y by (e.g. throughput). default 1
 
-    nbin: - integer; numbers of pixels to combine
-    eta: factor to multiply y by,default 1
+    outputs
+    -------
+    int_lam - array
+        wavelength array [nm], downsampled by taking every nbin-th value of x
+    int_spec - array
+        y convolved with a boxcar of width nbin and scaled by eta,
+        downsampled by taking every nbin-th value
     """
     tophat  = eta * np.ones(nbin) # do i need to pad this?
 
@@ -138,20 +223,45 @@ def rebin(x,y,nbin=3, eta=1):
 
 def resample(x,y,sig=0.3, dx=0, eta=1,mode='variable'):
     """
-    resample using convolution
+    Resample (bin) a spectrum onto coarser wavelength sampling by convolving
+    with a tophat kernel of width sig and decimating, using one of several
+    methods.
 
-    x: wavelength array in nm
-    y: spectrum array (evaluated at x) to resample, units in spectral density (e.g. photons/nm)
+    inputs
+    ------
+    x - array
+        wavelength array [nm]
+    y - array
+        spectrum array (evaluated at x) to resample, units in spectral
+        density (e.g. photons/nm)
+    sig - float or array
+        width of the resample bin(s) [nm], default 0.3nm. Can be a scalar
+        (modes 'fast'/'slow'/'pixels') or an array matching x (mode
+        'variable', for a spectrally-varying resolution element such as a
+        constant-R grid)
+    dx - float
+        offset [nm] for the location of the first bin, default 0
+    eta - float
+        efficiency/throughput (0-1), amplitude scaling applied to the
+        binned flux, default 1
+    mode - str
+        resampling method to use:
+        'fast' - FFT convolution with a fixed-width tophat; requires x to
+            be uniformly sampled and sig to be a scalar
+        'variable' - like 'fast' but allows sig to vary per pixel (e.g. for
+            constant resolving power), grouping pixels by integer bin width
+        'variable_smooth' - not yet implemented (no-op)
+        'slow' - steps through x and integrates each tophat-weighted
+            segment with trapz; slightly more accurate but slower
+        'pixels' - like 'fast' but sig is interpreted in units of pixels
+            rather than nm
 
-    sig in nanometers - width of bin, default 0.3nm
-    dx - offset for taking first bin, defaul 0
-    eta 0-1 for efficiency (amplitude of bin) default 1
-    
-    modes: slow, fast, variable
-    slow more accurate (maybe?), fast uses fft, variable takes variable res element
-
-    slow method uses trapz so slightly more accurate, i think? both return similar flux values
-    note specutils resampler will crash with big arrays here
+    outputs
+    -------
+    int_lam - array
+        resampled wavelength array [nm], one value per output bin
+    int_spec - array
+        resampled spectrum, integrated/convolved flux in each bin
     """
     if mode=='fast':
         dlam    = np.median(np.diff(x)) # nm per pixel, most accurate if x is uniformly sampled in wavelength

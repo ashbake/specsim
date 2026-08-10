@@ -17,7 +17,63 @@ all = {}
 
 def pick_coupling_rounded(transmission_path,w,ho_wfe, tt_dynamic, lo_wfe=50, tt_static=0, defocus=0, atm=1,adc=1,pl_on=1,piaa_boost=1.3):
     """
-    w in nm
+    Look up fiber injection/coupling efficiency by rounding the requested
+    wavefront-error and tip-tilt parameters to the nearest values available
+    in the pre-computed coupling grid (a set of CSV files, one per parameter
+    combination), then loading that single file and interpolating it onto
+    the requested wavelength grid. High-order WFE is not rounded; instead
+    it is converted analytically to a Strehl ratio (Marechal approximation)
+    and multiplied onto the tabulated (rounded-grid) coupling.
+
+    inputs
+    ------
+    transmission_path : string
+        path to the directory containing the 'coupling/' subfolder with the
+        couplingEff_atm%s_adc%s_PL%s_defoc%snmRMS_LO%snmRMS_ttStatic%smas_ttDynamic%smasRMS.csv
+        grid files
+    w : array
+        wavelength array, in nm if max(w) >= 10, otherwise assumed to be in
+        microns and converted to nm internally
+    ho_wfe : float or array [nm]
+        high-order wavefront error, used to compute the Strehl ratio applied
+        multiplicatively to the tabulated coupling (not used to select the
+        grid file)
+    tt_dynamic : float [mas]
+        dynamic tip-tilt RMS; rounded to the nearest 0.5 mas (grid sampling)
+        to select the coupling file, and clipped to the 19.5 mas file if the
+        rounded value is >= 20
+    lo_wfe : float, optional [nm]
+        low-order wavefront error RMS; rounded to the nearest 25 nm to select
+        the coupling file. Default 50
+    tt_static : float, optional [mas]
+        static tip-tilt; rounded to the nearest 0.5 mas to select the
+        coupling file. Default 0
+    defocus : float, optional [nm]
+        defocus term RMS; rounded to the nearest 25 nm to select the
+        coupling file. Default 0
+    atm : int, optional
+        0 or 1, whether the atmosphere was included in the simulation grid
+        used to select the coupling file. Default 1
+    adc : int, optional
+        0 or 1, whether the ADC (atmospheric dispersion corrector) was
+        included in the simulation grid used to select the coupling file.
+        Default 1
+    pl_on : int, optional
+        0 or 1, whether the photonic lantern is on. If on, the coupling
+        efficiencies of the three PL output modes are summed; if off, only
+        mode 1 (single-mode fiber) is used. Default 1
+    piaa_boost : float, optional
+        multiplicative coupling boost factor from the PIAA lens, applied on
+        top of the tabulated coupling and Strehl. Default 1.3
+
+    outputs
+    -------
+    coupling : array
+        coupling efficiency vs wavelength (tabulated grid value, interpolated
+        onto w, times ho_strehl times piaa_boost)
+    ho_strehl : array
+        Strehl ratio computed from ho_wfe via the Marechal approximation,
+        same wavelength grid as w
     """
     if np.max(w) < 10: 
         wave=w.copy() * 1000
@@ -54,8 +110,60 @@ def pick_coupling_rounded(transmission_path,w,ho_wfe, tt_dynamic, lo_wfe=50, tt_
 
 def pick_coupling_interpolate(w,dynwfe,ttStatic,ttDynamic,LO=50,PLon=0,piaa_boost=1.3,points=None,values=None):
     """
-    select correct coupling file
-    to do:implement interpolation of coupling files instead of rounding variables
+    Compute fiber injection/coupling efficiency by N-D interpolation (via
+    scipy.interpolate.interpn) of the pre-computed coupling grid, rather
+    than rounding to the nearest tabulated point as pick_coupling_rounded
+    does. The grid ('points') and its tabulated values ('values') must be
+    supplied by the caller, typically from grid_interp_coupling(). High-order
+    WFE is applied analytically as a Strehl factor on top of the
+    interpolated coupling, exactly as in pick_coupling_rounded.
+
+    Note: docstring reflects current behavior; a TODO in the original code
+    notes that full interpolation (vs. rounding) was still being implemented.
+
+    inputs
+    ------
+    w : array
+        wavelength array. If min(w) > 10 it is assumed to be in nm and is
+        divided by 1000 to get microns (used to build the 'point' passed to
+        interpn against the wavelength axis of 'points'); the working array
+        is converted back to nm afterward (if still < 10) before computing
+        the Strehl ratio, to match the nm units expected for dynwfe
+    dynwfe : float or array [nm]
+        high-order/dynamic wavefront error, used to compute ho_strehl via
+        exp(-(2*pi*dynwfe/wave)^2) and applied multiplicatively to the
+        interpolated coupling
+    ttStatic : float [mas]
+        static tip-tilt; must be in range 0-10 or a ValueError is raised
+    ttDynamic : float [mas]
+        dynamic tip-tilt; must be in range 0-20 or a ValueError is raised
+    LO : float, optional [nm]
+        low-order wavefront error RMS; must be in range 0-100 or a
+        ValueError is raised. Default 50
+    PLon : int, optional
+        0 or 1, whether the photonic lantern is on; coerced to int and must
+        be <= 1 or a ValueError is raised. If on, the three PL output-mode
+        coupling efficiencies are interpolated separately and recombined
+        (with an extra 0.95 recombination-loss factor applied below 1.4 um);
+        if off, only the single-mode-fiber coupling (mode 1) is used.
+        Default 0
+    piaa_boost : float, optional
+        multiplicative coupling boost factor from the PIAA lens. Default 1.3
+    points : tuple of arrays, optional
+        grid axis values (LO, ttStatic, ttDynamic, wavelength) defining the
+        coupling table, as returned by grid_interp_coupling()
+    values : tuple of arrays, optional
+        tabulated coupling efficiency array(s) on the 'points' grid, as
+        returned by grid_interp_coupling(); one array if PLon is off, three
+        (mode1, mode2, mode3) if PLon is on
+
+    outputs
+    -------
+    coupling : array
+        interpolated coupling efficiency vs wavelength, times ho_strehl
+        times piaa_boost
+    ho_strehl : array
+        Strehl ratio computed from dynwfe, same wavelength grid as w
     """
     PLon = int(PLon)
 
@@ -106,11 +214,45 @@ def pick_coupling_interpolate(w,dynwfe,ttStatic,ttDynamic,LO=50,PLon=0,piaa_boos
 
 def grid_interp_coupling(PLon=1,path='/Users/ashbake/Documents/Research/Projects/HISPEC/SNR_calcs/data/throughput/hispec_subsystems_11032022/coupling/',atm=1,adc=1):
     """
-    interpolate coupling files over their various parameters
-    PLon: 0 or 1, whether PL is on or not
-    path: data path to coupling files
-    atm: 0 or 1 - whether gary at atm turned on in sims
-    adc: 0 or 1 - whether gary had adc included in sims
+    Build the N-D coupling-efficiency grid (axes: low-order WFE, static
+    tip-tilt, dynamic tip-tilt, wavelength) used by pick_coupling_interpolate
+    for true interpolation, as opposed to the nearest-grid-point rounding
+    done in pick_coupling_rounded. Loops over every combination of LO
+    (0-100 nm, step 25), ttStatic (0-10 mas, step 1), and ttDynamic
+    (0-20 mas, step 0.5), reads the corresponding
+    couplingEff_atm%s_adc%s_PL%s_defoc0nmRMS_LO%snmRMS_ttStatic%smas_ttDynamic%smasRMS.csv
+    file (defocus fixed at 0), and stacks the per-mode coupling efficiency
+    columns into 4-D arrays suitable for scipy.interpolate.interpn.
+
+    inputs
+    ------
+    PLon : int, optional
+        0 or 1, whether the photonic lantern is on. If on, the coupling
+        efficiencies for all three PL output modes (mode1, mode2, mode3)
+        are loaded into separate grids; if off, only mode1 (single-mode
+        fiber) is loaded. Default 1
+    path : string, optional
+        directory containing the coupling grid CSV files
+    atm : int, optional
+        0 or 1, whether the atmosphere was included in the simulation grid
+        being loaded (selects file name). Default 1
+    adc : int, optional
+        0 or 1, whether the ADC (atmospheric dispersion corrector) was
+        included in the simulation grid being loaded (selects file name).
+        Default 1
+
+    outputs
+    -------
+    points : tuple of arrays
+        grid axis values (LOs, ttStatics, ttDynamics, wavelength_um) defining
+        the coordinates of the 'values' arrays, for use with interpn
+    values_1 : array [len(LOs), len(ttStatics), len(ttDynamics), n_wave]
+        tabulated coupling efficiency for PL output mode 1 (or the only
+        mode, if PLon is 0)
+    values_2 : array, only returned if PLon
+        tabulated coupling efficiency for PL output mode 2
+    values_3 : array, only returned if PLon
+        tabulated coupling efficiency for PL output mode 3
     """
     LOs = np.arange(0,125,25)
     ttStatics = np.arange(11)
@@ -147,7 +289,35 @@ def grid_interp_coupling(PLon=1,path='/Users/ashbake/Documents/Research/Projects
 
 def get_emissivity(wave,datapath = './data/throughput/hispec_subsystems_11032022/'):
     """
-    get throughput except leave out couplingalso store emissivity
+    Load and interpolate the per-surface emissivity curves for each optical
+    element in the red and blue optical paths (excluding fiber coupling),
+    onto the requested wavelength grid, along with the assumed physical
+    temperature of each surface. Fiber contributions ('fib*') are doubled
+    to account for the integrating-sphere measurement setup used to derive
+    those emissivity files.
+
+    inputs
+    ------
+    wave : array
+        wavelength array to sample emissivity on; converted from nm to
+        microns internally if min(wave) > 10
+    datapath : string, optional
+        path to the directory containing per-surface subfolders
+        (tel/ao/feicom/feired/feiblue/fibred/fibblue/rspec), each with a
+        '<surface>_emissivity.csv' file (columns: wavelength_um, emissivity)
+
+    outputs
+    -------
+    em_red : list of arrays
+        emissivity vs wave for each surface in the red path
+        (['tel','ao','feicom','feired','fibred','rspec']), in that order
+    em_blue : list of arrays
+        emissivity vs wave for each surface in the blue path
+        (['tel','ao','feicom','feiblue','fibblue','bspec']), in that order
+    temps : list of floats [K]
+        assumed physical temperature for each of the 6 surface slots,
+        [276,276,276,276,276,77] (thermal background surfaces at ambient,
+        detector/cold stage at 77 K)
     """
     x = wave.copy()
     if np.min(x) > 10:
@@ -178,7 +348,30 @@ def get_emissivity(wave,datapath = './data/throughput/hispec_subsystems_11032022
 
 def get_emissivities(wave,surfaces=['tel'],datapath = './data/throughput/hispec_subsystems_11032022/'):
     """
-    get throughput except leave out couplingalso store emissivity
+    Derive per-surface emissivity as (1 - throughput) for an arbitrary list
+    of named surfaces, by loading each surface's '<surface>_throughput.csv'
+    file and interpolating it onto the requested wavelength grid. Unlike
+    get_emissivity(), this does not use dedicated emissivity CSV files or
+    apply the fiber integrating-sphere doubling factor, and the caller
+    supplies the list of surfaces to include.
+
+    inputs
+    ------
+    wave : array
+        wavelength array to sample emissivity on; converted from nm to
+        microns internally if min(wave) > 10
+    surfaces : list of strings, optional
+        names of the subfolders/surfaces to load, each expected to contain a
+        '<surface>_throughput.csv' file (columns: wavelength_um, throughput).
+        Default ['tel']
+    datapath : string, optional
+        path to the directory containing the per-surface subfolders
+
+    outputs
+    -------
+    em : list of arrays
+        1 - throughput vs wave, one array per entry in 'surfaces', in the
+        same order
     """
     x = wave.copy()
     if np.min(x) > 10:
@@ -194,19 +387,38 @@ def get_emissivities(wave,surfaces=['tel'],datapath = './data/throughput/hispec_
 
 def get_base_throughput(wave,ploton=False,datapath = './data/throughput/hispec_subsystems_11032022/'):
     """
+    Compute the total instrument throughput excluding fiber coupling, by
+    multiplying together the per-surface throughput curves along the red
+    path (['tel','ao','feicom','feired','fibred','rspec']) for wavelengths
+    > 1.4 um and along the blue path
+    (['tel','ao','feicom','feiblue','fibblue','bspec']) for wavelengths
+    < 1.4 um, then concatenating the two bands into a single blue-to-red
+    array on the input wavelength grid. Optionally plots and saves the
+    per-band cumulative throughput curves.
+
     inputs
     ------
     wave - array
-        wavelength array [nm] to sample throughput on
+        wavelength array [nm] to sample throughput on (converted to microns
+        internally if min(wave) > 10)
     ploton - Bool
-        default is False, whether to plot throughput
+        default is False, whether to plot throughput (blue and red curves
+        vs wavelength) and save the figure to './base_throughput.png'
     datapath - string
-        path to throughput files in special HISPEC/MODHIS structure
+        path to throughput files in special HISPEC/MODHIS structure, with
+        one subfolder per surface each containing a '<surface>_throughput.csv'
+        file (columns: wavelength_um, throughput)
 
     outputs:
     ---------
-    snew - array 
-        total base throughput, sampled on wave grid
+    s - array
+        total base throughput, sampled on wave grid, blue band
+        (wave < 1.4 um) followed by red band (wave > 1.4 um)
+    data - dict
+        nested dict {'red': {surface: throughput_array, ...},
+        'blue': {surface: throughput_array, ...}} holding the individual
+        per-surface throughput curves (each interpolated onto wave) used to
+        build snew
     """
     # wavelength array to um
     x = wave.copy()
@@ -263,7 +475,24 @@ def get_base_throughput(wave,ploton=False,datapath = './data/throughput/hispec_s
 
 def load_photonic_lantern():
     """
-    load PL info like unitary matrices
+    Load the photonic lantern's mode-transfer (unitary) matrices, which map
+    input modes to output single-mode fibers, from a fixed .npy file, along
+    with the wavelength grid they were computed on.
+
+    inputs
+    ------
+    None
+
+    outputs
+    -------
+    wavearr : array [nm]
+        20-point wavelength grid spanning 970-1350 nm on which the unitary
+        matrices are defined
+    data : array
+        unitary transfer matrices loaded from
+        './data/throughput/photonic_lantern/unitary_matrices.npy', one
+        matrix per wavelength in wavearr (shape depends on the saved file,
+        e.g. [n_wave, n_mode, n_mode])
     """
     wavearr = np.linspace(970,1350,20)
     data = np.load('./data/throughput/photonic_lantern/unitary_matrices.npy')
@@ -276,6 +505,30 @@ def load_photonic_lantern():
 ########## PLOT FXNS 
 def plot_throughput(so):
     """
+    Plot fiber coupling efficiency, base throughput (everything but
+    coupling), and total throughput vs wavelength for a single simulation
+    run, and save the figure to disk. Draws a horizontal 5% reference line
+    for quick readout of where the total throughput crosses that threshold.
+
+    Note: relies on a module-level/global 'nframes' variable (not passed in
+    or defined in this function) to build the output filename; this is
+    pre-existing behavior and will raise NameError if 'nframes' is not
+    defined in the caller's scope when this function is used standalone.
+
+    inputs
+    ------
+    so : object
+        simulation/config object (as built elsewhere in specsim) exposing:
+        so.stel.v (wavelength array, nm), so.inst.coupling (coupling
+        efficiency array), so.inst.base_throughput (throughput excluding
+        coupling), so.inst.ytransmit (total throughput), so.filt.band,
+        so.stel.mag, so.stel.teff, so.ao.mode, and so.obs.texp_frame
+
+    outputs
+    -------
+    None
+        Draws the figure on a new matplotlib figure/axes and saves it to
+        './output/snrplots/throughput_<ao.mode>_<band>mag_<mag>_Teff_<teff>_texp_<texp>s.png'
     """
     plt.figure(figsize=(7,4))
     plt.plot(so.stel.v,so.inst.coupling,label='Coupling Only')
@@ -299,7 +552,45 @@ def plot_throughput_components_HK(telluric_file='/Users/ashbake/Documents/Resear
                                     lgs_wfe=[220,9.4],
                                     atm=1,adc=1):
     """
-    plot throughput plot for MRI proposal
+    Build and plot the cumulative (red-path, H+K band) system throughput
+    for the MRI proposal figure: telluric atmosphere, telescope, Keck AO,
+    front-end injection (FEI) optics, fiber coupling (NGS and LGS cases via
+    pick_coupling_rounded), and spectrograph, each curve layered
+    cumulatively on a log-scale plot. Saves the figure as PNG and PDF; does
+    not return anything.
+
+    inputs
+    ------
+    telluric_file : string, optional
+        path to a FITS file (PSG telluric transmission model) with
+        'Wave/freq' and 'Total' columns, used for the atmospheric
+        transmission curve
+    transmission_path : string, optional
+        path to the directory of per-surface '<surface>_throughput.csv'
+        files (and the 'coupling/' grid used by pick_coupling_rounded)
+    outputdir : string, optional
+        directory to save the output 'e2e_plot_HK.png'/'.pdf' figures.
+        Default './output/'
+    ngs_wfe : list of 2 floats, optional [nm, mas]
+        [high-order WFE (ho_wfe), dynamic tip-tilt (tt_dynamic)] for the
+        natural-guide-star AO case, passed to pick_coupling_rounded.
+        Default [130,3]
+    lgs_wfe : list of 2 floats, optional [nm, mas]
+        [high-order WFE (ho_wfe), dynamic tip-tilt (tt_dynamic)] for the
+        laser-guide-star AO case, passed to pick_coupling_rounded.
+        Default [220,9.4]
+    atm : int, optional
+        0 or 1, whether atmosphere was included in the coupling simulation
+        grid selected by pick_coupling_rounded. Default 1
+    adc : int, optional
+        0 or 1, whether the ADC was included in the coupling simulation grid
+        selected by pick_coupling_rounded. Default 1
+
+    outputs
+    -------
+    None
+        Draws a new matplotlib figure and saves it to
+        '<outputdir>/e2e_plot_HK.png' and '<outputdir>/e2e_plot_HK.pdf'
     """
     data={}
     data['red'] = {}
@@ -398,7 +689,54 @@ def plot_throughput_components_YJ(telluric_file='/Users/ashbake/Documents/Resear
                                     lgs_wfe=[220,9.4],
                                     atm=1,adc=1):
     """
-    plot throughput plot for MRI proposal
+    Build and plot the cumulative (blue-path, y+J band) system throughput
+    for the MRI proposal figure: telescope, Keck AO, front-end injection
+    (FEI) optics, fiber coupling (NGS and LGS cases, computed with
+    photonic lantern on via grid_interp_coupling/pick_coupling_rounded with
+    lo_wfe=50, defocus=30), and spectrograph, layered cumulatively on a
+    log-scale plot. Also saves the NGS/LGS cumulative throughput arrays to
+    text files. Saves the figure as PNG and PDF; does not return anything.
+
+    inputs
+    ------
+    telluric_file : string, optional
+        path to a FITS file (PSG telluric transmission model) with
+        'Wave/freq' and 'Total' columns; loaded and degraded but not
+        plotted in this function (see semilogy line, currently commented
+        out)
+    transmission_path : string, optional
+        path to the directory of per-surface '<surface>_throughput.csv'
+        files; also used (with a 'coupling/' suffix) as the coupling grid
+        path for grid_interp_coupling and pick_coupling_rounded
+    outputdir : string, optional
+        directory to save the output 'e2e_mri_plot_yJ.png'/'.pdf' figures
+        and the 'ngs_throughput_bspec.txt'/'lgs_throughput_bspec.txt' data
+        files. Default './output/'
+    ngs_wfe : list of 2 floats, optional [nm, mas]
+        [high-order WFE (ho_wfe), dynamic tip-tilt (tt_dynamic)] for the
+        natural-guide-star AO case, passed to pick_coupling_rounded.
+        Default [130,3]
+    lgs_wfe : list of 2 floats, optional [nm, mas]
+        [high-order WFE (ho_wfe), dynamic tip-tilt (tt_dynamic)] for the
+        laser-guide-star AO case, passed to pick_coupling_rounded.
+        Default [220,9.4]
+    atm : int, optional
+        0 or 1, whether atmosphere was included in the coupling simulation
+        grid selected by grid_interp_coupling/pick_coupling_rounded.
+        Default 1
+    adc : int, optional
+        0 or 1, whether the ADC was included in the coupling simulation
+        grid selected by grid_interp_coupling/pick_coupling_rounded.
+        Default 1
+
+    outputs
+    -------
+    None
+        Draws a new matplotlib figure and saves it to
+        '<outputdir>/e2e_mri_plot_yJ.png' and
+        '<outputdir>/e2e_mri_plot_yJ.pdf'; also writes
+        '<outputdir>/ngs_throughput_bspec.txt' and
+        '<outputdir>/lgs_throughput_bspec.txt'
     """
     data={}
     data['red'] = {}
@@ -505,7 +843,68 @@ def plot_throughput_components(telluric_file='/Users/ashbake/Documents/Research/
                                     lgs_wfe=[220,9.4],
                                     atm=1,adc=1):
     """
-    plot throughput plot for MRI proposal
+    Build and plot the cumulative system throughput across both the blue
+    (y+J) and red (H+K) paths on a single figure: telescope, Keck AO,
+    front-end injection (FEI) optics, fiber coupling (NGS and LGS, photonic
+    lantern off, via grid_interp_coupling/pick_coupling_rounded with
+    lo_wfe=50, defocus=30), fiber propagation, and spectrograph, layered
+    cumulatively with labeled annotations. Also saves the per-band NGS/LGS
+    cumulative throughput arrays to text files, and saves the figure as PNG
+    and PDF.
+
+    inputs
+    ------
+    telluric_file : string, optional
+        path to a FITS file (PSG telluric transmission model) with
+        'Wave/freq' and 'Total' columns, loaded/degraded into data['atm']
+        (not directly plotted in this function)
+    transmission_path : string, optional
+        path to the directory of per-surface '<surface>_throughput.csv'
+        files; also used (with a 'coupling/' suffix) as the coupling grid
+        path for grid_interp_coupling and pick_coupling_rounded
+    outputdir : string, optional
+        directory to save the output 'e2e_plot_all.png'/'.pdf' figures and
+        the 'ngs_throughput_<band>.txt'/'lgs_throughput_<band>.txt' data
+        files (band = 'blue' or 'red'). Default './output/'
+    ngs_wfe : list of 2 floats, optional [nm, mas]
+        [high-order WFE (ho_wfe), dynamic tip-tilt (tt_dynamic)] for the
+        natural-guide-star AO case, passed to pick_coupling_rounded.
+        Default [130,3]
+    lgs_wfe : list of 2 floats, optional [nm, mas]
+        [high-order WFE (ho_wfe), dynamic tip-tilt (tt_dynamic)] for the
+        laser-guide-star AO case, passed to pick_coupling_rounded.
+        Default [220,9.4]
+    atm : int, optional
+        0 or 1, whether atmosphere was included in the coupling simulation
+        grid selected by grid_interp_coupling/pick_coupling_rounded.
+        Default 1
+    adc : int, optional
+        0 or 1, whether the ADC was included in the coupling simulation
+        grid selected by grid_interp_coupling/pick_coupling_rounded.
+        Default 1
+
+    outputs
+    -------
+    allw : list of arrays
+        wavelength array (microns) used for each band, in the loop order
+        ['blue','red']
+    allngs : list of arrays
+        cumulative NGS throughput (with low values set to NaN for plot
+        clarity) for each band, in the loop order ['blue','red']
+    alllgs : list of arrays
+        cumulative LGS throughput (with low values set to NaN for plot
+        clarity) for each band, in the loop order ['blue','red']
+    data : dict
+        nested dict of intermediate per-surface throughput curves and
+        coupling arrays used to build the plot (keys 'red', 'blue', 'atm',
+        'coupling_NGS', 'coupling_LGS')
+
+    Side effects
+    ------------
+    Draws a new matplotlib figure and saves it to
+    '<outputdir>/e2e_plot_all.png' and '<outputdir>/e2e_plot_all.pdf'; also
+    writes '<outputdir>/ngs_throughput_<band>.txt' and
+    '<outputdir>/lgs_throughput_<band>.txt' for band in ['blue','red']
     """
     data={}
     data['red'] = {}

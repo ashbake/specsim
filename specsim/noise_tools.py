@@ -22,7 +22,15 @@ all = {'get_sky_bg','get_inst_bg','sum_total_noise','plot_noise_components'}
 
 def get_sky_bg(x,airmass=1.3,pwv=1.5,npix=3,R=100000,diam=10,area=76,skypath = '../../../../_DATA/sky/'):
     """
-    generate sky background per reduced pixel, default is HIPSEC. 
+    Generate sky background per reduced pixel, default is HISPEC.
+    Loads the Mauna Kea sky emission model (OH lines + thermal continuum,
+    in ph/s/arcsec^2/nm/m^2) for the tabulated (pwv, airmass) grid point
+    nearest the requested values, interpolates it onto the input
+    wavelength grid, and converts it to a photon count rate by
+    multiplying by the telescope collecting area, the diffraction-limited
+    beam solid angle (from wavelength/diameter, corrected for a Gaussian
+    beam), and the wavelength width of one reduced-pixel resolution
+    element (wave/R/npix).
     Source: DMawet jup. notebook
 
     inputs:
@@ -32,22 +40,25 @@ def get_sky_bg(x,airmass=1.3,pwv=1.5,npix=3,R=100000,diam=10,area=76,skypath = '
     airmass: float [1,inf)
         airmass of the observation. Defaults to 1.3
     pwv: float [mm] [0,inf)
-        precipitable water vapor in millimeters during 
+        precipitable water vapor in millimeters during
         the observation. Defaults to 1.5
-    npix: integer 
+    npix: integer
         number of pixels, defaults to 3
     R: float
         resolving power of instrument, default is 100,000
-    diam: float
+    diam: float [m]
         diameter of telescope in meters
-    area: float
+    area: float [m^2]
         area of telescope in meters squared
-    datapath: string
-        path to where throughput data in HISPEC format is
+    skypath: string
+        path to the directory containing the Mauna Kea sky background
+        model files (mk_skybg_zm_<pwv>_<airmass>_ph.dat)
 
     outputs:
     --------
-    sky background (ph/s)
+    array [ph/s]
+        sky background photon rate per reduced pixel, sampled on the
+        input wavelength grid x
     """
     diam *= u.m
     area = area * u.m * u.m
@@ -70,7 +81,17 @@ def get_sky_bg(x,airmass=1.3,pwv=1.5,npix=3,R=100000,diam=10,area=76,skypath = '
 
 def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hispec_subsystems_11032022/'):
     """
-    generate sky background per reduced pixel, default to HIPSEC. Source: DMawet jup. notebook
+    Generate instrument thermal background per reduced pixel, default to HISPEC.
+    Loads the emissivity and physical temperature of each red-arm and
+    blue-arm instrument subsystem (via get_emissivity), builds a
+    Planck blackbody spectrum for each temperature scaled by the
+    telescope area and the diffraction-limited beam solid angle, weights
+    each blackbody by the corresponding subsystem emissivity, sums the
+    contributions across subsystems, converts to a photon rate over one
+    reduced-pixel resolution element (wave/R/npix), stitches the red and
+    blue arm results together at 1.4 micron, and spline-interpolates the
+    result back onto the input wavelength grid.
+    Source: DMawet jup. notebook
 
     inputs:
     -------
@@ -80,16 +101,19 @@ def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hi
         number of pixels
     R: float
         resolving power of instrument, default is 100,000
-    diam: float
+    diam: float [m]
         diameter of telescope in meters
-    area: float
+    area: float [m^2]
         area of telescope in meters squared
     datapath: string
         path to where throughput data in HISPEC format is
 
     outputs:
     --------
-    sky background (photons/s) per reduced pixel (already considering PSF sampling)
+    array [ph/s]
+        instrument thermal background photon rate per reduced pixel
+        (already considering PSF sampling), sampled on the input
+        wavelength grid x
     """
     em_red,em_blue, temps = get_emissivity(x,datapath=datapath)
 
@@ -135,15 +159,39 @@ def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hi
 
 def get_sky_bg_tracking(x,fwhm,airmass=1.5,pwv=1.5,area=76,skypath = '../../../../_DATA/sky/'):
     """
-    generate sky background per pixel, default to HIPSEC. Source: DMawet jup. notebook
+    Generate sky background per pixel for the tracking/acquisition camera,
+    default to HISPEC. Loads the Mauna Kea sky emission model (OH lines +
+    thermal continuum, in ph/s/arcsec^2/nm/m^2) for the given (pwv, airmass),
+    interpolates it onto the input wavelength grid, and converts it to a
+    photon count rate per nm by multiplying by the telescope collecting
+    area and the PSF solid angle (from the supplied FWHM, corrected for a
+    Gaussian beam). Unlike get_sky_bg, this does not divide by resolving
+    power/npix, so the result is per nm rather than per reduced pixel.
+    Source: DMawet jup. notebook
 
     inputs:
     -------
-    fwhm: arcsec
+    x : array [nm]
+        wavelength in nanometers
+    fwhm: float [arcsec]
+        full width at half maximum of the PSF on the tracking camera,
+        used to set the solid angle subtended by one resolution element
+    airmass: float [1,inf)
+        airmass of the observation. Defaults to 1.5
+    pwv: float [mm] [0,inf)
+        precipitable water vapor in millimeters during the observation.
+        Defaults to 1.5
+    area: float [m^2]
+        area of telescope in meters squared
+    skypath: string
+        path to the directory containing the Mauna Kea sky background
+        model files (mk_skybg_zm_<pwv>_<airmass>_ph.dat)
 
     outputs:
     --------
-    sky background (ph/s)
+    array [ph/s/nm]
+        sky background photon rate per nm, sampled on the input
+        wavelength grid x
     """
     area = area * u.m * u.m
     wave = x*u.nm
@@ -162,17 +210,40 @@ def get_sky_bg_tracking(x,fwhm,airmass=1.5,pwv=1.5,area=76,skypath = '../../../.
 
 def get_inst_bg_tracking(x,pixel_size,npix,datapath='./data/throughput/hispec_subsystems_11032022/'):
     """
-    generate sky background per pixel, default to HIPSEC. Source: DMawet jup. notebook
+    Generate the instrument thermal background seen by the tracking camera,
+    per pixel, default to HISPEC. Source: DMawet jup. notebook.
+    Models the thermal emission of the cryostat window as a blackbody at a
+    fixed temperature (277 K), attenuated by the blocking filter
+    transmission, the (fixed, approximate) window emissivity, and the
+    H2RG quantum efficiency (modeled as a tophat between 600-2600 nm).
+    The blackbody is scaled by the effective area x solid angle set by
+    the pixel size and the optical f-number, converted to a photon rate
+    per nm, and multiplied by npix to get the total thermal spectrum for
+    npix pixels; that spectrum is also integrated over wavelength to give
+    a single total photon rate.
     change this to take emissivities and temps as inputs so dont
     have to rely on get_emissivities
 
     inputs:
     -------
+    x : array [nm]
+        wavelength in nanometers
+    pixel_size: float [micron]
+        physical size of one detector pixel
+    npix: integer
+        number of pixels over which the thermal background is summed
+    datapath: string
+        path to where throughput data in HISPEC format is (used here to
+        load the blocking filter transmission curve)
 
     outputs:
     --------
-    sky background (photons/s) already considering PSF sampling
-
+    thermal_spectrum: array [ph/s/nm]
+        instrument thermal background spectral photon rate for npix
+        pixels, sampled on the input wavelength grid x
+    thermal: float [ph/s]
+        thermal_spectrum integrated over wavelength, i.e. the total
+        instrument thermal background photon rate for npix pixels
     """
     wave = x * u.nm
     window_temp = 277 * u.K # temperature of cryostat window
@@ -206,8 +277,16 @@ def get_inst_bg_tracking(x,pixel_size,npix,datapath='./data/throughput/hispec_su
 
 def get_contrast(wave,pl_sep,tel_diam,seeing,strehl):
     """
-    Gets the contrast for SMF positioned on planet of some
-    distance from host star
+    Gets the residual-speckle contrast (relative to the stellar peak) seen
+    by a single-mode fiber (SMF) positioned on a planet at some angular
+    separation from its host star, based on a Kolmogorov-turbulence halo
+    model of the AO-corrected PSF. Computes the Fried parameter r0 from
+    the seeing, scales it to the observing wavelength, converts the
+    planet separation to units of lambda/D ("resels"), and evaluates the
+    residual-halo power-law contrast at that separation (clipped to a
+    power-law extrapolation inside the AO control radius set by the
+    number of actuators). The result is reduced by an empirical
+    single-mode-fiber suppression gain and clipped to a maximum of 1.
 
     inputs
     ------
@@ -216,6 +295,13 @@ def get_contrast(wave,pl_sep,tel_diam,seeing,strehl):
     tel_diam     - Telescope diameter [m]
     seeing       - seeing during observation [arcsec]
     strehl       - strehl of AO correction
+
+    outputs
+    -------
+    contrast - array, same shape as wave
+        residual speckle contrast (dimensionless, relative to the
+        unocculted stellar peak) at the given planet separation, as a
+        function of wavelength. Values are clipped to be <= 1.
     """
 
     p_law_kolmogorov = -11./3
@@ -261,9 +347,18 @@ def get_contrast(wave,pl_sep,tel_diam,seeing,strehl):
 
 def get_MODHIS_contrast(folder, ao_mode, seeing, zenith_angle, magnitude, waves, radius):
     """Function to get contrast from a particular file at a given radius.
+    Looks up the pre-computed MODHIS AO simulation contrast-vs-radius
+    profile (a CSV of separation vs. azimuthally-summed annulus
+    intensity) matching the requested AO mode, seeing percentile, zenith
+    angle, and (rounded to nearest integer) stellar magnitude, once per
+    near-IR band (y, J, H, K). Within each band the profile is linearly
+    interpolated (with extrapolation) to the requested radius to get a
+    single contrast value, which is then assigned to every wavelength
+    that falls in that band. Wavelengths outside the defined y/J/H/K
+    ranges are assigned a contrast of 1 (no attenuation/undefined).
     Rounds to the nearest magnitude, interpolates to the given radius.
     Uses the same calculated value for every wavelength in the same band.
-    
+
     inputs
     ------
     folder         - string, folder containing the csv profiles
@@ -272,7 +367,16 @@ def get_MODHIS_contrast(folder, ao_mode, seeing, zenith_angle, magnitude, waves,
     zenith_angle   - float, zenith angle of observation
     magnitude      - float, stellar magnitude
     waves          - [nm] A list of wavelengths [float length m]
-    radius         - float, radius at which to get contrast in milliarcseconds
+    radius         - float [mas], radius at which to get contrast in milliarcseconds
+        (converted internally to arcseconds to match the CSV profiles)
+
+    outputs
+    -------
+    overall_contrast - array, same shape as waves
+        contrast (dimensionless, from the annulus-summed-intensity
+        profile) at the given radius for each wavelength, using the
+        band-matched interpolated value; 1 for wavelengths outside the
+        y/J/H/K band definitions
     """
 
     ao_mode_map = {'NGS': 'ngsao_ngsao', 'LGS_ON': 'mcao_pyttf'}
@@ -336,21 +440,58 @@ def get_MODHIS_contrast(folder, ao_mode, seeing, zenith_angle, magnitude, waves,
 
 def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,vortex_charge):
     """
+    Estimate residual on-axis stellar leakage (contrast) for a vector
+    vortex fiber nulling (VFN) coronagraph, i.e. the planet is off axis
+    while the star is (imperfectly) nulled by the vortex.
+    Sums three leakage terms, each approximated as a power law in units
+    of lambda/D and calibrated against simulations/references: (1)
+    leakage from high-order wavefront error (quasi-static/AO residual
+    speckles), using an empirically-fit coefficient set by the vortex
+    charge; (2) leakage from dynamic tip/tilt jitter, using the
+    approximation of Ruane et al. 2019 (Eq. 3); and (3) geometric
+    leakage from the finite angular size of the host star, using the
+    fit of Ruane et al. 2019 (Fig. 7c). The three terms are summed and
+    the result is clipped to a maximum contrast of 1.
     taken from https://github.com/planetarysystemsimager/psisim/blob/kpic/psisim/instruments/modhis.py#L441C1-L441C1
     planet is off axis, star gets reduction in throughput due to vortex
 
     inputs
     ------
-    wave [nm]   - wavelength array
-    ho_wfe [nm] - High order wave front error
+    wave [nm]     - wavelength array
+    ho_wfe [nm]   - High order wave front error (quasi-static/AO residual
+                    wavefront error) used to estimate the WFE-driven
+                    stellar leakage term
+    tt_dyn [mas]  - Dynamic tip/tilt jitter amplitude, used to estimate
+                    the tip/tilt-driven stellar leakage term
+    pl_sep [mas]  - angular separation of the planet from the host star
+                    (carried through for context; not currently used in
+                    the leakage calculation below)
+    mag           - stellar magnitude (carried through for context; not
+                    currently used in the leakage calculation below)
+    seeing [arcsec] - seeing during the observation (carried through for
+                    context; not currently used in the leakage
+                    calculation below)
+    strehl        - Strehl ratio of the AO correction (carried through
+                    for context; not currently used in the leakage
+                    calculation below)
+    tel_diam [m]  - telescope diameter
+    vortex_charge - integer topological charge of the vortex coronagraph
+                    (1 or 2); selects the empirical WFE and geometric
+                    leakage coefficients
 
-    outupts
+    outputs
     -------
-    contrast
+    contrast - array, same shape as wave
+        total estimated on-axis stellar leakage contrast (dimensionless,
+        sum of WFE, tip/tilt, and geometric leakage terms), clipped to
+        be <= 1
 
     TODO
     ----
     need planet throughput to accompany it since off axis?
+    note: this function references an undefined `host_diameter`
+    variable (not one of the listed inputs) for the geometric leakage
+    term; see function body.
     """
     # apply units
     ho_wfe *= u.nm
@@ -490,10 +631,14 @@ def background_noise(inst_bg,sky_bg, texp):
 
 def read_noise(rn,npix):
     """
+    Compute the total detector read noise contribution over npix pixels
+    by adding the per-pixel read noise in quadrature (rn * sqrt(npix)).
+
     input:
     ------
     rn: [e-/pix]
-        read noise
+        read noise per pixel (per read/ramp, already reduced by number
+        of samples by the caller if applicable)
     npix [pix]
         number of pixels
 
@@ -506,12 +651,14 @@ def read_noise(rn,npix):
 
 def dark_noise(darknoise,npix,texp):
     """
-    Computs Poisson noise due to dark current
+    Computes Poisson noise due to dark current, i.e. the standard
+    deviation of the Poisson-distributed dark current counts accumulated
+    over npix pixels during the exposure time (sqrt(darknoise * npix * texp)).
 
     input:
     ------
     darknoise: [e-/pix/s]
-        read noise
+        dark current rate per pixel
     npix [pix]
         number of pixels
     texp [s]
@@ -530,7 +677,22 @@ def dark_noise(darknoise,npix,texp):
 ########### PLOT
 
 def plot_bg(so, v,instbg,skybg):
-    fig, ax = plt.subplots(1,1, figsize=(8,5))  
+    """
+    Plot combined sky + instrument background versus wavelength,
+    with instrument bands overlaid
+
+    input
+    -----
+    so - storage object
+        used to get the instrument band definitions to overlay
+    v - array [nm]
+        wavelength array
+    instbg - array [e-/s/pix]
+        instrument background
+    skybg - array [e-/s/pix]
+        sky background
+    """
+    fig, ax = plt.subplots(1,1, figsize=(8,5))
     ax.plot(v,instbg+skybg)
     ax.set_xlim(900,2500)
     ax.set_ylim(0,0.5)

@@ -30,7 +30,39 @@ class fill_data():
 	Ashley - initial implementation Oct 26, 2018
 	Ashley - changed variable names jan 26, 2023
 	"""
-	def __init__(self, so,track_on=False):		
+	def __init__(self, so,track_on=False):
+		"""
+		Top level driver: runs the full pipeline of methods below, in order,
+		to fill the storage object with all derived spectra, throughput,
+		and noise quantities needed for the SNR/ETC/RV calculations. This is
+		normally the only entry point users call directly (e.g.
+		`fill_data(so)`); the individual methods below are called from here
+		and can also be re-run individually afterwards (see the `set_*`
+		methods) to update only the parts of `so` that changed.
+
+		Sets up a shared high-resolution wavelength grid (self.x, sampled at
+		0.0005nm from so.inst.l0 to so.inst.l1) and band definitions
+		(self.bands) used by all the methods below, stores yJHK band edges
+		on so.inst.y/J/H/K, then calls, in order: filter, stellar, telluric,
+		ao, instrument, observe. Depending on so.run.mode it then also calls
+		compute_rv and compute_ccf_snr ('snr_on'/'snr_off'), compute_etc
+		('etc_off'/'etc_on'), and compute_ccf_snr_etc ('etc_off'). If
+		track_on is True, tracking is also computed. The call order matters:
+		each method depends on so attributes filled in by the ones before it.
+
+		inputs
+		------
+		so - storage object with user defined things loaded
+		track_on - bool
+			if True, also compute tracking camera quantities (calls self.tracking)
+
+		output
+		------
+		self - fill_data instance; self.x (shared wavelength grid, nm) and
+			self.bands (dict of yJHK band edges) are stored on the instance,
+			and so is mutated in place by each of the called methods (see
+			their individual docstrings for what each one sets)
+		"""
 		print("------FILLING OBJECT--------")
 		# define x array to carry everywhere
 		self.x = np.arange(so.inst.l0,so.inst.l1,0.0005)
@@ -41,11 +73,11 @@ class fill_data():
 		self.bands['K'] = [1990,2460]
 
 		# define bands here
-		# this should become deprecated - plot_tools.py uses it
-		so.inst.y=[980,1100]
-		so.inst.J=[1170,1327]
-		so.inst.H=[1490,1780]
-		so.inst.K=[1990,2460]
+		# this should become deprecated - plot_tools.py uses it for now
+		so.inst.y=self.bands['y'].copy()
+		so.inst.J=self.bands['J'].copy()
+		so.inst.H=self.bands['H'].copy()
+		so.inst.K=self.bands['K'].copy()
 
 		# order of these matter
 		self.filter(so)
@@ -70,7 +102,30 @@ class fill_data():
 
 	def filter(self,so):
 		"""
-		load band for scaling stellar spectrum
+		Load the photometric filter bandpass (so.filt.band/family) that the
+		stellar and companion magnitudes are defined in, together with its
+		zeropoint. This filter curve is used later (in stellar) to scale
+		the loaded model spectrum so that it matches the requested
+		magnitude, and so.filt.center_wavelength/dl_l are used by ao and
+		instrument for strehl and coupling calculations.
+
+		inputs
+		------
+		so - storage object; reads so.filt.zp_file (zeropoint table),
+			so.filt.family/band (which filter to select), and
+			so.filt.filter_path (directory to search for the filter curve
+			file)
+
+		output
+		------
+		so.filt.zp - float, zeropoint flux for the selected band/family (Jy)
+		so.filt.filter_file - str, path to the filter curve file found
+		so.filt.xraw, so.filt.yraw - raw filter wavelength [nm] and
+			transmission [0,1] as loaded from file
+		so.filt.v, so.filt.s - filter transmission interpolated onto self.x
+		so.filt.dl_l - float, mean dlambda/lambda of the filter bandpass
+		so.filt.center_wavelength - float, transmission-weighted center
+			wavelength of the filter [nm]
 		"""
 		# read zeropoint file, get zp
 		zps                     = np.loadtxt(so.filt.zp_file,dtype=str).T
@@ -91,10 +146,40 @@ class fill_data():
 
 	def stellar(self,so):
 		"""
-		loads stellar spectrum
-		returns spectrum scaled to input V band mag 
+		Loads the on-axis stellar spectrum (PHOENIX model for
+		so.stel.teff>=2300K, Sonora model otherwise), rotationally
+		broadened by so.stel.vsini and scaled to match the magnitude
+		so.stel.mag in the band loaded by filter() (so.filt.band/family).
+		If a companion is present (so.stel.pl_sep>0, i.e. off-axis), also
+		loads and scales a second spectrum for the companion using its own
+		teff/mag/vsini. All wavelengths are in nm and both spectra are
+		sampled onto the shared grid self.x.
 
-		everything in nm
+		inputs
+		------
+		so - storage object; reads so.stel.teff [K], so.stel.mag [mag, in
+			so.filt band], so.stel.vsini [km/s], so.stel.rv [km/s],
+			so.stel.pl_sep [mas] (if >0, also loads companion using
+			so.stel.pl_teff/pl_mag/pl_vsini), so.stel.phoenix_folder/
+			sonora_folder, and so.filt.band (for the print statement)
+
+		output
+		------
+		so.stel.s - array, stellar spectrum resampled onto self.x, scaled
+			to match so.stel.mag [photons/s/m2/nm]
+		so.stel.vraw, so.stel.sraw - raw (un-resampled) model wavelength/
+			spectrum as loaded from the PHOENIX/Sonora file
+		so.stel.model - str, which model family was used ('phoenix' or
+			'sonora')
+		so.stel.stel_file - str, path to the model file loaded
+		so.stel.factor_0 - float, scale factor applied to sraw to match
+			so.stel.mag (reused by ao() to rescale for a different AO star
+			magnitude without reloading a model)
+		so.stel.v - array, wavelength grid (= self.x) [nm]
+		so.stel.units - str, units of so.stel.sraw ('photons/s/m2/nm')
+		so.stel.pl_s, so.stel.pl_model, so.stel.pl_stel_file,
+			so.stel.pl_factor_0 - companion equivalents of the above,
+			only set if so.stel.pl_sep>0
 		"""
 		# Part 1: load raw spectrum
 		#
@@ -112,7 +197,35 @@ class fill_data():
 
 	def telluric(self,so):
 		"""
-		load tapas telluric file
+		Loads a TAPAS telluric transmission model (so.tel.telluric_file)
+		and scales each molecular/scattering component (H2O, Rayleigh, O3,
+		O2, N2, CO, CH4, CO2, N2O) from the file's reference PWV/airmass to
+		the requested so.tel.pwv and the airmass implied by
+		so.obs.zenith_angle, then multiplies them together to build the
+		total telluric transmission spectrum used throughout the pipeline
+		to attenuate the stellar spectrum and shape the noise/RV
+		calculations. Also maps so.tel.seeing_set ('good'/'average'/'bad')
+		to a numeric seeing value.
+
+		inputs
+		------
+		so - storage object; reads so.tel.telluric_file (TAPAS fits file,
+			with PWV/AIRMASS header keywords giving the file's reference
+			conditions), so.tel.pwv [mm], so.obs.zenith_angle [deg], and
+			so.tel.seeing_set ('good'/'average'/'bad')
+
+		output
+		------
+		so.tel.airmass - float, airmass computed from so.obs.zenith_angle
+		so.tel.v - array, wavelength grid (= self.x) [nm]
+		so.tel.h2o, so.tel.rayleigh, so.tel.o3, so.tel.o2, so.tel.n2,
+			so.tel.co, so.tel.ch4, so.tel.co2, so.tel.n2o - per-species
+			transmission spectra [0,1], each scaled to so.tel.pwv/airmass
+			and resampled onto self.x
+		so.tel.s - array, total telluric transmission spectrum [0,1]
+			(product of all species above)
+		so.tel.seeing - float, numeric seeing [arcsec] corresponding to
+			so.tel.seeing_set
 		"""
 		data      = fits.getdata(so.tel.telluric_file)
 		pwv0      = fits.getheader(so.tel.telluric_file)['PWV']
@@ -164,7 +277,47 @@ class fill_data():
 
 	def ao(self,so):
 		"""
-		fill in ao info 
+		Determines the AO correction quality (high-order and tip-tilt
+		wavefront error, and resulting Strehl) for the on-axis star. If
+		so.ao.tt_dynamic/ho_wfe are already set by the user (both floats or
+		both file paths), those user-defined values are used directly and
+		so.ao.mode_chosen is set to 'User Defined'. Otherwise, WFE lookup
+		tables (so.ao.ho_wfe_file/tt_dynamic_file) are loaded for every
+		available AO mode as a function of guide-star magnitude, seeing,
+		and zenith angle; the guide-star magnitude used to sample each mode
+		is computed either from the on-axis star's spectrum (so.ao.teff/mag
+		== 'default') or from a freshly loaded model at so.ao.teff/so.ao.mag
+		otherwise. The Strehl for each candidate mode is computed from its
+		HO WFE (Marechal approximation) and TT WFE, and either the mode
+		with the highest Strehl is picked (so.ao.mode=='auto') or the
+		user-requested mode is used. Also builds the AO dichroic
+		transmission arrays applied later to the science (so.ao.dichroic)
+		and tracking (so.ao.pywfs_dichroic) light paths.
+
+		inputs
+		------
+		so - storage object; reads so.ao.mode ('auto' or a specific mode
+			name), so.ao.tt_dynamic/ho_wfe (user override values or None),
+			so.ao.tt_static [mas], so.ao.lo_wfe [nm], so.ao.defocus [nm],
+			so.ao.teff [K] / so.ao.mag [mag] (or 'default' to reuse the
+			on-axis star), so.ao.ho_wfe_file/tt_dynamic_file, and
+			so.obs.zenith_angle [deg], so.tel.seeing_set; also uses
+			so.stel.vraw/sraw/model/factor_0/stel_file from stellar() and
+			so.filt.center_wavelength from filter()
+
+		output
+		------
+		so.ao.mode_chosen - str, AO mode selected ('User Defined' or one of
+			so.ao.ao_modes)
+		so.ao.ho_wfe - float, chosen high-order wavefront error [nm]
+		so.ao.tt_dynamic - float, chosen dynamic tip-tilt error [mas]
+		so.ao.ao_mag - float, guide-star magnitude in the AO mode's native band
+		so.ao.strehl - float, total Strehl (HO x TT) for the chosen mode
+		so.ao.strehl_array - array, Strehl computed for every candidate mode
+		so.ao.band - str, photometric band the chosen AO mode is defined in
+		so.ao.ao_modes - array, list of AO mode names loaded from file
+		so.ao.dichroic, so.ao.pywfs_dichroic - arrays, wavelength-dependent
+			dichroic transmission [0,1] applied to science/tracking paths
 		"""
 		if so.ao.teff=='default':
 			vraw,sraw = so.stel.vraw, so.stel.sraw
@@ -180,17 +333,16 @@ class fill_data():
 
 		# now make getband mag take new stel file and factor 0
 
-		if type(so.ao.ttdynamic_set) is not str or type(so.ao.ho_wfe_set) is not str:
+		if so.ao.tt_dynamic is not None or so.ao.ho_wfe is not None:
 			# set tt dynamic and ho wfe
 			# requires either both to be text file or both to be floats
-			so.ao.tt_dynamic = so.ao.ttdynamic_set
-			so.ao.ho_wfe     = so.ao.ho_wfe_set
 			if type(so.ao.ho_wfe) != type(so.ao.tt_dynamic): raise ValueError('HO WFE and TT Dynamic must *both* be set to float values or both to file paths to WFE files')
 			so.ao.mode_chosen = 'User Defined'
 			so.ao.band = 'N/A'
 		else:
+			# load the files
 			# so.obs.zenith_angle = (180/np.pi) * np.arccos(1/so.tel.airmass) # if decide to take seeing
-			data = wfe_tools.load_WFE(so.ao.ho_wfe_set, so.ao.ttdynamic_set, so.obs.zenith_angle, so.tel.seeing_set)
+			data = wfe_tools.load_WFE(so.ao.ho_wfe_file, so.ao.tt_dynamic_file, so.obs.zenith_angle, so.tel.seeing_set)
 			ao_modes   = np.array(list(data.keys()))
 			strehl, ho_wfes, tt_wfes, aomags = [], [], [],[]
 			for ao_mode in ao_modes:
@@ -262,8 +414,46 @@ class fill_data():
 			so.ao.pywfs_dichroic = np.ones_like(self.x)
 
 	def instrument(self,so):
+		"""
+		Loads the spectrograph echelle order geometry, the per-pixel
+		wavelength sampling, and the total instrument throughput curve
+		(base optical/detector throughput times fiber coupling efficiency
+		times the AO dichroic from ao()). If so.inst.transmission_file is
+		set, a user-supplied total throughput curve is loaded directly.
+		Otherwise the base throughput is loaded from
+		so.inst.transmission_path and combined with a fiber-coupling
+		efficiency file selected by rounding so.ao.ho_wfe/tt_static/
+		tt_dynamic/defocus and so.inst.pl_on (photonic lantern) onto the
+		nearest precomputed grid point, scaled by the AO Strehl
+		(so.ao.ho_strehl, computed here) and an empirical PIAA boost
+		factor. Depends on ao() having already been run.
+
+		inputs
+		------
+		so - storage object; reads so.inst.order_bounds_file,
+			so.stel.v/so.inst.res/so.inst.res_samp (for pixel sampling),
+			so.inst.transmission_file (optional user override) or
+			so.inst.transmission_path/atm/adc/pl_on (to build the
+			base throughput + coupling), and so.ao.ho_wfe/tt_static/
+			tt_dynamic/defocus/dichroic from ao()
+
+		output
+		------
+		so.inst.order_cens, so.inst.order_widths - arrays, center
+			wavelength and width [nm] of each echelle order
+		so.inst.sig - array, resolution element size (dlambda) [nm]
+		so.inst.base_throughput - array, throughput excluding fiber
+			coupling (or the full user-supplied throughput, if a custom
+			transmission_file was used)
+		so.inst.coupling - array, fiber coupling efficiency [0,1]
+			(only set when not using a custom transmission_file)
+		so.ao.ho_strehl - float, high-order Strehl used to scale coupling
+			(only set when not using a custom transmission_file)
+		so.inst.xtransmit, so.inst.ytransmit - arrays, wavelength grid and
+			total instrument throughput [0,1] (base * coupling * dichroic)
+		"""
 		###########
-		# load order centers and widths 
+		# load order centers and widths
 		so.inst.order_cens, so.inst.order_widths  = ccf_tools.get_order_bounds(so.inst.order_bounds_file)
 
 		# save dlambda
@@ -332,13 +522,63 @@ class fill_data():
 
 	def observe(self,so):
 		"""
-		Computes the flux reaching the spectrometer sampled 
-		in pixels and the noise spectrum to compute the 
-		snr per pixel (so.obs.v,so.obs.snr) 
-		and snr per resolution element (so.obs.v_res_element,so.obs.snr_res_element)
-		
-		If planet separation is >0, it will compute planet and star fluxes which
-		gets a little complicated
+		Simulates the actual observation: computes the flux reaching the
+		spectrometer (stellar spectrum x telescope area x instrument
+		throughput x telluric transmission), picks the per-frame exposure
+		time to avoid saturation (or uses a user-set value), degrades and
+		resamples the spectrum onto the instrument's resolution/pixel
+		grid, adds sky and instrument thermal background, and computes the
+		total photon and read/dark noise per frame and across all frames.
+		From that it derives the SNR spectrum per pixel (so.obs.v,
+		so.obs.snr) and per resolution element (so.obs.v_res_element,
+		so.obs.snr_res_element), plus max/mean SNR per echelle order.
+
+		If so.stel.pl_sep>0 (off-axis companion), it additionally computes
+		the companion flux and the stellar speckle contribution at the
+		companion's separation (via so.ao.contrast_profile_path/MODHIS
+		contrast calculator, falling back to an analytic contrast model),
+		and so.obs.s/so.obs.snr then refer to the companion signal with the
+		star's speckle halo as an added noise/background term. Depends on
+		filter(), stellar(), telluric(), ao(), and instrument() having
+		already been run.
+
+		inputs
+		------
+		so - storage object; reads so.stel.s/v (and so.stel.pl_s if
+			pl_sep>0), so.inst.tel_area [m2], so.inst.ytransmit,
+			so.tel.s, so.obs.texp [s] / texp_frame_set [s or 'default'],
+			so.inst.saturation [e-], so.inst.res, so.inst.sig [nm],
+			so.obs.nsamp, so.inst.darknoise [e-/pix/s], so.inst.readnoise
+			[e-], so.inst.pix_vert, so.inst.pl_on (photonic lantern),
+			so.inst.extraction_frac, and (if pl_sep>0) so.stel.pl_sep [mas],
+			so.inst.tel_diam [m], so.tel.seeing, so.obs.zenith_angle [deg],
+			so.stel.mag
+
+		output
+		------
+		so.obs.texp_frame [s], so.obs.nframes - chosen per-frame exposure
+			time and number of frames to reach so.obs.texp
+		so.obs.frame_phot_per_nm - array, stellar photon flux per frame
+			[photons/s/nm-ish, pre-resample]
+		so.obs.v, so.obs.s_frame_star, so.obs.s_frame - wavelength grid and
+			per-frame spectrum resampled onto the instrument grid (s_frame
+			is the companion spectrum if pl_sep>0, else equal to
+			s_frame_star)
+		so.obs.speckle_frame - array, per-frame stellar speckle halo flux
+			at the companion location (zeros if on-axis)
+		so.obs.s - array, total spectrum summed over all frames (main
+			science spectrum used downstream)
+		so.obs.sky_bg_ph, so.obs.inst_bg_ph - arrays, sky and instrument
+			thermal background photons per frame
+		so.obs.noise_frame, so.obs.noise - arrays, per-frame and
+			all-frames-combined noise spectrum
+		so.obs.snr - array, SNR per pixel (so.obs.s/so.obs.noise)
+		so.obs.v_res_element, so.obs.snr_res_element - array, wavelength
+			grid and SNR per resolution element
+		so.obs.snr_max_orders, so.obs.snr_mean_orders, so.obs.order_inds,
+			so.obs.order_cens - per-order SNR summary and pixel indices
+		so.obs.ind_filter - array, indices of so.obs.v that fall within the
+			yJ/HK detector passbands
 		"""
 		# flux density is stellar flux * telescope area * instrument throughput * atmospheric absorption 
 		# If planet separation is >0, compute for the planet also
@@ -420,7 +660,7 @@ class fill_data():
 		
 		# Load background spectrum - sky is top of telescope and will be reduced by inst BASE throughput. Coupling already accounted for in solid angle of fiber. Does inst bkg needs partial throughput applied - ignored for now to be conservative
 		#
-		so.obs.sky_bg_ph    = so.obs.ytransmit * noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.skypath)
+		so.obs.sky_bg_ph    = so.obs.ytransmit * noise_tools.get_sky_bg(so.obs.v,so.tel.airmass,pwv=so.tel.pwv,skypath=so.tel.sky_path)
 		so.obs.inst_bg_ph   = noise_tools.get_inst_bg(so.obs.v,npix=so.inst.pix_vert,R=so.inst.res,diam=so.inst.tel_diam,area=so.inst.tel_area,datapath=so.inst.transmission_path)
 		
 		# Calculate noise
@@ -476,8 +716,48 @@ class fill_data():
 
 	def tracking(self,so):
 		"""
-		Gets the tracking centroid precision based 
-		on the SNR and FWHM of the PSF
+		Simulates the acquisition/tracking camera used for guiding: loads
+		the tracking camera detector properties and throughput curve,
+		computes the plate scale and PSF FWHM (from so.ao.ho_wfe/
+		tt_dynamic via wfe_tools), the sky and instrument background seen
+		by the camera, and the stellar photon signal integrated over the
+		tracking band and PSF core. From the resulting SNR it derives the
+		centroid error used to characterize tracking/guiding precision. If
+		the peak flux would saturate the tracking detector, an equivalent
+		neutral-density filter (so.track.od) is applied to cap the signal.
+		Depends on stellar(), telluric(), and ao() having already been run.
+
+		inputs
+		------
+		so - storage object; reads so.track.camera, so.track.
+			transmission_file, so.track.fratio, so.track.band,
+			so.track.field_r, so.track.aberrations_file, so.track.texp [s],
+			so.inst.tel_diam [m], so.ao.ho_wfe [nm] / so.ao.tt_dynamic [mas]
+			/ so.ao.pywfs_dichroic, so.tel.airmass / so.tel.pwv /
+			so.tel.sky_path / so.tel.s, so.inst.tel_area [m2],
+			so.inst.transmission_path, and so.stel.s/v
+
+		output
+		------
+		so.track.pixel_pitch, so.track.dark, so.track.rn, so.track.qe_mod,
+			so.track.saturation - tracking camera detector properties
+		so.track.xtransmit, so.track.ytransmit - arrays, tracking camera
+			throughput [0,1]
+		so.track.platescale [arcsec/pixel], so.track.center_wavelength [nm],
+			so.track.bandpass - plate scale, tracking band center
+			wavelength, and bandpass profile (with pyWFS dichroic applied)
+		so.track.fwhm [pixel], so.track.npix, so.track.strehl - PSF FWHM,
+			effective aperture size, and Strehl at the tracking wavelength
+		so.track.sky_bg_spec/sky_bg_ph, so.track.inst_bg_spec/inst_bg_ph -
+			sky and instrument background spectra/integrated photon rates
+		so.track.signal_spec, so.track.signal, so.track.nphot_nocap - star
+			signal spectrum and photon counts (capped/uncapped) in the
+			tracking aperture
+		so.track.od - float, neutral-density filter optical density applied
+			if saturated (0 otherwise), and so.track.saturation_flag - bool
+		so.track.noise - float, total noise [e-] in the tracking aperture
+		so.track.snr, so.track.centroid_err - SNR and resulting centroid
+			error [pixel] of the tracking measurement
 		"""
 		#pick guide camera - eventually settle on one and put params in config file!
 		rn, pixel_pitch, qe_mod, dark,saturation = obs_tools.get_tracking_cam(camera=so.track.camera,x=self.x)
@@ -513,7 +793,7 @@ class fill_data():
 
 		# get sky background and instrument background, spec is ph/nm/s
 		# fwhm must be in arcsec 
-		so.track.sky_bg_spec = noise_tools.get_sky_bg_tracking(self.x,so.track.fwhm*so.track.platescale,airmass=so.tel.airmass,pwv=so.tel.pwv,area=so.inst.tel_area,skypath=so.tel.skypath)
+		so.track.sky_bg_spec = noise_tools.get_sky_bg_tracking(self.x,so.track.fwhm*so.track.platescale,airmass=so.tel.airmass,pwv=so.tel.pwv,area=so.inst.tel_area,skypath=so.tel.sky_path)
 		so.track.sky_bg_ph   = np.trapz(so.track.sky_bg_spec * so.track.bandpass * so.track.ytransmit,self.x) # sky bkg needs mult by throughput and bandpass profile
 
 		# get background spec (takes thermal emission from warm cryostat window)
@@ -524,14 +804,15 @@ class fill_data():
 		so.track.signal_spec = so.stel.s * so.track.texp *\
 		 			so.inst.tel_area * so.track.ytransmit*\
 		 			np.abs(so.tel.s)
-	
-		fac = 0.5 # empirically the fraction of light approx under 2D gaussian of FWHM~4pix, which was used to get npix and matches expectation in toy centroiding model
+
+		# fac is empirically the fraction of light approx under 2D gaussian of FWHM~4pix, 
+		# which scales npix. This was tuned based on a actual toy centroiding model fit and gets results to match
+		fac = 0.5 		
 		nphot = fac * so.track.strehl * np.trapz(so.track.signal_spec * so.track.bandpass,so.stel.v)
-		#print('Tracking photons: %s e-'%so.track.nphot)
 
 		# get noise
 		so.track.noise = noise_tools.sum_total_noise(nphot,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,so.track.npix,0)
-		print('Tracking noise: %s e-'%so.track.noise)
+		print(f'Tracking noise: {so.track.noise} e-')
 		
 		# get centroid error, cap if saturated
 		# peak of 2D Gaussian 4pix wide will be 1/10th of the flux in a 4pix diameter aperture (empirically derived)
@@ -546,24 +827,61 @@ class fill_data():
 			# save things related to saturation
 			so.track.saturation_flag = True
 			so.track.nphot_nocap     = nphot
+			print(f'Tracking OD needed {so.track.od}, nphot capped to {so.track.signal} e-')
 		else:
 			so.track.od              = 0.0
 			so.track.nphot_nocap     = nphot
 			so.track.signal = nphot  # no blocking needed
 			so.track.saturation_flag = False
-		
-		print('Tracking photons: %s e-'%so.track.signal)
+			print(f'Tracking photons: {so.track.signal} e-')
 
 		so.track.snr    = so.track.signal/so.track.noise
 		# for centroid error, care about the SNR in the peak
 		#signal_peak     = so.track.signal/20 # peak is 1/20th of Gaussian PSF flux assuming 4.1pix FWHM
 		#noise_peak      = noise_tools.sum_total_noise(so.track.signal,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,1,0) # hack for noise for one pixel
 		so.track.centroid_err = (1/np.pi) * so.track.fwhm/so.track.snr # same fwhm but snr is reduced to not saturate like if used an ND filter
-
-	def compute_rv(self,so,telluric_cutoff=0.01,velocity_cutoff=1):
+		print(f'Tracking SNR: {so.track.snr}, centroid error: {so.track.centroid_err} pix')
+		
+	def compute_rv(self,so,telluric_cutoff=0.01,velocity_cutoff=30):
 		"""
-		telluric_cutofff - depth of telluric lines to start cut 
-		velocity_cutoff  - km/s around a telluric line to cut
+		Computes the achievable radial velocity precision for the
+		observation. Builds a "telluric/continuum-free" version of the
+		observed spectrum (throughput continuum and telluric absorption
+		divided out) so the RV information content reflects only the
+		stellar lines, builds a mask that excludes wavelengths near deep
+		telluric lines (deeper than telluric_cutoff, masked out to
+		+/-velocity_cutoff in velocity space), and passes these along with
+		the noise spectrum to ccf_tools.get_rv_precision to get the RV
+		uncertainty per order and for the full spectrum, adding the
+		instrument/telluric systematic noise floor (so.inst.rv_floor) in
+		quadrature. Depends on stellar(), telluric(), instrument(), and
+		observe() having already been run.
+
+		inputs
+		------
+		so - storage object; reads so.inst.ytransmit, so.obs.nframes,
+			so.obs.frame_phot_per_nm (or frame_phot_per_nm_pl if
+			pl_sep>0), so.tel.s, so.stel.v, so.inst.res/sig, so.obs.v,
+			so.tel.rayleigh/o3, so.obs.noise, so.inst.order_cens/
+			order_widths, and so.inst.rv_floor [m/s]
+		telluric_cutoff - float
+			telluric line depth (0-1) below which wavelengths start being
+			masked out of the RV calculation
+		velocity_cutoff - float, km/s
+			velocity window around each masked telluric line to also
+			exclude
+
+		output
+		------
+		so.inst.s_telcont_free - array, stellar spectrum with instrument
+			throughput continuum and telluric absorption removed, resampled
+			onto so.obs.v
+		so.obs.telluric_mask - array, boolean/weight mask excluding regions
+			near deep telluric lines
+		so.obs.rv_order - array, per-order RV precision including the
+			instrument/telluric noise floor [m/s]
+		so.obs.rv_tot - float, total RV precision across the full spectrum,
+			including the noise floor [m/s]
 		"""
 		# Create spectrum with continuum removed and tellurics removed
 		# the noise spectrum will consider tellurics but shouldnt be in the spectrum for computing RV
@@ -597,6 +915,32 @@ class fill_data():
 		so.obs.rv_tot   = np.sqrt(dv_spec**2 + so.inst.rv_floor**2) # add noise floor
 
 	def compute_etc(self,so,target_snr):
+		"""
+		Exposure time calculator (ETC): given the per-frame SNR already
+		computed by observe() (so.obs.s_frame/so.obs.noise_frame, scaled
+		to a resolution element), scales by (target_snr/snr_frame)^2 to
+		derive the total exposure time needed to reach target_snr, per
+		pixel/resolution-element (so.obs.etc) and per order using both the
+		per-order max and mean SNR (so.obs.etc_order_max/mean). Depends on
+		observe() having already been run.
+
+		inputs
+		------
+		so - storage object; reads so.inst.res_samp, so.obs.s_frame,
+			so.obs.noise_frame, so.obs.texp_frame [s], so.obs.nframes,
+			so.obs.snr_max_orders, so.obs.snr_mean_orders
+		target_snr - float
+			desired signal to noise ratio
+
+		output
+		------
+		so.obs.etc - array, exposure time [s] needed at each wavelength/
+			resolution element to reach target_snr
+		so.obs.etc_order_max - array, exposure time [s] per order needed to
+			reach target_snr at that order's max SNR wavelength
+		so.obs.etc_order_mean - array, exposure time [s] per order needed
+			to reach target_snr at that order's mean SNR
+		"""
 		# exposure time calculator
 		snr_frame = np.sqrt(so.inst.res_samp) * so.obs.s_frame/so.obs.noise_frame # per resolution element
 		# make 0s nans so doesnt blow up
@@ -610,15 +954,32 @@ class fill_data():
 
 	def compute_ccf_snr(self, so, model=None,systematics_residuals=0.01,kernel_size=201,norm_cutoff=0.95):
 		'''
-		Calculate the Cross-correlation function signal to noise ration with a matched filter
+		Calculates the cross-correlation function (CCF) signal-to-noise
+		ratio using a matched-filter formalism, i.e. the SNR that would be
+		obtained by cross-correlating the observed spectrum against a
+		stellar/telluric template (as used for high-resolution
+		spectroscopy detections/RV work), for the full so.obs.s spectrum
+		and separately for the y/J/H/K bands. A telluric transmission
+		spectrum is built from the H2O/Rayleigh components, the model (or
+		signal/sky_trans if no model given) is median-filtered to remove
+		the continuum leaving just high-frequency spectral features, deep
+		telluric regions (below norm_cutoff) are excluded, and the matched
+		filter equation is evaluated using the per-pixel noise variance.
+		Depends on stellar(), telluric(), instrument(), and observe()
+		having already been run.
 
 		Inputs:
-		so          - so object, uses  signal, total_noise, sky_trans
+		so          - storage object; uses so.obs.s, so.obs.noise, so.obs.v,
+		              so.tel.s, so.tel.rayleigh, so.stel.v, so.inst.res
 		model       - Your model spectrum, default None and divides signal by telluric spec
-		sky_trans   - The sky transmission
 		systematics_residuals - A multiplicative factor that estimates the residual level of the host star spectrum and telluric lines in your signal (Default of 1%)
 		kernel_size  - The default high-pass filter size.
 		norm_cutoff  - A cutoff below which we don't calculate the ccf-snr
+
+		Output:
+		so.obs.ccf_snr - float, matched-filter CCF SNR for the full spectrum
+		so.obs.ccf_snr_y, so.obs.ccf_snr_J, so.obs.ccf_snr_H, so.obs.ccf_snr_K
+		            - float, CCF SNR restricted to each photometric band
 
 		references:
 		-----------
@@ -686,17 +1047,35 @@ class fill_data():
 
 	def compute_ccf_snr_etc(self, so, goal_ccf, model=None,systematics_residuals=0.01,kernel_size=201,norm_cutoff=0.95):
 		'''
-		{    Calculate the time required to achieve a desired CCF SNR with a matched filter
-		
-		Basically a copy of compute_ccf_snr but for a single frame and then needed exp time is derived by scaling 
+		Calculates the exposure time required to achieve a desired CCF SNR
+		(goal_ccf) with a matched filter. This is essentially a copy of
+		compute_ccf_snr's matched-filter calculation but run on a single
+		frame's signal/noise (so.obs.s_frame, so.obs.noise_frame) instead
+		of the full multi-frame spectrum; the model here is always defined
+		as signal/sky_trans (no user-supplied model option, unlike
+		compute_ccf_snr). Since CCF SNR scales as sqrt(exposure time), the
+		per-frame CCF SNR in each band is scaled by (goal_ccf/ccf_snr)^2 x
+		so.obs.texp_frame to get the needed total exposure time, computed
+		separately for the y/J/H/K bands. Does not currently account for
+		systematics_residuals scaling with exposure time. Depends on
+		stellar(), telluric(), instrument(), and observe() having already
+		been run.
 
 		Inputs:
 		--------
-		so
+		so - storage object; uses so.obs.s_frame, so.obs.noise_frame,
+		     so.obs.v, so.tel.s, so.tel.rayleigh, so.stel.v, so.inst.res,
+		     so.obs.texp_frame [s]
 		goal_ccf    - CCF SNR for which exposure time will be computed
 		systematics_residuals - A multiplicative factor that estimates the residual level of the host star spectrum and telluric lines in your signal (Default of 1%)
 		kernel_size  - The default high-pass filter size.
 		norm_cutoff  - A cutoff below which we don't calculate the ccf-snr
+
+		Output:
+		--------
+		so.obs.etc_ccf_snr_y, so.obs.etc_ccf_snr_J, so.obs.etc_ccf_snr_H,
+		so.obs.etc_ccf_snr_K - float, exposure time [s] needed in each band
+		to reach goal_ccf
 		'''
 		# TODO: This function does not account for systematics at the moment
 		# To account for read_noise, we need to change how the number of frames is done in PSISIM
@@ -761,8 +1140,30 @@ class fill_data():
 		
 	def set_teff_aomode(self,so,temp,aomode,trackonly=False):
 		"""
-		given new temperature, relaod things as needed
-		mode: 'track' or 'spec'
+		Convenience re-loader: updates the star's effective temperature and
+		the AO mode, then re-runs only the downstream methods that depend
+		on those two values (stellar spectrum, AO Strehl/WFE, instrument
+		throughput, tracking, and full observation), avoiding recomputing
+		filter/telluric which are unaffected. Intended for use after the
+		initial fill_data(so) call, e.g. when scanning over a grid of
+		Teff/AO mode combinations.
+
+		inputs
+		------
+		so - storage object (already filled by fill_data.__init__)
+		temp - float, K
+			new stellar effective temperature, written to so.stel.teff
+		aomode - str
+			new AO mode, written to so.ao.mode
+		trackonly - bool
+			if True, skip recomputing so.inst throughput (instrument());
+			tracking() and observe() are always re-run regardless
+
+		output
+		------
+		so - updated in place: so.stel.* (via stellar), so.ao.* (via ao),
+			so.inst.* (via instrument, unless trackonly), so.track.* (via
+			tracking), and so.obs.* (via observe)
 		"""
 		so.stel.teff = temp
 		so.ao.mode   = aomode
@@ -775,8 +1176,32 @@ class fill_data():
 
 	def set_teff_mag(self,so,temp,mag,staronly=False,trackonly=False):
 		"""
-		given new temperature, relaod things as needed
-		mode: 'track' or 'spec'
+		Convenience re-loader: updates the star's effective temperature and
+		magnitude, then re-runs only the downstream methods needed to
+		propagate that change, avoiding recomputing filter/telluric which
+		are unaffected. Intended for use after the initial fill_data(so)
+		call, e.g. when scanning over a grid of Teff/mag combinations.
+
+		inputs
+		------
+		so - storage object (already filled by fill_data.__init__)
+		temp - float, K
+			new stellar effective temperature, written to so.stel.teff
+		mag - float, mag (in so.filt band)
+			new stellar magnitude, written to so.stel.mag
+		staronly - bool
+			if True, only reload the stellar spectrum (stellar()) and skip
+			ao/instrument/tracking/observe entirely
+		trackonly - bool, ignored if staronly is True
+			if True, re-run ao+instrument+tracking (not observe); if False,
+			re-run ao+instrument+observe (not tracking)
+
+		output
+		------
+		so - updated in place: so.stel.* (via stellar), and, unless
+			staronly, so.ao.*/so.inst.* (via ao/instrument) plus either
+			so.track.* (via tracking, if trackonly) or so.obs.* (via
+			observe, otherwise)
 		"""
 		so.stel.teff  = temp
 		so.stel.mag   = mag
@@ -793,7 +1218,28 @@ class fill_data():
 
 	def set_mag(self,so,mag,trackonly=False):
 		"""
-		given new magnitude, relaod things as needed
+		Convenience re-loader: updates the stellar magnitude and re-runs
+		filter, stellar, ao, (optionally) instrument, (optionally)
+		tracking, and observe to propagate the change through the
+		pipeline. Intended for use after the initial fill_data(so) call,
+		e.g. when scanning over a grid of magnitudes.
+
+		inputs
+		------
+		so - storage object (already filled by fill_data.__init__)
+		mag - float, mag (in so.filt band)
+			new stellar magnitude, written to so.stel.mag
+		trackonly - bool
+			if True, skip recomputing so.inst throughput (instrument());
+			tracking() is re-run only if self.track_on, and observe() is
+			always re-run regardless of trackonly
+
+		output
+		------
+		so - updated in place: so.filt.* (via filter), so.stel.* (via
+			stellar), so.ao.* (via ao), so.inst.* (via instrument, unless
+			trackonly), so.track.* (via tracking, if self.track_on), and
+			so.obs.* (via observe)
 		"""
 		print('-----Reloading Stellar Magnitude-----')
 		so.stel.mag = mag
@@ -808,7 +1254,23 @@ class fill_data():
 
 	def set_tracking_band_texp(self,so,band,texp):
 		"""
-		given new tracking band, relaod things as needed
+		Convenience re-loader: updates the tracking camera's photometric
+		band and exposure time and re-runs only tracking() to propagate
+		the change (nothing else in the pipeline depends on these two
+		values). Intended for use after the initial fill_data(so) call.
+
+		inputs
+		------
+		so - storage object (already filled by fill_data.__init__)
+		band - str
+			new tracking camera band, written to so.track.band (e.g.
+			'JHgap','z','y','J','H','K')
+		texp - float, s
+			new tracking camera exposure time, written to so.track.texp
+
+		output
+		------
+		so - updated in place: so.track.* (via tracking)
 		"""
 		print('-----Reloading Tracking Band and Exposure Time------')
 		so.track.band = band
@@ -817,7 +1279,27 @@ class fill_data():
 
 	def set_ao_mode(self,so,mode,trackonly=False):
 		"""
-		given new ao mode, reload things as needed
+		Convenience re-loader: updates the AO mode and re-runs the
+		downstream methods that depend on it (AO Strehl/WFE, instrument
+		throughput, tracking, and the full observation). Intended for use
+		after the initial fill_data(so) call, e.g. when scanning over AO
+		modes.
+
+		inputs
+		------
+		so - storage object (already filled by fill_data.__init__)
+		mode - str
+			new AO mode, written to so.ao.mode ('auto' or a specific mode
+			name, see ao())
+		trackonly - bool
+			if True, skip recomputing so.inst throughput (instrument());
+			tracking() and observe() are always re-run regardless
+
+		output
+		------
+		so - updated in place: so.ao.* (via ao), so.inst.* (via instrument,
+			unless trackonly), so.track.* (via tracking), and so.obs.*
+			(via observe)
 		"""
 		print('-----Reloading Stellar Magnitude-----')
 		so.ao.mode = mode
@@ -829,7 +1311,33 @@ class fill_data():
 
 	def set_filter_band_mag(self,so,band,family,mag,trackonly=False):
 		"""
-		given new filter band, reload everything
+		Convenience re-loader: updates the photometric filter band/family
+		that the stellar magnitude is defined in (plus the magnitude
+		itself) and re-runs the full downstream chain so all the derived
+		quantities are consistent with the new band. Intended for use
+		after the initial fill_data(so) call, e.g. when switching which
+		band a target's magnitude is quoted in.
+
+		inputs
+		------
+		so - storage object (already filled by fill_data.__init__)
+		band - str
+			new filter band, written to so.filt.band (e.g. 'y','J','H','K')
+		family - str
+			new filter family, written to so.filt.family (e.g. '2mass','cfht')
+		mag - float, mag (in the new band)
+			new stellar magnitude, written to so.stel.mag
+		trackonly - bool
+			if True, skip recomputing so.inst throughput and so.obs (i.e.
+			skip instrument() and observe()); tracking() is always re-run
+			regardless of trackonly
+
+		output
+		------
+		so - updated in place: so.filt.* (via filter), so.stel.* (via
+			stellar), so.ao.* (via ao), so.inst.* and so.obs.* (via
+			instrument/observe, unless trackonly), and so.track.* (via
+			tracking)
 		"""
 		print('-----Reloading Filter Band Definition-----')
 		so.filt.band = band
