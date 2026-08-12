@@ -29,8 +29,36 @@ SAVEPATH  = '../output/'
 # instrument project plots
 def plot_doppler_spectrographs(so,cload):
 	"""
-	make figures to add to sam's cool rv landscape plot
-	"""	
+	Make figures to add to Sam's "cool RV landscape" plot.
+
+	Reloads the HISPEC config from './configs/hispec_snr.cfg' (overriding
+	so and cload passed in), extends the wavelength range to 370-2650nm,
+	and produces two black-background figures:
+	1. M star (Teff=2500K, scaled x2) and G star (Teff=5800K) spectra
+	   vs. wavelength [nm], both at H=10 mag, with y limited to (-10,5000).
+	2. Telluric transmission vs. wavelength [nm] (visible portion from a
+	   PSG telluric FITS file spliced with the NIR portion from so.tel.s),
+	   with y limited to (-2,2), overplotted with Johnson R, CFHT y, and
+	   2MASS J/H/K filter transmission curves (each scaled by 0.5).
+
+	Parameters
+	----------
+	so : object
+		instance of specsim storage object (reassigned internally from
+		the hardcoded HISPEC config file; the value passed in is not used
+		for the plotted data)
+	cload : object
+		loader object (e.g. from specsim.load_inputs.fill_data) used to
+		set stellar spectra (set_teff_mag) and filter curves (filter);
+		reassigned internally via fill_data(so)
+
+	Returns
+	-------
+	None
+		Does not return anything and does not call plt.savefig; the two
+		figures are left open on the current pyplot state for the caller
+		to save or display.
+	"""
 	configfile = './configs/hispec_snr.cfg'
 	so         = load_object(configfile)
 	so.inst.l0 = 370
@@ -74,14 +102,44 @@ def plot_doppler_spectrographs(so,cload):
 
 def plot_rv_err(so,savefig=True,savepath=SAVEPATH,text_pos=0):
 	"""
-	plots RV precision and SNR spectrum 
-	
-	inputs
-	------
-	so
-	savefig  - bool
-	savepath - defaults SAVEPATH defined here 
+	Plot per-order SNR/pixel and per-order RV precision vs. wavelength,
+	side by side in two vertically stacked panels, to compare achievable
+	RV precision and SNR across the spectrograph's wavelength range for
+	a given star/exposure setup.
 
+	Top panel: SNR per pixel (so.obs.snr_res_element/sqrt(res_samp)) vs.
+	wavelength [nm] for each order, colored by order center wavelength
+	(Spectral_r colormap), with telluric absorption (so.tel.s) and total
+	instrument throughput (so.inst.ytransmit) overplotted on a secondary
+	y-axis (Transmission).
+	Bottom panel: RV precision per order (so.obs.rv_order) [m/s] vs.
+	order center wavelength (so.inst.order_cens), with a dashed line at
+	the instrument RV floor (so.inst.rv_floor), gray shading over the
+	1450-2400nm and 980-1330nm bands, and text annotations giving the
+	combined yJ-band and HK-band RV precision (quadrature sum with the
+	RV floor).
+
+	Parameters
+	----------
+	so : object
+		instance of specsim storage object; uses so.obs, so.inst,
+		so.tel, so.stel, so.filt attributes
+	savefig : bool
+		if True, save the figure to disk (default True)
+	savepath : str
+		directory to save the figure into if savefig is True; defaults
+		to the module-level SAVEPATH
+	text_pos : float
+		y-axis position (in RV precision units, m/s) at which the yJ/HK
+		RV precision text annotations are placed in the bottom panel
+		(default 0)
+
+	Returns
+	-------
+	fig, axs : matplotlib Figure and array of Axes
+		the created figure and its two subplots. If savefig is True, the
+		figure is also written to
+		'<savepath>/./RV_precision_<so.run.tag>_<so.stel.teff>K_<so.filt.band>mag<so.stel.mag>_<so.obs.texp>s_vsini<so.stel.vsini>kms.png'
 	"""
 	col_table = plt.get_cmap('Spectral_r')
 	fig, axs = plt.subplots(2,figsize=(7,7),sharex=True)
@@ -91,7 +149,10 @@ def plot_rv_err(so,savefig=True,savepath=SAVEPATH,text_pos=0):
 	axs[1].fill_between([1450,2400],0,1e10,facecolor='gray',alpha=0.2)
 	axs[1].fill_between([980,1330],0,1e10,facecolor='gray',alpha=0.2)
 	axs[1].grid('True')
-	axs[1].set_ylim(-0.1,3*np.median(so.obs.rv_order))
+	dv_vals = so.obs.rv_order
+	max_y_lim = 3*np.median(dv_vals[np.where(~np.isinf(dv_vals))])
+	if np.isnan(max_y_lim): max_y_lim = 1	
+	axs[1].set_ylim(0,max_y_lim)
 	axs[1].set_xlim(950,2400)
 	axs[1].set_ylabel('$\sigma_{RV}$ [m/s]')
 	axs[1].set_xlabel('Wavelength [nm]')
@@ -127,9 +188,92 @@ def plot_rv_err(so,savefig=True,savepath=SAVEPATH,text_pos=0):
 	return fig,axs
 
 
+def plot_telluric_mask(so):
+	"""
+	Not tested.
+
+	Plot the telluric mask alongside the telluric and stellar spectra
+	over a narrow wavelength window (2192-2198nm), to visually check
+	which wavelengths get masked out due to telluric absorption.
+
+	Plots, all vs. wavelength [nm]:
+	- inverted telluric mask (1 - so.obs.telluric_mask) as a filled
+	  black region labeled 'Masked'
+	- telluric spectrum (so.obs.s_tel) labeled 'Telluric'
+	- normalized stellar spectrum (so.obs.s/max(so.obs.s)) labeled
+	  'Stellar'
+
+	Parameters
+	----------
+	so : object
+		instance of specsim storage object; uses so.obs.v,
+		so.obs.telluric_mask, so.obs.s_tel, so.obs.s
+
+	Returns
+	-------
+	None
+		Does not return anything and does not call plt.savefig; draws
+		on a new figure left open for the caller to save or display.
+	"""
+	plt.figure()
+	plt.fill_between(so.obs.v,1-so.obs.telluric_mask,facecolor='k',alpha=0.8,label='Masked')
+	plt.plot(so.obs.v,so.obs.s_tel,label='Telluric')
+	#plt.plot(so.obs.v,20*all_w/np.max(all_w),label='IC')
+	plt.plot(so.obs.v,so.obs.s/np.max(so.obs.s),'k',label='Stellar')
+	plt.xlim(2192,2198)
+	plt.legend()
+	plt.xlabel('Wavelength (nm)')
+	plt.subplots_adjust(bottom=0.15)
+	plt.ylabel('Flux (arb. units)')
+
+
 def plot_rv_err_gen(v,s,order_cens,rv_order,rv_floor=0.3,savefig=True,tag='test',annotate=False):
 	"""
+	Generic (non-`so`-based) version of plot_rv_err: plot SNR/pixel and
+	per-order RV precision vs. wavelength from raw arrays, useful for
+	comparing RV precision across spectrograph designs without needing
+	a full storage_object instance.
 
+	Top panel: spectrum s vs. wavelength v, redrawn once per order
+	center in order_cens, each colored by its normalized wavelength
+	position (Spectral_r colormap).
+	Bottom panel: rv_order [m/s] vs. order_cens [nm], with a dashed
+	line at rv_floor, gray shading over the 1450-2400nm and 980-1330nm
+	bands, and (if annotate=True) text annotations giving the combined
+	yJ-band and HK-band RV precision (quadrature sum of the per-order
+	values with rv_floor).
+
+	Parameters
+	----------
+	v : array
+		wavelength array [nm] plotted in the top (SNR) panel
+	s : array
+		spectrum/SNR array plotted against v in the top panel
+	order_cens : array
+		center wavelength [nm] of each spectrograph order; used as the
+		x-axis in the bottom (RV precision) panel and to color the top
+		panel traces
+	rv_order : array
+		RV precision [m/s] per order, plotted against order_cens in the
+		bottom panel
+	rv_floor : float
+		systematic RV noise floor [m/s] plotted as a dashed reference
+		line and combined in quadrature with rv_order when annotate is
+		True (default 0.3)
+	savefig : bool
+		if True, save the figure to disk (default True)
+	tag : str
+		label used as the top panel title and in the saved filename
+		(default 'test')
+	annotate : bool
+		if True, add text annotations of the combined yJ-band and
+		HK-band RV precision to the bottom panel (default False)
+
+	Returns
+	-------
+	fig, axs : matplotlib Figure and array of Axes
+		the created figure and its two subplots. If savefig is True, the
+		figure is also written to './RV_precision_<tag>.png'
 	"""
 	col_table = plt.get_cmap('Spectral_r')
 	fig, axs = plt.subplots(2,figsize=(7,7),sharex=True)
@@ -172,9 +316,22 @@ def plot_rv_err_gen(v,s,order_cens,rv_order,rv_floor=0.3,savefig=True,tag='test'
 
 def load_brown_dwarfs_AB():
     """
-    load adam burgasser's file
+    Load Adam Burgasser's brown dwarf compilation spreadsheet
+    ('ucd_sheet_teff.xlsx') and pull out H magnitude and effective
+    temperature columns for use as a brown dwarf population sample
+    (e.g. for overplotting on H mag vs. Teff figures).
 
-    returns hmag, teff
+    Not a plotting function; reads a hardcoded local file path
+    ('/Users/ashbake/Documents/Research/Projects/HISPEC/Tests/
+    TrackingCamera/data/ucd_sheet_teff.xlsx') and does not draw
+    anything or take any parameters.
+
+    Returns
+    -------
+    hmag : ndarray
+        2MASS H-band magnitudes ('H_2MASS' column)
+    teff : ndarray
+        effective temperatures ('teff' column) [K]
     """
     xl = pd.ExcelFile('/Users/ashbake/Documents/Research/Projects/HISPEC/Tests/TrackingCamera/data/ucd_sheet_teff.xlsx')
     #xl.sheet_names
@@ -191,6 +348,20 @@ def load_brown_dwarfs_AB():
 # STAND ALONE PLOTTING FUNCTIONS
 def setup_plot_style():
 	"""
+	Set global matplotlib rcParams used by the plotting functions in
+	this module (font size 14, sans-serif font family, axes line width
+	1.3). Intended to be called once before making plots to give them a
+	consistent style.
+
+	Parameters
+	----------
+	None
+
+	Returns
+	-------
+	None
+		Does not return anything and does not save or draw a figure;
+		only mutates global matplotlib.rcParams / plt.rcParams state.
 	"""
 	import matplotlib
 	font = {'size'   : 14}
@@ -202,7 +373,25 @@ def setup_plot_style():
 
 def plot_stellar_colors():
 	"""
-	open colors of stars relative to H band and plot
+	Plot stellar color-vs-band curves relative to H band for a set of
+	stellar temperatures, to compare how much brighter/fainter each
+	photometric band is relative to H across spectral types.
+
+	Reads DATAPATH+'WFE/HAKA/color_curves.csv' (tab-delimited, one
+	column per stellar temperature plus a 'Temp' column of band names)
+	and, for each temperature column (excluding 'Temp', '2500', and
+	'3800'), plots (band - H) vs. band index, with a text label of the
+	temperature (in K) placed at the first band.
+
+	Parameters
+	----------
+	None
+
+	Returns
+	-------
+	None
+		Does not return anything. Saves the figure to
+		SAVEPATH+'stellar_colors_H.png'.
 	"""
 	f = pd.read_csv(DATAPATH + 'WFE/HAKA/color_curves.csv',delimiter='\t')
 	
@@ -226,6 +415,31 @@ def plot_stellar_colors():
 
 def plot_tracking_cam_spot_rms(camera='h2rg'):
 	"""
+	Plot tracking camera optical spot size (RMS diameter, in pixels) vs.
+	field radius, to check how spot blur grows toward the edge of the
+	tracking camera field of view at different wavelengths.
+
+	Reads a hardcoded local spot-size vs. field text file
+	('/Users/ashbake/Documents/Research/Projects/HISPEC/SNR_calcs/data/
+	WFE/trackingcamera_optics/
+	HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt') containing
+	field angle [deg] and RMS spot size [um] at several wavelengths, and
+	plots RMS spot diameter (converted to pixels via a fixed 18um pixel
+	pitch and a sqrt(2) diagonal-cut factor) vs. field radius [arcsec]
+	for the total RMS, 900nm, and 2200nm cases.
+
+	Parameters
+	----------
+	camera : str
+		name of the tracking camera; accepted but currently unused in
+		the function body (the pixel pitch is hardcoded to 18um instead
+		of being looked up for this camera) (default 'h2rg')
+
+	Returns
+	-------
+	None
+		Does not return anything. Saves the figure to
+		SAVEPATH+'tracking_cam_spot_RMS.png'.
 	"""
 	#f = np.loadtxt('./data/WFE/trackingcamera_optics/OAP1_HISPEC_FEI_RMS_SpotRvsField.txt')
 	#f = np.loadtxt(DATAPATH + 'WFE/trackingcamera_optics/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt')
@@ -246,6 +460,11 @@ def plot_tracking_cam_spot_rms(camera='h2rg'):
 	plt.savefig(SAVEPATH + 'tracking_cam_spot_RMS.png')
 
 def plot_cool_stars():
+	"""
+	Scatter plot of host star effective temperature vs. H magnitude
+	for confirmed planets around cool (Teff < 4000K), small (Rp < 2 Rearth),
+	short period (Teq < 360K) stars
+	"""
 	planets_filename = './data/populations/rv_less2earthrad_less360Teq_less4000Teff_planets_.csv'
 	planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
 
@@ -262,6 +481,29 @@ def plot_cool_stars():
 
 def plot_brown_dwarfs():
 	"""
+	Plot a brown dwarf population sample from the UltracoolSheet
+	compilation, to look at the H-magnitude distribution and the
+	relationship between H magnitude and estimated effective
+	temperature for late M through T dwarfs.
+
+	Reads './data/populations/UltracoolSheetMain.csv' and derives an
+	approximate Teff [K] for each object from its infrared spectral
+	type (spt_ir, M6-T6) via a fixed spectral-type-to-Teff lookup table;
+	objects outside M6-T6 (or with non-string spectral type) get Teff=0.
+	Produces two separate figures:
+	1. Histogram of H magnitude (H_MKO column, 100 bins).
+	2. Scatter plot of H magnitude vs. derived Teff [K].
+
+	Parameters
+	----------
+	None
+
+	Returns
+	-------
+	None
+		Does not return anything and does not call plt.savefig; the two
+		figures are left open on the current pyplot state for the caller
+		to save or display.
 	"""
 	bd_filename = './data/populations/UltracoolSheetMain.csv'
 	bd_data =  pd.read_csv(bd_filename,delimiter=',',comment='#')
@@ -312,7 +554,42 @@ def plot_brown_dwarfs():
 
 def plot_throughput_nice(telluric_file,datapath='./data/throughput/hispec_subsystems_11032022/',outputdir='../output/'):
     """
-    plot throughput plot for MRI proposal
+    Plot the HISPEC yJ-band end-to-end throughput for the MRI proposal,
+    comparing NGS (natural guide star) vs. LGS (laser guide star) AO
+    mode throughput curves across the blue and red spectrograph arms.
+
+    Note: telluric_file and outputdir are both overwritten internally
+    with hardcoded values, so the values passed in are not used.
+
+    Loads precomputed throughput text files ('ngs_throughput_bspec.txt',
+    'lgs_throughput_bspec.txt', 'ngs_throughput_HK.txt',
+    'lgs_throughput_HK.txt') from outputdir and plots throughput vs.
+    wavelength [microns] for NGS (seagreen) and LGS (gray) mode, split
+    at 1.333 microns into blue-arm and red-arm segments. Y-axis is
+    'End-to-End Throughput' (limited to 0.005-0.075), with the
+    1.33-1.49 micron gap whited out and the yJ order-gap/edge bands
+    shaded gray. Custom log-spaced y-ticks and rotated x-ticks are set.
+
+    Parameters
+    ----------
+    telluric_file : str
+        path to a telluric transmission FITS file; accepted but unused,
+        as the function immediately reassigns it to a hardcoded path
+    datapath : str
+        directory containing per-subsystem throughput files; accepted
+        but not referenced in the function body (default
+        './data/throughput/hispec_subsystems_11032022/')
+    outputdir : str
+        directory to read the precomputed *_throughput_*.txt files
+        from; accepted but immediately overwritten to './output/'
+        inside the function (default '../output/')
+
+    Returns
+    -------
+    None
+        Does not return anything. The plt.savefig calls that would
+        write to outputdir+'e2e_mri_plot_yJ.png'/'.pdf' are currently
+        commented out, so the figure is left open rather than saved.
     """
     # plot red only
     telluric_file = './data/telluric/psg_out_2020.08.02_l0_800nm_l1_2700nm_res_0.001nm_lon_204.53_lat_19.82_pres_0.5826.fits'
@@ -360,19 +637,39 @@ def plot_throughput_nice(telluric_file,datapath='./data/throughput/hispec_subsys
 # REQUIRES SO INSTANCE
 def plot_snr(so,snrtype='pixel',savepath='./'):
 	"""
-	Plots SNR calculated in so instance
-	
-	inputs
-	------
+	Plot SNR vs. wavelength for the whole spectrum computed in the so
+	instance, to check the overall SNR level and its shape across the
+	instrument bandpass for a given AO mode/exposure/star setup.
+
+	Plots SNR (either so.obs.snr per pixel or so.obs.snr_res_element per
+	resolution element) vs. wavelength [nm], with a dashed horizontal
+	reference line at SNR=30, x-axis limited to 970-2500nm, a title
+	giving the AO mode, filter band/magnitude, exposure time [hr], and
+	Teff, and a secondary y-axis showing the y/J/H/K filter bands as
+	shaded regions with text labels.
+
+	Parameters
+	----------
 	so : object
-		instance of specsim storage object
+		instance of specsim storage object; uses so.obs, so.ao, so.filt,
+		so.stel, so.inst attributes
 
-	snrtype: 'pixel' or 'res_element'
-		'pixel' selects per pixel SNR
-		'res_element' selects per resolution element SNR
+	snrtype : str
+		'pixel' selects per-pixel SNR (so.obs.snr vs so.obs.v);
+		'res_element' selects per-resolution-element SNR
+		(so.obs.snr_res_element vs so.obs.v_res_element); any other
+		value prints an error message and returns without plotting
+		(default 'pixel')
 
-	savepath: str
-		path to save the plot to
+	savepath : str
+		directory to save the figure into (default './')
+
+	Returns
+	-------
+	None
+		Does not return anything. Saves the figure to
+		'<savepath>/snr_<so.ao.mode>_<so.filt.band>mag_<so.stel.mag>_texp_<so.obs.texp>s_dark_<so.inst.darknoise>.png',
+		unless snrtype is invalid, in which case nothing is saved.
 	"""
 	fig, ax = plt.subplots(1,1, figsize=(10,8))	
 	if snrtype =='pixel':  ax.plot(so.obs.v,so.obs.snr)
@@ -403,18 +700,50 @@ def plot_snr(so,snrtype='pixel',savepath='./'):
 
 def plot_snr_orders(so,snrtype='res_element',mode='mean',height=0.055,savepath=SAVEPATH):
 	"""
-	inputs:
-	-------
+	Plot per-order SNR (mean or peak) vs. order center wavelength, to
+	compare SNR across the spectrograph's echelle orders in a single
+	summary curve rather than the full per-pixel spectrum.
+
+	Uses obs_tools.get_order_value to collapse the SNR spectrum
+	(so.obs.snr or so.obs.snr_res_element, depending on snrtype) into a
+	peak and mean SNR value per order, using so.inst.order_bounds_file
+	to define order boundaries. Plots the chosen statistic (snr_peaks or
+	snr_means) vs. order center wavelength cen_lam [nm], with a title
+	giving AO mode, Teff, filter band/magnitude, and exposure time [hr],
+	x-axis limited to 970-2500nm, y-axis limited to (0, max+10), the
+	y/J/H/K filter bands shaded on the same axis, and the 1333-1500nm
+	gap whited out.
+
+	Parameters
+	----------
 	so : object
-		instance of specsim storage object
+		instance of specsim storage object; uses so.obs, so.inst,
+		so.ao, so.stel, so.filt attributes
 
-	snrtype: 'pixel' or 'res_element'
-		'pixel' selects per pixel SNR
-		'res_element' selects per resolution element SNR
-	
-	mode: 'mean' or 'peak'
-		plots SNR as either the average ('mean') or the peak ('peak') of each order
+	snrtype : str
+		'pixel' selects per-pixel SNR (so.obs.snr, so.obs.v) as the
+		input spectrum; 'res_element' selects per-resolution-element
+		SNR (so.obs.snr_res_element, so.obs.v_res_element)
+		(default 'res_element')
 
+	mode : str
+		plots SNR as either the average ('mean') or the peak ('peak')
+		of each order (default 'mean')
+
+	height : float
+		accepted as a parameter but not referenced anywhere in the
+		function body (default 0.055)
+
+	savepath : str
+		directory to save the figure into (default SAVEPATH)
+
+	Returns
+	-------
+	cen_lam, snr_peaks, snr_means : arrays
+		order center wavelengths [nm] and the per-order peak/mean SNR
+		values computed by obs_tools.get_order_value. The figure is also
+		saved to
+		'<savepath>/snr_<so.ao.mode>_<so.filt.band>mag_<so.stel.mag>_texp_<so.obs.texp>s_dark_<so.inst.darknoise>.png'
 	"""
 	if snrtype=='pixel': cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so.obs.v,so.obs.snr,so.inst.order_bounds_file)
 	if snrtype=='res_element':cen_lam, snr_peaks,snr_means = obs_tools.get_order_value(so.obs.v_res_element,so.obs.snr_res_element,so.inst.order_bounds_file)
@@ -448,6 +777,31 @@ def plot_snr_orders(so,snrtype='res_element',mode='mean',height=0.055,savepath=S
 	
 def plot_base_throughput(so,savepath=SAVEPATH):
 	"""
+	Plot the instrument base throughput (excluding fiber coupling) vs.
+	wavelength, to inspect the shape of the non-coupling throughput
+	budget across the instrument bandpass.
+
+	Plots so.inst.base_throughput vs. so.inst.xtransmit [nm], with a
+	dashed horizontal line at y=30 (note: this is likely a leftover
+	from an SNR plot, since base_throughput is a fraction typically
+	<=1, so the line falls outside the visible y-range), x-axis limited
+	to 970-2500nm, y-axis limited to (0, peak throughput), a grid, and
+	the y/J/H/K filter bands shaded on the same axis with text labels.
+
+	Parameters
+	----------
+	so : object
+		instance of specsim storage object; uses so.inst.xtransmit,
+		so.inst.base_throughput, so.inst.y/J/H/K
+
+	savepath : str
+		directory to save the figure into (default SAVEPATH)
+
+	Returns
+	-------
+	None
+		Does not return anything. Saves the figure to
+		'<savepath>/base_throughput.png'.
 	"""
 	fig, ax = plt.subplots(1,1, figsize=(10,8))	
 	ax.plot(so.inst.xtransmit,so.inst.base_throughput)
@@ -474,6 +828,30 @@ def plot_base_throughput(so,savepath=SAVEPATH):
 
 def plot_coupling(so,savepath=SAVEPATH):
 	"""
+	Plot the fiber coupling efficiency vs. wavelength, to inspect how
+	coupling efficiency varies across the instrument bandpass.
+
+	Plots so.inst.coupling vs. so.inst.xtransmit [nm], with a dashed
+	horizontal line at y=30 (note: this is likely a leftover from an
+	SNR plot, since coupling is a fraction typically <=1, so the line
+	falls outside the visible y-range), x-axis limited to 970-2500nm,
+	y-axis limited to (0, peak coupling), a grid, and the y/J/H/K
+	filter bands shaded on the same axis with text labels.
+
+	Parameters
+	----------
+	so : object
+		instance of specsim storage object; uses so.inst.xtransmit,
+		so.inst.coupling, so.inst.y/J/H/K
+
+	savepath : str
+		directory to save the figure into (default SAVEPATH)
+
+	Returns
+	-------
+	None
+		Does not return anything. Saves the figure to
+		'<savepath>/coupling_throughput.png'.
 	"""
 	fig, ax = plt.subplots(1,1, figsize=(10,8))	
 	#ax.plot(so.inst.xtransmit,so.inst.ytransmit)
@@ -501,7 +879,37 @@ def plot_coupling(so,savepath=SAVEPATH):
 
 def plot_track_background(so,savepath=SAVEPATH):
 	"""
-	
+	Plot tracking-camera sky background, instrument background, and
+	source signal vs. wavelength in three stacked panels, to compare
+	the relative contribution of each noise/signal source across the
+	tracking camera's wavelength range.
+
+	Top panel: sky background (so.track.sky_bg_spec) [phot/nm/s] vs.
+	wavelength [nm], with a dashed reference line at y=0.5 and gray
+	shading over the 1450-2400nm and 980-1330nm bands, y-axis limited
+	to (0,1000).
+	Middle panel: instrument background (so.track.inst_bg_spec)
+	[phot/nm/s], y-axis limited to (0,20).
+	Bottom panel: source photon rate (so.track.signal_spec/so.track.texp)
+	[phot/nm/s].
+	Each panel has a secondary y-axis showing the y/J/H/K filter bands
+	as shaded regions with text labels. Title gives filter band,
+	magnitude, and Teff.
+
+	Parameters
+	----------
+	so : object
+		instance of specsim storage object; uses so.stel, so.track,
+		so.inst.y/J/H/K, so.filt.band attributes
+
+	savepath : str
+		directory to save the figure into (default SAVEPATH)
+
+	Returns
+	-------
+	None
+		Does not return anything. Saves the figure to
+		'<savepath>/noise_flux_<so.stel.teff>K_<so.filt.band>_<so.stel.mag>mag.png'.
 	"""
 	col_table = plt.get_cmap('Spectral_r')
 	fig, axs = plt.subplots(3,figsize=(7,9),sharex=True)
@@ -543,7 +951,33 @@ def plot_track_background(so,savepath=SAVEPATH):
 
 def plot_spec_background(so,savepath=SAVEPATH):
 	"""
-	
+	Plot the spectrograph's combined instrument+sky background vs.
+	wavelength, to inspect the background photon rate the science
+	spectrum sits on top of across the instrument bandpass.
+
+	Plots so.obs.sky_bg_ph [phot/s] vs. so.obs.v [nm], with a dashed
+	reference line at y=0.5, x-axis limited to 950-2450nm, y-axis
+	limited to (-0.001,0.6), and a secondary y-axis showing the y/J/H/K
+	filter bands as shaded regions with text labels.
+
+	Parameters
+	----------
+	so : object
+		instance of specsim storage object; uses so.obs.v,
+		so.obs.sky_bg_ph, so.inst.y/J/H/K, so.stel.teff, so.filt.band,
+		so.stel.mag
+
+	savepath : str
+		directory to save the figure into (default SAVEPATH)
+
+	Returns
+	-------
+	None
+		Does not return anything. Saves the figure to
+		'<savepath>/noise_flux_<so.stel.teff>K_<so.filt.band>_<so.stel.mag>mag.png'
+		(same filename pattern as plot_track_background, so calling
+		both with the same savepath/star parameters will overwrite one
+		another).
 	"""
 	col_table = plt.get_cmap('Spectral_r')
 	fig, ax = plt.subplots(1,figsize=(7,4),sharex=True)
@@ -583,6 +1017,44 @@ def plot_spec_background(so,savepath=SAVEPATH):
 
 def plot_tracking_bands(so,trackbands=['J','JHgap','H'],savepath=SAVEPATH):
 	"""
+	Plot the tracking camera's filter bandpass profiles together with
+	the (degraded-resolution) stellar spectrum and throughput-weighted
+	flux, to compare where each tracking band sits relative to the
+	star's flux and to show what fraction of J-band flux each band
+	captures.
+
+	For each band in trackbands, plots the band's transmission profile
+	(from obs_tools.get_tracking_band) vs. wavelength [nm] as a filled
+	curve, labeled with the band name (or 'JH Gap' for 'JHgap') and
+	annotated with the percentage of J-band-normalized in-band flux it
+	captures. Also overplots the degraded-resolution (R~2000) normalized
+	stellar spectrum and the throughput x flux product, shades a
+	500-970nm 'Visible WFS' region, and (if the module-level name
+	`plot_telluric` is truthy — note this is not a parameter of this
+	function and is not defined anywhere in this module, so calling
+	this function will raise a NameError at that line) overplots a
+	degraded telluric transmission curve.
+
+	Parameters
+	----------
+	so : object
+		instance of specsim storage object; uses so.track.ytransmit,
+		so.tel.s, so.stel.v/s/teff
+
+	trackbands : list of str
+		names of tracking camera bands to plot, passed to
+		obs_tools.get_tracking_band (default ['J','JHgap','H'])
+
+	savepath : str
+		directory to save the figure into (default SAVEPATH)
+
+	Returns
+	-------
+	None
+		Does not return anything. Saves the figure to
+		'<savepath>/tracking_camera_filter_assumptions_<so.stel.teff>K.png'
+		at dpi=500, unless the NameError on `plot_telluric` is raised
+		first.
 	"""
 	#trackbands=['y','Jplus','H','K'] #['J','JHgap','H'] #'Hplus50','Jplus']#['y',
 
@@ -627,6 +1099,25 @@ def plot_tracking_bands(so,trackbands=['J','JHgap','H'],savepath=SAVEPATH):
 
 def plot_photonic_lantern_boost(so,cload):
 	"""
+	Not implemented. Placeholder for a planned plot of the SNR/coupling
+	boost from using a photonic lantern (so.inst.pl_on), presumably
+	comparing performance with and without the photonic lantern in the
+	blue channel.
+
+	Parameters
+	----------
+	so : object
+		instance of specsim storage object (unused; function body is
+		only `pass`)
+	cload : object
+		loader object, e.g. from specsim.load_inputs.fill_data (unused;
+		function body is only `pass`)
+
+	Returns
+	-------
+	None
+		Function body is currently just `pass`; it does no computation,
+		draws nothing, and saves nothing.
 	"""
 	pass
 

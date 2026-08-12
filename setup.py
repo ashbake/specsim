@@ -9,7 +9,7 @@ def get_requires():
 setup(
     name='specsim',
     version='0.1',
-    description='specsim: an SNR calculator for upcoming AO instruments',
+    description='specsim: an SNR calculator for HISPEC/MODHIS',
     url='https://github.com/ashbake/specsim',
     author='Ashley Baker',
     license='BSD',

@@ -14,12 +14,24 @@ all = {}
 
 def calc_plate_scale(pixel_pitch, D=10, fratio=35):
     """
-    D: diameter in meters
-    fratio: 35 default
+    Compute the on-sky plate scale of a detector given its pixel size and
+    the telescope/beam geometry.
 
-    return :
+    inputs:
     -------
-    platescale_arcsec_pix
+    pixel_pitch - float
+        detector pixel pitch [um]
+
+    D - float
+        telescope diameter [m] (default 10)
+
+    fratio - float
+        beam focal ratio (f-number), unitless (default 35)
+
+    return:
+    -------
+    platescale_arcsec_pix - float
+        plate scale [arcsec/pixel]
     """
     platescale_arcsec_um = 206265 / fratio / (D * 10**6) #arc/um
     platescale_arcsec_pix = platescale_arcsec_um * pixel_pitch
@@ -28,10 +40,41 @@ def calc_plate_scale(pixel_pitch, D=10, fratio=35):
 
 def get_tracking_cam(camera='h2rg',x=None):
     """
-    gary assumes 0.9 for the QE of the H2RG, so modify throughput accordingly
+    Return the detector properties of the selected tracking/guide camera.
 
-    this function is fed an x array which is used only in the cred2 selection because the QE profile
-    is different from the h2rg
+    Gary assumes 0.9 for the QE of the H2RG, so qe_mod modifies the
+    throughput model accordingly. For the cred2-family cameras, qe_mod is
+    instead a tophat scaling over the array x (980-1650nm) since their QE
+    profile differs from the H2RG.
+
+    inputs:
+    -------
+    camera - str
+        tracking camera to select. One of 'h2rg', 'perfect', 'cred2_kpic',
+        'cred2', 'cred2_rn25', 'cred2_rn20' (default 'h2rg')
+
+    x - array or None
+        wavelength array [nm], used only to build the qe_mod tophat for the
+        cred2-family cameras. If None, qe_mod defaults to 1 for those
+        cameras.
+
+    returns:
+    --------
+    rn - float
+        read noise [e-]
+
+    pixel_pitch - float
+        pixel pitch [um]
+
+    qe_mod - float or array
+        QE scale factor relative to the throughput model, unitless (1 means
+        no modification; may be a tophat array over x for cred2 cameras)
+
+    dark - float
+        dark current [e-/s/pix]
+
+    saturation - float
+        full well/saturation level [e-]
     """
     if camera=='h2rg':
         rn = 12 #e-
@@ -92,13 +135,21 @@ def get_tracking_cam(camera='h2rg',x=None):
 
 def get_tracking_optics_aberrations(field_r,camera,ploton=False,filepath=None):
     """
-    loads PSF size of tracking optics 
+    Load PSF size of the tracking camera optics as a function of field
+    position and interpolate to the requested field radius.
+
+    Reads a file of field position vs RMS spot size (per wavelength) for the
+    tracking optics, converts the RMS at 1400nm from um to pixels (using the
+    pixel pitch of the selected camera), and linearly interpolates
+    (extrapolating outside the tabulated range) to field_r. Wavelength
+    dependence is ignored beyond picking the 1400nm column, since the RMS
+    does not vary much with wavelength across the tabulated columns.
 
     intputs:
     --------
     field_r (float, 0-3) [arcsec]
         field radius position of tracking star on guide camera field
-    
+
     camera (str, 'h2rg' or 'cred2')
         camera to assume for converting um to pixels
 
@@ -109,7 +160,8 @@ def get_tracking_optics_aberrations(field_r,camera,ploton=False,filepath=None):
         path and filename to file containing optics aberrations in field position and rms per wavelengths
     returns:
     -------
-    RMS of the PSF due to optical aberrations in pixels (radius rms)
+    RMS of the PSF due to optical aberrations in pixels (radius rms), float,
+    interpolated (or extrapolated) to field_r
     """
     f = np.loadtxt(filepath)
     field, rmstot, rms900,rms1000,rms1200,rms1400,rms1600,rms2200  = f.T #field [deg], rms [um]
@@ -135,10 +187,33 @@ def get_tracking_optics_aberrations(field_r,camera,ploton=False,filepath=None):
 
 def get_tracking_band(wave,band):
     """
-    pick tracking band and get some stats on it
+    Build a tophat bandpass for the requested tracking-camera filter band
+    and return its center wavelength.
 
-    update to 
+    Band edges are hard-coded approximations of the named photometric/
+    engineering bands (some tuned for KPIC/cred2 considerations rather than
+    strict MKO definitions); see
     https://home.ifa.hawaii.edu/users/tokunaga/MKO-NIR_filter_set.html#yfilter
+    for the standard definitions this should eventually be updated to match.
+
+    inputs:
+    -------
+    wave - array
+        wavelength array [nm] over which to evaluate the bandpass
+
+    band - str
+        name of the tracking band to select. One of 'z', 'y', 'JHgap',
+        'JHgapKPIC', 'JHgap_minus', 'J', 'Jplus', 'Hplus', 'H', 'Hplus50',
+        'JHplus20', 'JHplus', 'K', 'Hkpic', 'yJH', 'yJ'
+
+    returns:
+    --------
+    bandpass - array
+        tophat transmission evaluated at wave, unitless (0-1; 'Hplus50' and
+        'JHplus20' use reduced flat throughput of 0.5 and 0.2 respectively)
+
+    center_wavelength - float
+        midpoint wavelength of the selected band [nm]
     """
     if band=='z':
         l0,lf = 820,970
@@ -230,15 +305,62 @@ def get_tracking_band(wave,band):
 
 def get_fwhm(wfe,tt_resid,wavelength,diam,platescale,field_r=0,camera='h2rg',getall=False,aberrations_file=None):
     """
-    combine DL by strehlt and tip/tilt error and off axis
+    Compute the total image FWHM on the tracking camera by combining the
+    diffraction-limited spot (broadened by high-order wavefront error via
+    the Strehl ratio), the tip/tilt residual, and off-axis aberrations from
+    the tracking camera optics, all added in quadrature.
 
     inputs:
     -------
-    platescale: [arcsec/pixel]
-        plate scale of image
+    wfe - float
+        high-order (non tip/tilt) residual wavefront error [nm]
+
+    tt_resid - float
+        residual tip/tilt error [mas]
+
+    wavelength - float
+        observing wavelength [nm]
+
+    diam - float
+        telescope diameter [m] (converted to nm internally to match
+        wavelength in the diffraction-limit formula)
+
+    platescale - float
+        plate scale of the image [arcsec/pixel]
+
+    field_r - float
+        field radius position of the tracking star on the guide camera,
+        [arcsec] (default 0)
+
+    camera - str
+        tracking camera name passed to get_tracking_optics_aberrations /
+        get_tracking_cam, e.g. 'h2rg' or 'cred2' (default 'h2rg')
+
+    getall - bool
+        if True, also return the intermediate strehl/FWHM component terms
+        (default False)
+
+    aberrations_file - str or None
+        path to the tracking optics aberrations file passed to
+        get_tracking_optics_aberrations; if the file cannot be found, the
+        off-axis contribution falls back to 0.5 pixels with a warning
 
     to do:
     check how RMS relates to FWHM
+
+    returns:
+    --------
+    fwhm - float
+        total image FWHM [pixels] combining diffraction/high-order WFE,
+        tip/tilt, and off-axis aberration terms in quadrature
+
+    if getall is True, also returns (in this order, with some values
+    duplicated): strehl (Strehl ratio, unitless), diffraction_spot_pix
+    (diffraction-limited spot size [pixels]), fwhm_ho (FWHM from
+    diffraction + high-order WFE [pixels]), fwhm_tt (FWHM from tip/tilt
+    residual [pixels]), fwhm_offaxis (FWHM from off-axis camera aberrations
+    [pixels]), followed by a repeat of strehl, diffraction_spot_pix,
+    fwhm_ho, fwhm_tt, fwhm_offaxis
     """
     rms_to_fwhm = 1/0.44 # from KAON, not too off from gaussian 1sig to FWHM factor
     radius_to_diam = 2
@@ -271,6 +393,23 @@ def get_fwhm(wfe,tt_resid,wavelength,diam,platescale,field_r=0,camera='h2rg',get
 
 def compute_band_photon_counts():
     """
+    Not fully implemented / currently broken helper intended to compute the
+    Johnson U/B/V/R/I/J/H/K magnitudes (and eventually Sloan u') of the
+    loaded stellar model for a given scaling factor.
+
+    Takes no parameters, but its body references a module-level `so`
+    (storage object) and `so.stel.factor_0` that are never defined or
+    passed in, so as written this function will raise a NameError if
+    called. It builds up `newmags`/`all_bands` lists via
+    load_inputs.get_band_mag but does not return them, and the Sloan u'
+    call at the end is unused (its result is discarded). This function
+    appears to be a work-in-progress / unused stub rather than a working
+    utility.
+
+    returns:
+    --------
+    None (nothing is returned; the computed magnitudes are only kept in
+    local lists that go out of scope)
     """
     newmags = []
     all_bands = []
@@ -287,7 +426,46 @@ def compute_band_photon_counts():
 
 def get_order_value2(so,v,snr,height=0.055,distance=2e4,prominence=0.01):
     """
-    given array, return max and mean of snr per order
+    Identify spectral order centers from peaks in the instrument base
+    throughput, estimate each order's free spectral range from a fixed
+    grating equation, and return the peak and mean SNR within (a padded
+    window around) each order.
+
+    inputs:
+    -------
+    so - object
+        storage object; uses so.inst.base_throughput (throughput array used
+        to find order peaks) and so.stel.v (wavelength array [nm]
+        corresponding to so.inst.base_throughput)
+
+    v - array
+        wavelength array [nm] corresponding to snr
+
+    snr - array
+        SNR spectrum evaluated at v, unitless
+
+    height - float
+        minimum peak height passed to scipy.signal.find_peaks when locating
+        order centers in so.inst.base_throughput, unitless (default 0.055)
+
+    distance - float
+        minimum separation in samples between order peaks, passed to
+        scipy.signal.find_peaks (default 2e4)
+
+    prominence - float
+        minimum peak prominence passed to scipy.signal.find_peaks, unitless
+        (default 0.01)
+
+    returns:
+    --------
+    order_cen_lam - array
+        center wavelength [nm] of each identified order
+
+    snr_peaks - array
+        maximum SNR within +/-1.3*(FSR/2) of each order center, unitless
+
+    snr_means - array
+        mean SNR within +/-1.3*(FSR/2) of each order center, unitless
     """
     order_peaks      = signal.find_peaks(so.inst.base_throughput,height=height,distance=distance,prominence=prominence)
     order_cen_lam    = so.stel.v[order_peaks[0]]
@@ -308,7 +486,32 @@ def get_order_value2(so,v,snr,height=0.055,distance=2e4,prominence=0.01):
 
 def get_order_value(x,y,order_filename):
     """
-    given array, return max and mean of snr per order
+    Given the order centers and free spectral ranges tabulated in
+    order_filename, return the peak and mean of y (e.g. SNR) within (a
+    padded window around) each order.
+
+    inputs:
+    -------
+    x - array
+        wavelength array [nm] corresponding to y
+
+    y - array
+        quantity to summarize per order (e.g. SNR), evaluated at x
+
+    order_filename - str
+        path to order bounds file (wavelength [nm], order width [nm],
+        comma delimited) passed to ccf_tools.get_order_bounds
+
+    returns:
+    --------
+    order_cen_lam - array
+        center wavelength [nm] of each order, from order_filename
+
+    snr_peaks - array
+        maximum value of y within +/-1.3*(fsr/2) of each order center
+
+    snr_means - array
+        mean value of y within +/-1.3*(fsr/2) of each order center
     """
     order_cen_lam,fsr = get_order_bounds(order_filename)
 
@@ -325,10 +528,27 @@ def get_order_value(x,y,order_filename):
 
 def air_index_refraction(lam,p,t):
     """
+    Compute the index of refraction of air at the given wavelength,
+    pressure, and temperature, using the (modified) Edlen equation.
+
     https://iopscience.iop.org/article/10.1088/0026-1394/30/3/004/pdf
-    edlen https://iopscience.iop.org/article/10.1088/0026-1394/2/2/002/pdf 
-    P: torr
-    t: celcius
+    edlen https://iopscience.iop.org/article/10.1088/0026-1394/2/2/002/pdf
+
+    inputs:
+    -------
+    lam - float or array
+        wavelength [nm]
+
+    p - float
+        air pressure [torr]
+
+    t - float
+        air temperature [celsius]
+
+    returns:
+    --------
+    n - float or array
+        index of refraction of air, unitless
     """
     sig = 10**7/lam * (1e-4) # 1e-4 cm/micron
     ns = 1 + (1/1e8) * (8342.13 + 2406030*(130 - sig**2)**(-1) + 15997*(38.9 -sig**2)**-1)
@@ -337,6 +557,22 @@ def air_index_refraction(lam,p,t):
 
 
 def load_confirmed_planets(planets_filename = './data/populations/confirmed_planets_PS_2023.01.12_16.07.07.csv'):
+    """
+    Load host star H magnitudes and effective temperatures from a
+    confirmed planets catalog (NASA Exoplanet Archive format)
+
+    input
+    -----
+    planets_filename - str
+        path to confirmed planets csv file
+
+    output
+    ------
+    hmags - array
+        host star H magnitudes
+    teffs - array
+        host star effective temperatures [K]
+    """
     planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
     hmags = planet_data['sy_hmag']
     teffs = planet_data['st_teff']

@@ -14,9 +14,31 @@ all = {}
 
 def load_WFE(ho_wfe_file, tt_wfe_file, zenith_angle, seeing):
     """
-    load new format WFE files where 
-    AO performance is defined per seeing and zenith angle
+    Load new-format WFE files where AO performance (high order WFE and
+    tip/tilt residual vs. guide star magnitude) is tabulated per AO mode,
+    seeing, and zenith angle, and reshape it into a per-mode dictionary
 
+    inputs
+    ------
+    ho_wfe_file : str
+        path to csv of high order WFE [nm] vs. mag, multi-indexed by
+        seeing, zenith angle [deg], and AO mode
+    tt_wfe_file : str
+        path to csv of tip/tilt WFE [nm] vs. mag, same format as ho_wfe_file
+    zenith_angle : int
+        zenith angle of observation [deg], must be one of 0, 30, 45, 60
+    seeing : str
+        seeing condition, must be one of 'good', 'average', 'bad'
+
+    output
+    ------
+    data : dict
+        keyed by AO mode name, each entry a dict with:
+            'band'   - str, magnitude band the WFE values are defined in
+            'ho_wfe' - array, high order WFE [nm] sampled at 'ho_mag'
+            'tt_wfe' - array, tip/tilt WFE [nm] sampled at 'tt_mag'
+            'ho_mag' - array, magnitudes corresponding to 'ho_wfe'
+            'tt_mag' - array, magnitudes corresponding to 'tt_wfe'
     """
     data  = {}
 
@@ -55,14 +77,20 @@ def load_WFE(ho_wfe_file, tt_wfe_file, zenith_angle, seeing):
 
 def calc_strehl_marechal(wfe,wavelength):
     """
+    Compute Strehl ratio from wavefront error using the (simple) Marechal
+    approximation
+
     inputs
     ------
-    wfe: nm
-    wavelength: nm, grid or single number
+    wfe : float or array [nm]
+        wavefront error
+    wavelength : float or array [nm]
+        wavelength(s), grid or single number
 
     outputs
     -------
-    strehl at wavelength
+    strehl : float or array
+        Strehl ratio at wavelength, same shape as wfe/wavelength (broadcast)
     """
     strehl = np.exp(-(2*np.pi*wfe/wavelength)**2)
 
@@ -70,17 +98,21 @@ def calc_strehl_marechal(wfe,wavelength):
 
 def calc_strehl(wfe,wavelength):
     """
-    Extended extended Marechal equation - used function by code
-    as of No 20th. See KOAN doc for info
+    Compute Strehl ratio from wavefront error using the extended Marechal
+    equation - the function used by the rest of the code as of Nov 20th.
+    See KOAN doc for info
 
     inputs
     ------
-    wfe: nm
-    wavelength: nm, grid or single number
+    wfe : float or array [nm]
+        wavefront error
+    wavelength : float or array [nm]
+        wavelength(s), grid or single number
 
     outputs
     -------
-    strehl at wavelength
+    strehl : float or array
+        Strehl ratio at wavelength, same shape as wfe/wavelength (broadcast)
     """
     marechal = 2*np.pi*wfe/wavelength
     strehl = np.exp(-(0.75 * (marechal + 0.2615))**2 + 0.05)
@@ -90,21 +122,22 @@ def calc_strehl(wfe,wavelength):
 def tt_to_strehl(tt,lam,D):
     """
     convert tip tilt residuals in mas to strehl according to Rich's equation
-    
+
     equation 4.60 from Hardy 1998 (adaptive optics for astronomy) matches this
 
     inputs
     ------
-    lam: nm
-        wavelength(s)
-    D: m
-        telescope diameter
-    tt: mas
+    tt : float or array [mas]
         tip tilt rms
+    lam : float or array [nm]
+        wavelength(s)
+    D : float [m]
+        telescope diameter
 
     outputs
     -------
-    strehl_tt  
+    strehl_tt : float or array
+        Strehl ratio due to residual tip/tilt error
     """
     tt_rad = tt * 1e-3/206265 # convert to radians from mas
     lam_m =lam * 1e-9
@@ -120,7 +153,11 @@ def tt_to_strehl(tt,lam,D):
 
 def plot_strehl():
     """
-    plot strehl for modhis for the different ao modes
+    Plot combined (high order x tip/tilt) Strehl vs. guide star magnitude
+    for each MODHIS AO mode
+
+    Loads ./modhis_snr.cfg and the WFE files it points to, no inputs and
+    no return value. Saves figure to output/strehl_ao_modes.png
     """
     configfile = './modhis_snr.cfg'
     so    = load_object(configfile)
@@ -159,7 +196,12 @@ def plot_strehl():
 
 def plot_coupling_modhis():
     """
-    plot coupling for different strehl regimes
+    Plot fiber coupling vs. wavelength for a few hardcoded AO performance
+    regimes (lgs_on, ngs, lgs_off), with and without the photonic lantern
+
+    Loads ./modhis_snr.cfg and recomputes so.inst.coupling for each regime
+    via fill_data. No inputs and no return value. Saves figure to
+    output/coupling_ao_modes.png
     """
     configfile = './modhis_snr.cfg'
     so    = load_object(configfile)
@@ -218,6 +260,13 @@ def plot_coupling_modhis():
 #
 def plot_wfe():
     """
+    (old, superseded by plot_strehl/load_WFE) Plot tip/tilt residual and
+    high order WFE vs. star magnitude for each legacy HAKA AO mode, using
+    the old two-level-header WFE file format
+
+    Loads hispec_tracking_camera.cfg and the WFE files it points to, no
+    inputs and no return value. Saves figure to
+    output/ao_modes/AO_modes_Teff_<teff>.png
     """
     configfile = 'hispec_tracking_camera.cfg'
     so         = load_object(configfile)
@@ -271,6 +320,13 @@ def plot_wfe():
 
 def plot_strehl_old():
     """
+    (old, superseded by plot_strehl) Plot combined Strehl vs. star
+    magnitude for each legacy HAKA AO mode, using the old two-level-header
+    WFE file format
+
+    Loads hispec_tracking_camera.cfg and the WFE files it points to, no
+    inputs and no return value. Saves figure to
+    output/ao_modes/strehl_ao_modes_Teff_<teff>.png
     """
     configfile = 'hispec_tracking_camera.cfg'
     so         = load_object(configfile)
@@ -320,7 +376,23 @@ def plot_strehl_old():
 
 def get_wfe_landscape(configfile = '../configs/hispec_tracking_camera.cfg'):
     """
-    figure out which AO mode is best for which temperature and mag star
+    Scan a grid of stellar effective temperature and magnitude, and for
+    each combination pick the AO mode ('SH', '80J', 'LGS_100J_130') that
+    maximizes median fiber coupling
+
+    inputs
+    ------
+    configfile : str
+        path to instrument config file used to build the storage object
+
+    output
+    ------
+    None - saves two .npy files to output/ao_modes/:
+        best_ao_mode_<band>mag_..._temps_...npy   - index into the AO
+            mode list of the best mode per (temp, mag) grid point
+            (-1 if no mode achieves nonzero coupling)
+        best_ao_coupling_<band>mag_..._temps_...npy - median coupling
+            achieved by that best mode
     """
     so         = load_object(configfile)
     cload      = fill_data(so)
@@ -376,17 +448,23 @@ def get_wfe_landscape(configfile = '../configs/hispec_tracking_camera.cfg'):
 
 def plot_planets_ao_modes():
     """
-    plot planet populations with regions of AO mode and coupling performance
+    Plot known planet host stars (H mag vs. Teff) overlaid on the best-AO-mode
+    landscape and coupling contours produced by get_wfe_landscape
 
     show with and without a pyramid mode - have to edit which plotting
 
-    To Do: 
+    To Do:
         - rerun coupling curves once gary extends tip/tilt grid
         - rerun with denser mag grid
         - label ao regions and double check correct orientation is shown
         - add brown dwarfs to plot
         - do again with contours as peak SNR in a 15 min exposure
     must be careful to pick right ao_modes array since not recorded in header
+
+    No inputs. Requires the best_ao_mode_*.npy / best_ao_coupling_*.npy and
+    best2_ao_mode_*.npy / best2_ao_coupling_*.npy files (see get_wfe_landscape)
+    and a planet population csv to already exist in ./output and ./data.
+    No return value; draws the figure on the current axes (not saved to disk).
     """
     band='H'
     ao_modes  = ['SH','80J','LGS_100H_130']
@@ -439,7 +517,22 @@ def plot_planets_ao_modes():
 
 def get_AO_plot_scheme():
     """
-    define colors and linestyles for AO modes
+    Define a fixed set of AO mode names plus matching plot styling
+    (guide-star-type label, linestyle, color, linewidth) for consistent
+    plotting across figures
+
+    output
+    ------
+    modes : list of str
+        AO mode names
+    modes2 : list of str
+        guide star type label per mode ('NGS' or '' for LGS modes)
+    linestyles : list of str
+        matplotlib linestyle per mode
+    colors : list of str
+        matplotlib color per mode
+    widths : list of float
+        matplotlib linewidth per mode
     """
     modes    = ['100JH','80J','80H','100K','SH','LGS_100H_130','LGS_100J_130','LGS_100J_45','LGS_STRAP_130','LGS_STRAP_45']
     modes2   = ['NGS', 'NGS', 'NGS','NGS','NGS','','','','','']
@@ -456,13 +549,27 @@ def get_AO_plot_scheme():
 
 def get_dyn_wfe(Rmag):
     """
+    Look up dynamic (NGS or LGS, whichever is lower) high order WFE for a
+    given R-band guide star magnitude, from hardcoded Keck LGSAO
+    performance curves
+
     ***fix this - only return wfe that is important for centroiding based
     on josh's simulations*** maybe it's all but probs should take out tip/tilt
-    
-    # R mag inputed!
-    https://www2.keck.hawaii.edu/optics/lgsao/performance.html
-
     should get this soon from rich
+
+    reference: https://www2.keck.hawaii.edu/optics/lgsao/performance.html
+
+    inputs
+    ------
+    Rmag : float
+        guide star R-band magnitude
+
+    outputs
+    -------
+    wfe : float [nm]
+        best (minimum) of the NGS and LGS WFE curves at Rmag, extrapolated
+        to 10000nm outside the tabulated 0-20 mag range. Prints a warning
+        if Rmag > 20.
     """
     mag_arr = np.linspace(0,20,21) #sampling to match following arrays
     # old haka - to update
@@ -482,8 +589,14 @@ def get_dyn_wfe(Rmag):
 
 def plot_wfe_old():
     """
+    (old, superseded by plot_wfe/load_WFE) Plot tip/tilt residual and high
+    order WFE vs. V magnitude for each legacy HAKA mode, reading directly
+    from the old fixed-column ./data/WFE/HAKA/*.txt files
+
+    No inputs and no return value; draws the figure on the current axes
+    (not saved to disk).
     """
-    modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files 
+    modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files
     
     f_tt = np.loadtxt('./data/WFE/HAKA/Kstar_tiptilt.txt').T
     vmags = f_tt[0]
@@ -516,9 +629,22 @@ def plot_wfe_old():
 
 def get_tip_tilt_resid_old(Vmag, mode):
     """
-    load data from haka sims, spit out tip tilt
+    (old, superseded by load_WFE) Interpolate tip/tilt residual vs. V
+    magnitude for a legacy HAKA AO mode from ./data/WFE/HAKA/Kstar_tiptilt.txt
+
+    inputs
+    ------
+    Vmag : float
+        guide star V-band magnitude
+    mode : str
+        AO mode, one of 'K','SH','80J','80H','80JK','LGS'
+
+    outputs
+    -------
+    tip_tilt : float [mas]
+        interpolated tip/tilt residual at Vmag (10000 if out of bounds)
     """
-    modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files 
+    modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files
     imode = np.where(modes==mode)[0]
 
     #load data file
@@ -533,7 +659,20 @@ def get_tip_tilt_resid_old(Vmag, mode):
 
 def get_HO_WFE_old(Vmag, mode):
     """
-    load data from haka sims, spit out tip tilt
+    (old, superseded by load_WFE) Interpolate high order WFE vs. V
+    magnitude for a legacy HAKA AO mode from ./data/WFE/HAKA/Kstar_HOwfe.txt
+
+    inputs
+    ------
+    Vmag : float
+        guide star V-band magnitude
+    mode : str
+        AO mode, one of 'K','SH','80J','80H','80JK','LGS'
+
+    outputs
+    -------
+    ho_wfe : float [nm]
+        interpolated high order WFE at Vmag (10000 if out of bounds)
     """
     modes = np.array(['K','SH','80J','80H','80JK','LGS'])# corresponding modes to match assumptions of text files 
     imode = np.where(modes==mode)[0][0]

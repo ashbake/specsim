@@ -18,18 +18,19 @@ def spec_make(wvl, weights, line_wvls, fwhms):
 	Inputs:
 	-------
 	wvl : array
-		Input wavelength array
+		Input wavelength array [nm]
 	weights : array
-		Line depths of specified lines
+		Line depths of specified lines (fractional, 0-1)
 	line_wvls : array
-		Line centers of features to be added
+		Line centers of features to be added [nm], same units as wvl
 	fwhms : array
-		FWHMs of lines specified
+		FWHMs of lines specified [nm], same units as wvl
 
 	Outputs:
 	-------
 	spec_out: array
-		 Final output absorption spectrum
+		 Final output absorption spectrum, normalized continuum at 1.0 with
+		 gaussian dips at each line_wvl of the given depth and fwhm
 	'''
 
 	# initialize array
@@ -76,6 +77,10 @@ def spec_rv_noise_calc(wvl, spec, sigma_spec):
 		Input wavelength array of spectrum [nm]
 	spec : array
 		Flux values of spectrum -- assumes only photon noise
+	sigma_spec : array
+		1-sigma flux uncertainty of spec (e.g. sqrt(counts) photon noise),
+		same length/units as spec. Zero-valued entries are reset in-place
+		to a large number (1e5) to avoid division by zero.
 
 	Returns
 	-------
@@ -133,8 +138,8 @@ def make_telluric_mask(v,s,cutoff=0.01,velocity_cutoff=5):
 		spectrum of telluric spectrum
 	cutoff - float
 		cutoff (0-1) in what lines to mask. default is 0.01 (mask down to 1%)
-	velocity_cutoff - float [pix == m/s]
-		velocity around each telluric feature to mask out
+	velocity_cutoff - float [km/s] 
+		velocity around each telluric feature to mask out. Assumes 1 pix ~= km/s
 
 	output
 	------
@@ -143,7 +148,7 @@ def make_telluric_mask(v,s,cutoff=0.01,velocity_cutoff=5):
 	"""
 	telluric_mask = np.ones_like(s)
 	telluric_mask[np.where(s < (1-cutoff))[0]] = 0
-	for iroll in range(velocity_cutoff): # assume one pixel is 1m/s approx
+	for iroll in range(velocity_cutoff): # assume one pixel is 1km/s approx
 		telluric_mask[np.where(np.roll(s,iroll) < (1-cutoff))[0]] = 0
 		telluric_mask[np.where(np.roll(s,-1*iroll) < (1-cutoff))[0]] = 0
 
@@ -152,17 +157,37 @@ def make_telluric_mask(v,s,cutoff=0.01,velocity_cutoff=5):
 
 def get_rv_precision(v,s,n,order_cens,order_widths,noise_floor=0.5,mask=None):
 	"""
+	Compute the photon-limited RV precision achievable from a stellar
+	spectrum, evaluated per spectral order and combined, following the
+	spectral information-content method of Murphy et al. 2007 (weighting
+	each pixel by the square of the local flux slope divided by its noise
+	variance).
+
 	inputs
 	------
 	v - array [nm]
-		wavelength array 
-	s - array 
+		wavelength array
+	s - array
 		stellar spectrum (no other sources in it)
 	n - array
-		noise array
-	order_cens - array
-
-
+		noise array (1-sigma uncertainty on s), same length/sampling as v and s
+	order_cens - array [nm]
+		center wavelength of each spectral order over which to compute RV
+		precision
+	order_widths - array [nm]
+		full width of each spectral order, same length as order_cens (in
+		the same order). Only the central 90% of each order's width is
+		used when summing the RV information content, to avoid noisy
+		order edges
+	noise_floor - float, [m/s]
+		RV noise floor added in quadrature to each order's photon-limited
+		precision to represent additional non-photon error terms (e.g.
+		wavelength calibration floor). Default is 0.5 m/s
+	mask - array or None
+		optional per-pixel weighting mask (same length/sampling as v, s,
+		n), e.g. to zero out telluric-contaminated or otherwise unwanted
+		pixels before computing RV information content. If None
+		(default), no masking is applied (all pixels weighted equally)
 
 	output
 	------
@@ -171,7 +196,7 @@ def get_rv_precision(v,s,n,order_cens,order_widths,noise_floor=0.5,mask=None):
 	dv_spec - float, [m/s]
 		combined order velocities, no floor added
 	dv_vals - array [m/s]
-		per order rv precision, no floor added 
+		per order rv precision, no floor added
 	"""
 	# generate rv information content
 	flux_interp = interpolate.InterpolatedUnivariateSpline(v,s, k=1)
@@ -205,15 +230,18 @@ def get_rv_precision(v,s,n,order_cens,order_widths,noise_floor=0.5,mask=None):
 
 def doppler(v):
 	"""
-	Computer Doppler factor
+	Compute the (non-relativistic) Doppler shift factor for a given velocity.
 
 	inputs
 	------
-	v - velocity [m/s]
-		velocity for shift in m/s
+	v - float or array, [m/s]
+		velocity for the shift
 
-	outputs:
-	doppler factor (1 + v/c)
+	output
+	------
+	factor - float or array
+		Doppler factor (1 + v/c); multiply a rest wavelength by this
+		factor to get the Doppler-shifted wavelength
 	"""
 	return (1.0 + (v / SPEEDOFLIGHT))
 

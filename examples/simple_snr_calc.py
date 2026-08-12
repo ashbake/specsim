@@ -1,15 +1,17 @@
 # calc signal to noise
-%matplotlib
-
+#%matplotlib
+#
 import sys,matplotlib
 matplotlib.use('Qt5Agg')
 import matplotlib.pylab as plt
 
-
 font = {'size'   : 14}
 matplotlib.rc('font', **font)
 
-sys.path.append('/Users/ashbake/Documents/Research/ToolBox/specsim/')
+from pathlib import Path
+try: sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+except: pass # if running in terminal must run from main directory to see specsim folder
+
 from specsim.objects import load_object
 from specsim.load_inputs import fill_data
 from specsim import plot_tools
