@@ -11,7 +11,8 @@ import glob
 import pandas as pd
 
 
-from specsim import throughput_tools, obs_tools, noise_tools, wfe_tools, ccf_tools, source_tools
+from specsim import throughput_tools, obs_tools, noise_tools, wfe_tools, ccf_tools
+from specsim.star import Star, StarParams
 
 from specsim.functions import *
 
@@ -86,6 +87,8 @@ class fill_data():
 		self.ao(so)
 		self.instrument(so)
 		self.observe(so)
+
+		# extra calculations for rv precision, ccf snr, or ETC mode
 		if so.run.mode=='snr_on' or so.run.mode=='snr_off':
 			self.compute_rv(so)
 			self.compute_ccf_snr(so)
@@ -165,6 +168,7 @@ class fill_data():
 
 		output
 		------
+		so.stel.star - Star instance for the on-axis star (see specsim.star)
 		so.stel.s - array, stellar spectrum resampled onto self.x, scaled
 			to match so.stel.mag [photons/s/m2/nm]
 		so.stel.vraw, so.stel.sraw - raw (un-resampled) model wavelength/
@@ -173,24 +177,40 @@ class fill_data():
 			'sonora')
 		so.stel.stel_file - str, path to the model file loaded
 		so.stel.factor_0 - float, scale factor applied to sraw to match
-			so.stel.mag (reused by ao() to rescale for a different AO star
-			magnitude without reloading a model)
+			so.stel.mag (reused by ao(), via so.stel.star.rescaled(), to
+			rescale for a different AO star magnitude without reloading a
+			model)
 		so.stel.v - array, wavelength grid (= self.x) [nm]
 		so.stel.units - str, units of so.stel.sraw ('photons/s/m2/nm')
+		so.stel.pl_star - Star instance for the companion, only set if
+			so.stel.pl_sep>0
 		so.stel.pl_s, so.stel.pl_model, so.stel.pl_stel_file,
 			so.stel.pl_factor_0 - companion equivalents of the above,
 			only set if so.stel.pl_sep>0
 		"""
 		# Part 1: load raw spectrum
 		#
-		print('Teff set to %s'%so.stel.teff)
-		print('%s band mag set to %s'%(so.filt.band,so.stel.mag))
-	
+		print(f'Teff set to {so.stel.teff}K')
+		print(f'{so.filt.band} band mag set to {so.stel.mag}')
+
 		# load on axis target
-		so.stel.s, so.stel.vraw,so.stel.sraw,so.stel.model, so.stel.stel_file, so.stel.factor_0 = source_tools.load_stellar_model(self.x,so.stel.mag,so.stel.teff,so.stel.vsini,so,rv=so.stel.rv)
+		star = Star(StarParams(teff=so.stel.teff, mag=so.stel.mag, vsini=so.stel.vsini,
+		                        rv=so.stel.rv, logg=so.stel.logg,
+		                        phoenix_folder=so.stel.phoenix_folder, sonora_folder=so.stel.sonora_folder)
+		            ).load(self.x, so.filt)
+		so.stel.star = star
+		so.stel.s, so.stel.vraw, so.stel.sraw = star.s, star.vraw, star.sraw
+		so.stel.model, so.stel.stel_file, so.stel.factor_0 = star.model, star.stel_file, star.factor_0
+
 		# load companion if there is one (requires separation>0)
 		if so.stel.pl_sep>0:
-			so.stel.pl_s, _,_,so.stel.pl_model, so.stel.pl_stel_file, so.stel.pl_factor_0 = source_tools.load_stellar_model(self.x,so.stel.pl_mag,so.stel.pl_teff,so.stel.pl_vsini,so,rv=so.stel.rv)
+			pl_star = Star(StarParams(teff=so.stel.pl_teff, mag=so.stel.pl_mag, vsini=so.stel.pl_vsini,
+			                           rv=so.stel.rv, logg=so.stel.logg,
+			                           phoenix_folder=so.stel.phoenix_folder, sonora_folder=so.stel.sonora_folder)
+			               ).load(self.x, so.filt)
+			so.stel.pl_star = pl_star
+			so.stel.pl_s, so.stel.pl_model, so.stel.pl_stel_file, so.stel.pl_factor_0 = \
+				pl_star.s, pl_star.model, pl_star.stel_file, pl_star.factor_0
 
 		so.stel.v   = self.x
 		so.stel.units = 'photons/s/m2/nm' # stellar spec is in photons/s/m2/nm
@@ -291,7 +311,7 @@ class fill_data():
 		HO WFE (Marechal approximation) and TT WFE, and either the mode
 		with the highest Strehl is picked (so.ao.mode=='auto') or the
 		user-requested mode is used. Also builds the AO dichroic
-		transmission arrays applied later to the science (so.ao.dichroic)
+		transmission arrays applied later to the science 
 		and tracking (so.ao.pywfs_dichroic) light paths.
 
 		inputs
@@ -302,7 +322,7 @@ class fill_data():
 			so.ao.teff [K] / so.ao.mag [mag] (or 'default' to reuse the
 			on-axis star), so.ao.ho_wfe_file/tt_dynamic_file, and
 			so.obs.zenith_angle [deg], so.tel.seeing_set; also uses
-			so.stel.vraw/sraw/model/factor_0/stel_file from stellar() and
+			so.stel.star (Star instance from stellar()) and
 			so.filt.center_wavelength from filter()
 
 		output
@@ -316,28 +336,23 @@ class fill_data():
 		so.ao.strehl_array - array, Strehl computed for every candidate mode
 		so.ao.band - str, photometric band the chosen AO mode is defined in
 		so.ao.ao_modes - array, list of AO mode names loaded from file
-		so.ao.dichroic, so.ao.pywfs_dichroic - arrays, wavelength-dependent
+		so.ao.pywfs_dichroic - arrays, wavelength-dependent
 			dichroic transmission [0,1] applied to science/tracking paths
 		"""
 		if so.ao.teff=='default':
-			vraw,sraw = so.stel.vraw, so.stel.sraw
-			model     = so.stel.model
-			stel_file = so.stel.stel_file
-			if so.ao.mag=='default': 
-				factor_0 = so.stel.factor_0
-			else:
-				# scale to find factor_0 for new mag if teff is the same
-				factor_0 = so.stel.factor_0 * 10**(0.4*(so.stel.mag - so.ao.mag))
+			# reuse the on-axis star's already-loaded model grid; rescale
+			# factor_0 instead of reloading if only the mag differs
+			ao_star = so.stel.star if so.ao.mag=='default' else so.stel.star.rescaled(so.ao.mag)
 		else: # if new teff, load new model
-			_, vraw, sraw, model, stel_file, factor_0 = source_tools.load_stellar_model(self.x,so.ao.mag,so.ao.teff,0,so)
+			ao_star = Star(StarParams(teff=so.ao.teff, mag=so.ao.mag, vsini=0, rv=0, logg=so.stel.logg,
+			                           phoenix_folder=so.stel.phoenix_folder, sonora_folder=so.stel.sonora_folder)
+			               ).load(self.x, so.filt)
 
-		# now make getband mag take new stel file and factor 0
-
-		if so.ao.tt_dynamic is not None or so.ao.ho_wfe is not None:
+		if so.ao.tt_dynamic_set is not None or so.ao.ho_wfe_set is not None:
 			# set tt dynamic and ho wfe
 			# requires either both to be text file or both to be floats
-			if type(so.ao.ho_wfe) != type(so.ao.tt_dynamic): raise ValueError('HO WFE and TT Dynamic must *both* be set to float values or both to file paths to WFE files')
-			so.ao.mode_chosen = 'User Defined'
+			if type(so.ao.ho_wfe_set) != type(so.ao.tt_dynamic_set): raise ValueError('HO WFE and TT Dynamic must *both* be set to float values or both to file paths to WFE files')
+			so.ao.mode_chosen = 'User Defined HO and TT values'
 			so.ao.band = 'N/A'
 		else:
 			# load the files
@@ -346,9 +361,8 @@ class fill_data():
 			ao_modes   = np.array(list(data.keys()))
 			strehl, ho_wfes, tt_wfes, aomags = [], [], [],[]
 			for ao_mode in ao_modes:
-				# get magnitude in band the AO mode is defined in 
-				wfe_mag  = source_tools.get_band_mag(so, vraw, sraw, model,stel_file,'Johnson',data[ao_mode]['band'],factor_0)
-				#wfe_mag  = get_band_mag(so,'Johnson',data[ao_mode]['band'],factor_0)
+				# get magnitude in band the AO mode is defined in
+				wfe_mag  = ao_star.magnitude_in_band('Johnson', data[ao_mode]['band'], so.filt.filter_path, so.filt.zp_file)
 				aomags.append(wfe_mag)
 				# interpolate over WFEs and sample HO and TT at correct mag
 				f_howfe    = interpolate.interp1d(data[ao_mode]['ho_mag'],data[ao_mode]['ho_wfe'], bounds_error=False,fill_value=10000)
@@ -362,8 +376,8 @@ class fill_data():
 				strehl.append(strehl_ho * strehl_tt)
 				ho_wfes.append(ho_wfe)
 				tt_wfes.append(tt_wfe)
-				if 'PyWFS' in ao_mode:
-					strehl[-1] *= 0 # hack to rid of pyramid mode for now
+				#if 'PyWFS' in ao_mode:
+				#	strehl[-1] *= 0 # hack to rid of pyramid mode for now
 
 			so.ao.strehl_array = np.array(strehl)
 			# if user wants the code to pick best mode:
@@ -394,22 +408,22 @@ class fill_data():
 	
 		print('tt dynamic is %s'%round(so.ao.tt_dynamic,2))
 		
-
+	
 		# consider throughput impact of ao mode here
 		# dichroic gets applied to science
 		# pywfs_dichroic gets applied to tracking
-		"""
-		if '100H' in so.ao.mode_chosen:
-			so.ao.dichroic = 1 - tophat(self.x,so.inst.H[0],so.inst.H[1],1)
-		elif '100J' in so.ao.mode_chosen:
-			so.ao.dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.J[1],1)
-		else:
-			so.ao.dichroic = np.ones_like(self.x)
-		"""
-		# if pyramid,apply to tracking, otherwise LGS light 100J/H goes to tracking
-		so.ao.dichroic = np.ones_like(self.x)
-		if 'PyWFS' in so.ao.mode_chosen: 
-			so.ao.pywfs_dichroic = so.ao.dichroic.copy()
+		if so.ao.mode_chosen == 'PyWFS_100H':
+			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.H[0],so.inst.H[1],1)
+			print(f'Selected PyWFS_100H mode, applying dichroic to science path')
+		elif so.ao.mode_chosen == 'PyWFS_100J':
+			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.J[1],1)
+			print(f'Selected PyWFS_100J mode, applying dichroic to science path')
+		elif so.ao.mode_chosen == 'PyWFS_80J':
+			so.ao.pywfs_dichroic = 1 - 0.8 * tophat(self.x,so.inst.J[0],so.inst.J[1],1)
+			print(f'Selected PyWFS_80J mode, applying dichroic to science path')
+		elif so.ao.mode_chosen == 'PyWFS_80H':
+			so.ao.pywfs_dichroic = 1 - 0.8 * tophat(self.x,so.inst.H[0],so.inst.H[1],1)
+			print(f'Selected PyWFS_80H mode, applying dichroic to science path')
 		else:
 			so.ao.pywfs_dichroic = np.ones_like(self.x)
 
@@ -518,7 +532,7 @@ class fill_data():
 			so.inst.coupling = coupling_data  * so.ao.ho_strehl * piaa_boost
 
 			so.inst.xtransmit = self.x
-			so.inst.ytransmit = so.inst.base_throughput* so.inst.coupling * so.ao.dichroic # pywfs not being considered typically so pywfs_dichroic is one here
+			so.inst.ytransmit = so.inst.base_throughput* so.inst.coupling * so.ao.pywfs_dichroic # pywfs not being considered typically so pywfs_dichroic is one here
 
 	def observe(self,so):
 		"""
@@ -591,10 +605,6 @@ class fill_data():
 			except Exception as e:
 				print(f"Warning: {e}, using old contrast calculator with analytic method.")
 				contrast = noise_tools.get_contrast(self.x,so.stel.pl_sep,so.inst.tel_diam,so.tel.seeing,so.ao.strehl) # old version
-			
-			# contrast1 = noise_tools.get_MODHIS_contrast(so.ao.contrast_profile_path, so.ao.mode_chosen, so.tel.seeing, so.obs.zenith_angle, so.stel.mag, self.x, so.stel.pl_sep) # new version, specific to MODHIS
-			# contrast2 = noise_tools.get_contrast(self.x,so.stel.pl_sep,so.inst.tel_diam,so.tel.seeing,so.ao.strehl) # old version
-
 
 		# Figure out the exposure time per frame to avoid saturation
 		# Default case takes 900s as maximum frame exposure time length
@@ -785,7 +795,7 @@ class fill_data():
 
 		# get fwhm (in pixels)
 		so.track.fwhm  = float(obs_tools.get_fwhm(so.ao.ho_wfe,so.ao.tt_dynamic,so.track.center_wavelength,so.inst.tel_diam,so.track.platescale,field_r=so.track.field_r,camera=so.track.camera,getall=False,aberrations_file=so.track.aberrations_file))
-		so.track.npix  = np.pi* (so.track.fwhm/2)**2 # only take noise in circle of diameter FWHM 
+		so.track.npix  = np.pi * (so.track.fwhm/2)**2 # only take noise in circle of diameter FWHM 
 		so.track.fwhm_units = 'pixel'
 		print('Tracking FWHM=%spix'%so.track.fwhm)
 		
@@ -841,7 +851,7 @@ class fill_data():
 		#noise_peak      = noise_tools.sum_total_noise(so.track.signal,so.track.texp, 1, so.track.inst_bg_ph, so.track.sky_bg_ph,so.track.dark,so.track.rn,1,0) # hack for noise for one pixel
 		so.track.centroid_err = (1/np.pi) * so.track.fwhm/so.track.snr # same fwhm but snr is reduced to not saturate like if used an ND filter
 		print(f'Tracking SNR: {so.track.snr}, centroid error: {so.track.centroid_err} pix')
-		
+
 	def compute_rv(self,so,telluric_cutoff=0.01,velocity_cutoff=30):
 		"""
 		Computes the achievable radial velocity precision for the

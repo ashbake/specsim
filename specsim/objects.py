@@ -60,9 +60,11 @@ class AO():
         self.defocus     = 25        # nm, defocus error
         self.mag         = 'default' # magnitude of ao star, if 'default' uses mag of on axis star
         self.teff        = 'default' # teff of ao star, if 'default' uses teff of on axis star
-        self.ho_wfe      = None      # high order wfe, will be filled in by code
-        self.tt_dynamic  = None      # dynamic tip tilt error
+        self.ho_wfe_set      = None      # high order wfe, to use instead of loading file
+        self.tt_dynamic_set  = None      # dynamic tip tilt error, to use instead of loading file
         # filled in by code
+        self.ho_wfe      = None      # high order wfe, will be filled in by code either from file or based on _set value
+        self.tt_dynamic  = None      # dynamic tip tilt error, will be filled in by code either from file or based on _set value
         self.band        = None      # band of ao star
         self.dichroic    = None      # AO dichroic transmission, for HISPEC in case pyramid is used
         self.ho_strehl   = None      # high order strehl
@@ -195,6 +197,8 @@ class STELLAR():
         self.s = None      # spectrum in photons
         self.model = None  # model chosen, 'phoenix' or 'sonora'
         self.factor_0 = None # factor to scale spectrum by to match magnitude
+        self.star = None   # Star instance for the on-axis star, set by fill_data.stellar()
+        self.pl_star = None # Star instance for the companion, set by fill_data.stellar() if pl_sep>0
 
 class TELLURIC():
     "telluric transmission file, static"

@@ -76,8 +76,13 @@ def load_filter(filter_path,family,band):
 	the given filter family and band.
 
 	Searches filter_path for a file matching '*<family>*<band>.dat' and
-	loads its two columns as wavelength [nm, converted from the file's
-	Angstrom-like units by dividing by 10] and transmission.
+	loads its two columns as wavelength [nm] and transmission. Filter
+	files store wavelength in different units depending on family
+	(e.g. Angstrom for Johnson, micron for 2MASS/cfht/decam), so the
+	units are auto-detected the same way fill_data.filter() does: values
+	with max > 5000 are assumed to be Angstrom (divided by 10 to get nm),
+	values with max < 10 are assumed to be micron (multiplied by 1000 to
+	get nm).
 
 	inputs:
 	-------
@@ -101,8 +106,10 @@ def load_filter(filter_path,family,band):
 		filter transmission, unitless (out of 1)
 	"""
 	filter_file    = glob.glob(filter_path + '*' + family + '*' + band + '.dat')[0]
-	xraw, yraw     = np.loadtxt(filter_file).T # nm, transmission out of 1
-	return xraw/10, yraw
+	xraw, yraw     = np.loadtxt(filter_file).T # units vary by file (Angstrom or micron)
+	if np.max(xraw) > 5000: xraw = xraw / 10    # Angstrom -> nm
+	if np.max(xraw) < 10: xraw = xraw * 1000    # micron -> nm
+	return xraw, yraw
 
 def load_sonora(stelname,wav_start=750,wav_end=780):
 	"""

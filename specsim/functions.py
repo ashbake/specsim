@@ -9,8 +9,6 @@ from scipy import signal
 all = {'integrate','gaussian', 'define_lsf', 'vac_to_stand', 'setup_band', 'resample'}
 
 
-
-
 def integrate(x,y):
     """
     Integrate y with respect to x using the trapezoidal rule.

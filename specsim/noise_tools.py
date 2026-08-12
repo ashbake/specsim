@@ -246,22 +246,24 @@ def get_inst_bg_tracking(x,pixel_size,npix,datapath='./data/throughput/hispec_su
         instrument thermal background photon rate for npix pixels
     """
     wave = x * u.nm
-    window_temp = 277 * u.K # temperature of cryostat window
+    window_temp = 277 * u.K # temperature of cryostat window will be close to AO room temperature
     pixel_size *= u.micron
-    f_num = 8 # fnumber of cryostat window size to detector as of 8/15/23
+    f_num = 6 # fnumber of cold snout
+    fudge_factor = 5 # ATC will view more than just the warm window, so include multiplicative factor to be conservative. 
+    # also we measure the thermal background to be 500ish e-/s as of 8/11/26 - TBU once done with ATC testing with painted cold snout
 
     # Load blocking filter profile
     fx,fy = np.loadtxt(datapath + 'feicam/blocking_filter.TXT',skiprows=20).T
-    f = interpolate.interp1d(fx[::-1]*u.nm,fy,bounds_error=False,fill_value=0)
-    blocking_filter   = f(wave)/100
+    f = interpolate.interp1d(fx[::-1]*u.nm,fy[::-1],bounds_error=False,fill_value=0)
+    blocking_filter   = f(wave)/100 # convert to fraction from percent
     
     # load window emissivity
     #fx,fy = np.loadtxt(datapath + 'feicam/Infrasil_Window.txt').T
     #f = interpolate.interp1d(fx[::-1]*u.nm,fy,bounds_error=False,fill_value=0)
-    window_emissivity = 0.05 #1 - f(wave)/100
+    window_emissivity = 0.05 #1 - f(wave)/100, this is conservative. emissivity should be max 0.01 but there will be other factors
     
     # Create QE profile for H2RG matching cutoff
-    QE = tophat(wave.value,600,2600,0.9) # sensitivity of h2rg
+    QE = tophat(wave.value,600,2550,0.8) # sensitivity of h2rg, cuts off at 2.5um
 
     area_times_omega = u.radian**2 * 1.13**2 * np.pi**2 * pixel_size**2 / 4 /f_num**2
     bbtemp_fxn  = BlackBody(window_temp, scale=1.0 * u.erg / (u.micron * u.s * u.cm**2 * u.arcsec**2)) 
@@ -270,10 +272,10 @@ def get_inst_bg_tracking(x,pixel_size,npix,datapath='./data/throughput/hispec_su
     bb_spec_dens = bb.to(u.photon/u.s/u.nm, equivalencies=u.spectral_density(wave))
     
     # thermal spectrum over npix, then integrate
-    thermal_spectrum = npix * QE * window_emissivity * blocking_filter * bb_spec_dens # units of ph/nm/s/pix
+    thermal_spectrum = fudge_factor * npix * QE * window_emissivity * blocking_filter * bb_spec_dens # units of ph/nm/s/pix
     thermal = np.trapz(thermal_spectrum,wave)
 
-    return thermal_spectrum, thermal.value # units of ph/nm/s
+    return thermal_spectrum, thermal.value # spectrum in units of ph/nm/s
 
 def get_contrast(wave,pl_sep,tel_diam,seeing,strehl):
     """

@@ -204,7 +204,8 @@ def get_tracking_band(wave,band):
     band - str
         name of the tracking band to select. One of 'z', 'y', 'JHgap',
         'JHgapKPIC', 'JHgap_minus', 'J', 'Jplus', 'Hplus', 'H', 'Hplus50',
-        'JHplus20', 'JHplus', 'K', 'Hkpic', 'yJH', 'yJ'
+        'JHplus20', 'JHplus', 'K', 'Hkpic', 'yJH', 'yJ', 'JHgap20J', 'JHgap20H'
+        'JHgap_narrowed' (default 'JHgap')
 
     returns:
     --------
@@ -230,6 +231,33 @@ def get_tracking_band(wave,band):
         center_wavelength = (l0+lf)/2
         bandpass = tophat(wave,l0,lf,1)
 
+    if band=='JHgap20J':
+        l0,lf= 1335,1490  # make these narrower bc this is pyramid case that steals a little bit
+        center_wavelength = (l0+lf)/2
+        bandpassJHgap = tophat(wave,l0,lf,1)
+
+        l0,lf= 1170,1330 #J
+        center_wavelength =  (l0+lf)/2
+        bandpassJ = tophat(wave,l0,lf,1)
+
+        bandpass = bandpassJHgap + 0.2 * bandpassJ
+
+    if band=='JHgap20H':
+        l0,lf= 1335,1490  # make these narrower bc this is pyramid case that steals a little bit
+        center_wavelength = (l0+lf)/2
+        bandpassJHgap = tophat(wave,l0,lf,1)
+
+        l0,lf= 1490,1780
+        center_wavelength =  (l0+lf)/2
+        bandpassH = tophat(wave,l0,lf,1)
+
+        bandpass = bandpassJHgap + 0.2 * bandpassH
+
+    if band=='JHgap_narrowed':
+        l0,lf= 1350,1470 # less bc pyramid takes some- double check how much 
+        center_wavelength = (l0+lf)/2
+        bandpass = tophat(wave,l0,lf,1)
+
     if band=='JHgapKPIC':
         l0,lf= 1450-25,1450+25
         center_wavelength = (l0+lf)/2
@@ -246,7 +274,7 @@ def get_tracking_band(wave,band):
         bandpass = tophat(wave,l0,lf,1)
 
     if band=='Jplus':
-        l0,lf= 1130,1490 #might help cred2
+        l0,lf= 1170,1490  # J plus jh gap
         center_wavelength =  (l0+lf)/2
         bandpass = tophat(wave,l0,lf,1)
 

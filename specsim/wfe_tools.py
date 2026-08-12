@@ -150,7 +150,6 @@ def tt_to_strehl(tt,lam,D):
     return strehl_tt
 
 
-
 def plot_strehl():
     """
     Plot combined (high order x tip/tilt) Strehl vs. guide star magnitude

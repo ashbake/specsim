@@ -14,6 +14,13 @@ Move into that directory and run the following to pip install specsim and its de
 > pip install -e .
 ```
 
+### Testing
+A test suite lives in `tests/` and exercises the real PHOENIX/Sonora spectra and filter curves shipped in `data/` (e.g. checking that a model scaled to a given magnitude integrates back to that magnitude through yJHK bandpasses). Run it with:
+```
+> pip install pytest
+> pytest
+```
+
 ### Data Downloads & Setup
 Many data files are needed to run the examples for MODHIS and HISPEC. A set of files are included in the repo in the data/ folder and are already linked to in the config file such that the only thing that needs to be done to run the example below is to unzip the telluric file provided. 
 
