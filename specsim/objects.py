@@ -60,8 +60,9 @@ class AO():
         self.defocus     = 25        # nm, defocus error
         self.mag         = 'default' # magnitude of ao star, if 'default' uses mag of on axis star
         self.teff        = 'default' # teff of ao star, if 'default' uses teff of on axis star
-        self.ho_wfe      = None      # high order wfe, will be filled in by code
-        self.tt_dynamic  = None      # dynamic tip tilt error
+        self.user_defined = False    # set True to force ao() to use the ho_wfe/tt_dynamic values below instead of looking them up from mode
+        self.ho_wfe      = None      # high order wfe; either a user-set override (if user_defined=True) or filled in by code from the chosen mode
+        self.tt_dynamic  = None      # dynamic tip tilt error; either a user-set override (if user_defined=True) or filled in by code from the chosen mode
         # filled in by code
         self.band        = None      # band of ao star
         self.dichroic    = None      # AO dichroic transmission, for HISPEC in case pyramid is used

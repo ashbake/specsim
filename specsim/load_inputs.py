@@ -291,19 +291,20 @@ class fill_data():
 		HO WFE (Marechal approximation) and TT WFE, and either the mode
 		with the highest Strehl is picked (so.ao.mode=='auto') or the
 		user-requested mode is used. Also builds the AO dichroic
-		transmission arrays applied later to the science (so.ao.dichroic)
-		and tracking (so.ao.pywfs_dichroic) light paths.
+		transmission array (so.ao.dichroic) applied later to both the
+		science and tracking light paths.
 
 		inputs
 		------
 		so - storage object; reads so.ao.mode ('auto' or a specific mode
-			name), so.ao.tt_dynamic/ho_wfe (user override values or None),
-			so.ao.tt_static [mas], so.ao.lo_wfe [nm], so.ao.defocus [nm],
-			so.ao.teff [K] / so.ao.mag [mag] (or 'default' to reuse the
-			on-axis star), so.ao.ho_wfe_file/tt_dynamic_file, and
-			so.obs.zenith_angle [deg], so.tel.seeing_set; also uses
-			so.stel.vraw/sraw/model/factor_0/stel_file from stellar() and
-			so.filt.center_wavelength from filter()
+			name), so.ao.user_defined (bool - if True, so.ao.tt_dynamic/
+			ho_wfe are used directly as overrides instead of being looked
+			up from so.ao.mode), so.ao.tt_static [mas], so.ao.lo_wfe [nm],
+			so.ao.defocus [nm], so.ao.teff [K] / so.ao.mag [mag] (or
+			'default' to reuse the on-axis star), so.ao.ho_wfe_file/
+			tt_dynamic_file, and so.obs.zenith_angle [deg], so.tel.seeing_set;
+			also uses so.stel.vraw/sraw/model/factor_0/stel_file from
+			stellar() and so.filt.center_wavelength from filter()
 
 		output
 		------
@@ -316,8 +317,8 @@ class fill_data():
 		so.ao.strehl_array - array, Strehl computed for every candidate mode
 		so.ao.band - str, photometric band the chosen AO mode is defined in
 		so.ao.ao_modes - array, list of AO mode names loaded from file
-		so.ao.dichroic, so.ao.pywfs_dichroic - arrays, wavelength-dependent
-			dichroic transmission [0,1] applied to science/tracking paths
+		so.ao.dichroic - array, wavelength-dependent dichroic transmission
+			[0,1] applied to both the science and tracking paths
 		"""
 		if so.ao.teff=='default':
 			vraw,sraw = so.stel.vraw, so.stel.sraw
@@ -333,9 +334,10 @@ class fill_data():
 
 		# now make getband mag take new stel file and factor 0
 
-		if so.ao.tt_dynamic is not None or so.ao.ho_wfe is not None:
+		if so.ao.user_defined:
 			# set tt dynamic and ho wfe
 			# requires either both to be text file or both to be floats
+			if so.ao.ho_wfe is None or so.ao.tt_dynamic is None: raise ValueError('so.ao.user_defined=True requires so.ao.ho_wfe and so.ao.tt_dynamic to both be set')
 			if type(so.ao.ho_wfe) != type(so.ao.tt_dynamic): raise ValueError('HO WFE and TT Dynamic must *both* be set to float values or both to file paths to WFE files')
 			so.ao.mode_chosen = 'User Defined'
 			so.ao.band = 'N/A'
@@ -375,7 +377,7 @@ class fill_data():
 				if so.ao.mode in ao_modes: 
 					i_AO = np.where(so.ao.mode==ao_modes)[0][0]
 				else:
-					raise ValueError('AO mode chosen not a mode! Modes: auto or %s'%ao_modes)
+					raise ValueError('AO mode chosen not a mode! Modes: auto or %s. You picked: %s'%(ao_modes, so.ao.mode))
 
 			# store in object
 			so.ao.mode_chosen   = ao_modes[i_AO]
@@ -396,22 +398,13 @@ class fill_data():
 		
 
 		# consider throughput impact of ao mode here
-		# dichroic gets applied to science
-		# pywfs_dichroic gets applied to tracking
-		"""
+		# dichroic gets applied to both science and tracking
 		if '100H' in so.ao.mode_chosen:
 			so.ao.dichroic = 1 - tophat(self.x,so.inst.H[0],so.inst.H[1],1)
 		elif '100J' in so.ao.mode_chosen:
 			so.ao.dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.J[1],1)
 		else:
 			so.ao.dichroic = np.ones_like(self.x)
-		"""
-		# if pyramid,apply to tracking, otherwise LGS light 100J/H goes to tracking
-		so.ao.dichroic = np.ones_like(self.x)
-		if 'PyWFS' in so.ao.mode_chosen: 
-			so.ao.pywfs_dichroic = so.ao.dichroic.copy()
-		else:
-			so.ao.pywfs_dichroic = np.ones_like(self.x)
 
 	def instrument(self,so):
 		"""
@@ -518,7 +511,7 @@ class fill_data():
 			so.inst.coupling = coupling_data  * so.ao.ho_strehl * piaa_boost
 
 			so.inst.xtransmit = self.x
-			so.inst.ytransmit = so.inst.base_throughput* so.inst.coupling * so.ao.dichroic # pywfs not being considered typically so pywfs_dichroic is one here
+			so.inst.ytransmit = so.inst.base_throughput* so.inst.coupling * so.ao.dichroic # pywfs not being considered typically so dichroic is one here
 
 	def observe(self,so):
 		"""
@@ -733,7 +726,7 @@ class fill_data():
 			transmission_file, so.track.fratio, so.track.band,
 			so.track.field_r, so.track.aberrations_file, so.track.texp [s],
 			so.inst.tel_diam [m], so.ao.ho_wfe [nm] / so.ao.tt_dynamic [mas]
-			/ so.ao.pywfs_dichroic, so.tel.airmass / so.tel.pwv /
+			/ so.ao.dichroic, so.tel.airmass / so.tel.pwv /
 			so.tel.sky_path / so.tel.s, so.inst.tel_area [m2],
 			so.inst.transmission_path, and so.stel.s/v
 
@@ -781,7 +774,7 @@ class fill_data():
 
 		# load tracking band
 		bandpass, so.track.center_wavelength = obs_tools.get_tracking_band(self.x,so.track.band)
-		so.track.bandpass = bandpass * so.ao.pywfs_dichroic
+		so.track.bandpass = bandpass * so.ao.dichroic
 
 		# get fwhm (in pixels)
 		so.track.fwhm  = float(obs_tools.get_fwhm(so.ao.ho_wfe,so.ao.tt_dynamic,so.track.center_wavelength,so.inst.tel_diam,so.track.platescale,field_r=so.track.field_r,camera=so.track.camera,getall=False,aberrations_file=so.track.aberrations_file))
@@ -885,7 +878,7 @@ class fill_data():
 		"""
 		# Create spectrum with continuum removed and tellurics removed
 		# the noise spectrum will consider tellurics but shouldnt be in the spectrum for computing RV
-		continuum = so.inst.ytransmit/np.max(so.inst.ytransmit)
+		continuum = 1 + 0*so.inst.ytransmit/np.max(so.inst.ytransmit) # quick hack to no longer continuum correct. this was messing things up
 		if so.stel.pl_sep>0:
 			telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm_pl/continuum/np.abs(so.tel.s)			
 		else:

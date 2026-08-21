@@ -635,7 +635,7 @@ def plot_throughput_nice(telluric_file,datapath='./data/throughput/hispec_subsys
 
 
 # REQUIRES SO INSTANCE
-def plot_snr(so,snrtype='pixel',savepath='./'):
+def plot_snr(so,color='blue',snrtype='pixel',savepath='./'):
 	"""
 	Plot SNR vs. wavelength for the whole spectrum computed in the so
 	instance, to check the overall SNR level and its shape across the
@@ -672,8 +672,8 @@ def plot_snr(so,snrtype='pixel',savepath='./'):
 		unless snrtype is invalid, in which case nothing is saved.
 	"""
 	fig, ax = plt.subplots(1,1, figsize=(10,8))	
-	if snrtype =='pixel':  ax.plot(so.obs.v,so.obs.snr)
-	elif snrtype=='res_element': ax.plot(so.obs.v_res_element,so.obs.snr_res_element)
+	if snrtype =='pixel':  ax.plot(so.obs.v,so.obs.snr, c=color)
+	elif snrtype=='res_element': ax.plot(so.obs.v_res_element,so.obs.snr_res_element,c=color)
 	else: print('Choose pixel or res_element for snrtype'); return
 	ax.set_ylabel('SNR')
 	ax.set_xlabel('Wavelength (nm)')
@@ -694,9 +694,13 @@ def plot_snr(so,snrtype='pixel',savepath='./'):
 	ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.1)
 	ax2.text(50+np.min(so.inst.K),0.9, 'K')
 	ax2.set_ylim(0,1)
+	ax2.set_yticks([])
+	#ax2.plot(so.inst.xtransmit, so.inst.ytransmit,'m')
 	ax.set_xlim(970,2500)
 	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(so.ao.mode,so.filt.band,so.stel.mag,so.obs.texp,so.inst.darknoise)
 	plt.savefig(savepath + figname)
+
+	return ax
 
 def plot_snr_orders(so,snrtype='res_element',mode='mean',height=0.055,savepath=SAVEPATH):
 	"""
