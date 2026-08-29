@@ -59,6 +59,7 @@ class AO():
         self.lo_wfe      = 50        # nm, low order 
         self.defocus     = 25        # nm, defocus error
         self.mag         = 'default' # magnitude of ao star, if 'default' uses mag of on axis star
+        self.mag_band    = 'default' # filter band so.ao.mag is defined in, if 'default' uses so.filt.band (family is auto-derived from the band, see source_tools.family_for_band)
         self.teff        = 'default' # teff of ao star, if 'default' uses teff of on axis star
         self.ho_wfe_set      = None      # high order wfe, to use instead of loading file
         self.tt_dynamic_set  = None      # dynamic tip tilt error, to use instead of loading file

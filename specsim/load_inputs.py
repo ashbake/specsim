@@ -11,8 +11,9 @@ import glob
 import pandas as pd
 
 
-from specsim import throughput_tools, obs_tools, noise_tools, wfe_tools, ccf_tools
+from specsim import throughput_tools, obs_tools, noise_tools, wfe_tools, ccf_tools, source_tools
 from specsim.star import Star, StarParams
+from specsim.bandpass import Bandpass
 
 from specsim.functions import *
 
@@ -130,22 +131,14 @@ class fill_data():
 		so.filt.center_wavelength - float, transmission-weighted center
 			wavelength of the filter [nm]
 		"""
-		# read zeropoint file, get zp
-		zps                     = np.loadtxt(so.filt.zp_file,dtype=str).T
-		izp                     = np.where((zps[0]==so.filt.family) & (zps[1]==so.filt.band))[0]
-		so.filt.zp              = float(zps[2][izp])
+		so.filt.filter_file = glob.glob(so.filt.filter_path + '*' + so.filt.family + '*' + so.filt.band + '.dat')[0]
 
-		# find filter file and load filter
-		so.filt.filter_file         = glob.glob(so.filt.filter_path + '*' + so.filt.family + '*' +so.filt.band + '.dat')[0]
-		so.filt.xraw, so.filt.yraw  = np.loadtxt(so.filt.filter_file).T # nm, transmission out of 1
-		if np.max(so.filt.xraw) > 5000: so.filt.xraw /= 10
-		if np.max(so.filt.xraw) < 10: so.filt.xraw *= 1000
-		
-		f                       = interpolate.interp1d(so.filt.xraw, so.filt.yraw, bounds_error=False,fill_value=0)
-		so.filt.v, so.filt.s    = self.x, f(self.x)  #filter profile sampled at stellar
-
-		so.filt.dl_l                 = np.mean(integrate(so.filt.xraw, so.filt.yraw)/so.filt.xraw) # dlambda/lambda
-		so.filt.center_wavelength    = integrate(so.filt.xraw,so.filt.yraw*so.filt.xraw)/integrate(so.filt.xraw,so.filt.yraw)
+		bp = Bandpass.load(so.filt.filter_path, so.filt.zp_file, so.filt.family, so.filt.band, x=self.x)
+		so.filt.zp                   = bp.zp
+		so.filt.xraw, so.filt.yraw   = bp.xraw, bp.yraw
+		so.filt.v, so.filt.s         = bp.x, bp.y  #filter profile sampled at stellar
+		so.filt.dl_l                 = bp.dl_l
+		so.filt.center_wavelength    = bp.center_wavelength
 
 	def stellar(self,so):
 		"""
@@ -320,7 +313,10 @@ class fill_data():
 			name), so.ao.tt_dynamic/ho_wfe (user override values or None),
 			so.ao.tt_static [mas], so.ao.lo_wfe [nm], so.ao.defocus [nm],
 			so.ao.teff [K] / so.ao.mag [mag] (or 'default' to reuse the
-			on-axis star), so.ao.ho_wfe_file/tt_dynamic_file, and
+			on-axis star), so.ao.mag_band (band so.ao.mag is quoted in,
+			or 'default' to reuse so.filt.band; the filter family is
+			auto-derived from the band via source_tools.family_for_band),
+			so.ao.ho_wfe_file/tt_dynamic_file, and
 			so.obs.zenith_angle [deg], so.tel.seeing_set; also uses
 			so.stel.star (Star instance from stellar()) and
 			so.filt.center_wavelength from filter()
@@ -339,15 +335,27 @@ class fill_data():
 		so.ao.pywfs_dichroic - arrays, wavelength-dependent
 			dichroic transmission [0,1] applied to science/tracking paths
 		"""
+		mag_filt = None
+		if so.ao.mag_band != 'default':
+			# so.ao.mag is quoted in a different band than so.filt -- load
+			# just that band's curve + zp/dl_l (not a full FILTER object) to
+			# scale to; family is auto-derived from the band (R->Johnson, JHK->2mass, y->cfht)
+			family = source_tools.family_for_band(so.ao.mag_band)
+			mag_filt = Bandpass.load(so.filt.filter_path, so.filt.zp_file, family, so.ao.mag_band, x=self.x)
+
 		if so.ao.teff=='default':
 			# reuse the on-axis star's already-loaded model grid; rescale
-			# factor_0 instead of reloading if only the mag differs
-			ao_star = so.stel.star if so.ao.mag=='default' else so.stel.star.rescaled(so.ao.mag)
+			# factor_0 instead of reloading if only the mag differs (or
+			# recompute it via mag_filt's bandpass if mag is in a different band)
+			if so.ao.mag=='default':
+				ao_star = so.stel.star
+			else:
+				ao_star = so.stel.star.rescaled(so.ao.mag, filt=mag_filt)
 		else: # if new teff, load new model
 			ao_star = Star(StarParams(teff=so.ao.teff, mag=so.ao.mag, vsini=0, rv=0, logg=so.stel.logg,
 			                           phoenix_folder=so.stel.phoenix_folder, sonora_folder=so.stel.sonora_folder)
-			               ).load(self.x, so.filt)
-
+			               ).load(self.x, mag_filt if mag_filt is not None else so.filt)
+			so.ao.ao_star = ao_star  # store the AO star instance on so.ao for later use
 		if so.ao.tt_dynamic_set is not None or so.ao.ho_wfe_set is not None:
 			# set tt dynamic and ho wfe
 			# requires either both to be text file or both to be floats
@@ -362,7 +370,9 @@ class fill_data():
 			strehl, ho_wfes, tt_wfes, aomags = [], [], [],[]
 			for ao_mode in ao_modes:
 				# get magnitude in band the AO mode is defined in
-				wfe_mag  = ao_star.magnitude_in_band('Johnson', data[ao_mode]['band'], so.filt.filter_path, so.filt.zp_file)
+				wfe_family = source_tools.family_for_band(data[ao_mode]['band'])
+				wfe_bp = Bandpass.load(so.filt.filter_path, so.filt.zp_file, wfe_family, data[ao_mode]['band'], x=self.x)
+				wfe_mag  = ao_star.magnitude_in_band(wfe_bp)
 				aomags.append(wfe_mag)
 				# interpolate over WFEs and sample HO and TT at correct mag
 				f_howfe    = interpolate.interp1d(data[ao_mode]['ho_mag'],data[ao_mode]['ho_wfe'], bounds_error=False,fill_value=10000)
@@ -400,30 +410,37 @@ class fill_data():
 			so.ao.band          = data[so.ao.mode_chosen]['band']
 			so.ao.ao_modes = ao_modes.copy()
 
-			print('AO mag is %s in %s band for %sK AO star (%s=%s)'%(round(so.ao.ao_mag,2),so.ao.band, so.ao.teff,so.filt.band,so.ao.mag))
+			print(f'AO mag is {round(so.ao.ao_mag,2)} in {so.ao.band} band for {so.ao.teff} Kelvin AO star)')
+
+			# TYPICALLY BAND SHOULD MATCH CHOSEN AO - RAISE WARNING IF NOT
+			mag_band_used = so.filt.band if so.ao.mag_band == 'default' else so.ao.mag_band
+			if mag_band_used != so.ao.band:
+				print("WARNING:  The temperature of the ao star will matter! so.ao.mag is specified in '%s' band but the chosen AO mode (%s) is "
+				      "natively defined in '%s' band -- e.g. LGS+STRAP modes are typically R band while "
+				      "so.ao.mag defaults to the science star's band ('%s')."
+				      % (mag_band_used, so.ao.mode_chosen, so.ao.band, so.filt.band))
 		# TODO: make name of mag in config to mag_set
 		print('AO mode chosen: %s'%so.ao.mode_chosen)
 
 		print('HO WFE is %s'%round(so.ao.ho_wfe))
 	
 		print('tt dynamic is %s'%round(so.ao.tt_dynamic,2))
-		
 	
 		# consider throughput impact of ao mode here
 		# dichroic gets applied to science
 		# pywfs_dichroic gets applied to tracking
-		if so.ao.mode_chosen == 'PyWFS_100H':
+		if '100H' in so.ao.mode_chosen:
 			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.H[0],so.inst.H[1],1)
-			print(f'Selected PyWFS_100H mode, applying dichroic to science path')
-		elif so.ao.mode_chosen == 'PyWFS_100J':
+			print(f'Selected a 100H mode, applying dichroic to science path')
+		elif '100J' in so.ao.mode_chosen:
 			so.ao.pywfs_dichroic = 1 - tophat(self.x,so.inst.J[0],so.inst.J[1],1)
-			print(f'Selected PyWFS_100J mode, applying dichroic to science path')
-		elif so.ao.mode_chosen == 'PyWFS_80J':
+			print(f'Selected a 100J mode, applying dichroic to science path')
+		elif '80J' in so.ao.mode_chosen:
 			so.ao.pywfs_dichroic = 1 - 0.8 * tophat(self.x,so.inst.J[0],so.inst.J[1],1)
-			print(f'Selected PyWFS_80J mode, applying dichroic to science path')
-		elif so.ao.mode_chosen == 'PyWFS_80H':
+			print(f'Selected an 80J mode, applying dichroic to science path')
+		elif '80H' in so.ao.mode_chosen:
 			so.ao.pywfs_dichroic = 1 - 0.8 * tophat(self.x,so.inst.H[0],so.inst.H[1],1)
-			print(f'Selected PyWFS_80H mode, applying dichroic to science path')
+			print(f'Selected an80H mode, applying dichroic to science path')
 		else:
 			so.ao.pywfs_dichroic = np.ones_like(self.x)
 
@@ -723,7 +740,6 @@ class fill_data():
 		ind_hk = np.where((so.obs.v>1480)&(so.obs.v<2450))[0]
 		so.obs.ind_filter = np.array(ind_yj.tolist()+ind_hk.tolist())
 
-
 	def tracking(self,so):
 		"""
 		Simulates the acquisition/tracking camera used for guiding: loads
@@ -896,10 +912,14 @@ class fill_data():
 		# Create spectrum with continuum removed and tellurics removed
 		# the noise spectrum will consider tellurics but shouldnt be in the spectrum for computing RV
 		continuum = so.inst.ytransmit/np.max(so.inst.ytransmit)
+		# guard 0/0 (-> nan, which would smear via degrade_spec's convolution below) wherever
+		# there's no throughput/telluric transmission to divide out in the first place
+		continuum_safe = np.where(continuum==0, np.inf, continuum)
+		tel_s_safe      = np.where(so.tel.s==0, np.inf, np.abs(so.tel.s))
 		if so.stel.pl_sep>0:
-			telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm_pl/continuum/np.abs(so.tel.s)			
+			telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm_pl/continuum_safe/tel_s_safe
 		else:
-			telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm/continuum/np.abs(so.tel.s)
+			telcont_free_hires = so.obs.nframes * so.obs.frame_phot_per_nm/continuum_safe/tel_s_safe
 		
 		# remove telurics
 		telcont_free_lores = degrade_spec(so.stel.v, telcont_free_hires, so.inst.res)
@@ -1145,9 +1165,7 @@ class fill_data():
 		so.obs.etc_ccf_snr_J= so.obs.texp_frame *  goal_ccf**2 /ccf_snr_J**2
 		so.obs.etc_ccf_snr_H= so.obs.texp_frame *  goal_ccf**2 /ccf_snr_H**2
 		so.obs.etc_ccf_snr_K= so.obs.texp_frame *  goal_ccf**2 /ccf_snr_K**2					
-
-
-		
+	
 	def set_teff_aomode(self,so,temp,aomode,trackonly=False):
 		"""
 		Convenience re-loader: updates the star's effective temperature and

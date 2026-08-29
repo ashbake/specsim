@@ -227,7 +227,7 @@ def get_tracking_band(wave,band):
         bandpass = tophat(wave,l0,lf,1) #make up fake band
 
     if band=='JHgap':
-        l0,lf= 1335,1490
+        l0,lf= 1335,1453
         center_wavelength = (l0+lf)/2
         bandpass = tophat(wave,l0,lf,1)
 
@@ -254,7 +254,7 @@ def get_tracking_band(wave,band):
         bandpass = bandpassJHgap + 0.2 * bandpassH
 
     if band=='JHgap_narrowed':
-        l0,lf= 1350,1470 # less bc pyramid takes some- double check how much 
+        l0,lf= 1350,1450 # less bc pyramid takes some- double check how much 
         center_wavelength = (l0+lf)/2
         bandpass = tophat(wave,l0,lf,1)
 

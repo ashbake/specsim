@@ -6,6 +6,7 @@ import numpy as np
 from astropy.io import fits
 from scipy import interpolate
 import glob,os
+from functools import lru_cache
 from astropy.convolution import convolve
 
 from specsim.functions import *
@@ -69,6 +70,34 @@ def load_phoenix(stelname,stelpath,wav_start=750,wav_end=780):
 
 	# Convert 
 	return lam[isub]/10.0,spec[isub] * 10 * 100**2 #nm, phot/m2/s/nm
+
+def family_for_band(band):
+	"""
+	Photometric filter family conventionally used for a given band, so
+	callers don't have to specify/guess it alongside the band: 2MASS for
+	J/H/K, CFHT for y, Johnson otherwise (U/B/V/R/I).
+	"""
+	if band in ('J', 'H', 'K'):
+		return '2mass'
+	if band == 'y':
+		return 'cfht'
+	return 'Johnson'
+
+@lru_cache(maxsize=None)
+def _load_zp_table(zp_file):
+	"Cached read of a zeropoint lookup table -- avoids re-reading (and re-warning on) the same file every call."
+	return np.loadtxt(zp_file, dtype=str).T
+
+def get_zp(zp_file, family, band):
+	"""
+	Zeropoint flux [Jy] for a given filter family/band, read from zp_file
+	(family, band, zp columns). The file itself is cached across calls, so
+	looking this up repeatedly (e.g. once per AO mode) doesn't re-read (or
+	re-warn on) it from disk each time.
+	"""
+	zps = _load_zp_table(zp_file)
+	izp = np.where((zps[0] == family) & (zps[1] == band))[0]
+	return float(zps[2][izp][0])
 
 def load_filter(filter_path,family,band):
 	"""
