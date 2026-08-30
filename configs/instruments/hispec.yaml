@@ -1,0 +1,50 @@
+# Instrument-fixed parameters for HISPEC (Keck): telescope, detector,
+# AO/tracking-camera hardware and data file paths. These don't change
+# from one simulation to the next -- per-run parameters (star magnitude,
+# exposure time, observing conditions, etc.) live in the user-facing
+# .cfg file that references this file via [run] instrument=hispec.
+
+telescope:
+  area_m2: 76.2
+  diameter_m: 10
+
+filt:
+  filter_path: ./data/filters/
+  zp_file: ./data/filters/zeropoints.txt
+
+atm:
+  telluric_file: ./data/telluric/psg_out_2020.08.02_l0_800nm_l1_2700nm_res_0.001nm_lon_204.53_lat_19.82_pres_0.5826.fits
+  sky_path: ./data/telluric/sky/
+
+spectrograph:
+  transmission_path: ./data/instrument/hispec/throughput/
+  order_bounds_file: ./data/instrument/hispec/order_bounds.csv
+  atm: 1
+  adc: 1
+  l0: 800
+  l1: 2650
+  res: 100000
+  res_samp: 3
+  pix_vert: 4
+  pl_on: 0
+  extraction_frac: 0.925
+  readnoise: 7
+  darknoise: 0.01
+  saturation: 90000
+  rv_floor: 0.5
+
+ao:
+  tt_static: 0
+  lo_wfe: 50
+  defocus: 25
+  tt_dynamic_file: ./data/instrument/hispec/ao/TTWFE_HAKA_08102026.csv
+  ho_wfe_file: ./data/instrument/hispec/ao/HOWFE_HAKA_08102026.csv
+
+track:
+  band: JHgap
+  fratio: 35
+  camera: h2rg
+  transmission_file: ./data/track/trackingcamera.csv
+  texp: 1
+  field_r: 0
+  aberrations_file: ./data/track/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt

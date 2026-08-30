@@ -1,16 +1,17 @@
+# python build/cache artifacts
 specsim.egg-info/
-./data/phoenix
-./data/telluric
-./data/throughput
-./data/sams_comp_spec.png
-./output
-./references
-./data
-specsim/__pycache__/
-.DS_Store
-specsim/__pycache__/*pyc
-specsim/.ipynb_checkpoints/
-examples/data/.DS_Store
+__pycache__/
+*.pyc
 *~
+.pytest_cache/
 .venv/
+.ipynb_checkpoints/
+
+.DS_Store
+
+# plots written to the repo root by the examples / plot_tools default savepath
+/*.png
+
+# large data files that are downloaded rather than committed (see README);
+# everything else under data/ ships with the repo
 data/telluric/psg_out_2020.08.02_l0_800nm_l1_2700nm_res_0.001nm_lon_204.53_lat_19.82_pres_0.5826.fits

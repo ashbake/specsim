@@ -1,35 +1,39 @@
 # make median bin SNR in 4 hours plot
 import os,sys
-sys.path.append('../')
-os.chdir('../')
+from pathlib import Path
+try:
+	_root = str(Path(__file__).resolve().parent.parent)
+except NameError: # running interactively; assume cwd is examples/
+	_root = str(Path.cwd().parent)
+sys.path.insert(0, _root)
+os.chdir(_root)
 
 import numpy as np
 import matplotlib.pylab as plt
 
-from specsim.load_inputs import fill_data
-from specsim.objects import load_object
-from specsim.functions import *
+from specsim.config import simulate_from_config
+from specsim.bandpass import YJHK
 
 #plt.ion()
 
 #load inputs
 configfile = './configs/modhis_snr.cfg'
-so    = load_object(configfile)
-cload = fill_data(so) # put coupling files in load and wfe stuff too
+sim = simulate_from_config(configfile)
 
 # step through magnitudes
 mag_arr= np.arange(8,22)
-snr_arr = [] # snr 
+snr_arr = [] # snr
 for mag in mag_arr:
-	cload.set_mag(so, mag)
-	snr_arr.append(so.obs.snr_res_element)
+	sim.set_star_mag(mag)
+	snr_arr.append(sim.snr().snr_res_element)
 
 
 # plot
 plt.figure()
-exec('xextent = so.inst.' + so.filt.band)
-iband = np.where((so.obs.v_res_element > xextent[0]) & (so.obs.v_res_element <xextent[1]))[0]
-plt.semilogy(mag_arr,np.median(np.array(snr_arr)[:,iband],axis=1),label=so.filt.band) # sqrt 3 hack to get res element snr
+xextent = YJHK[sim.filt.band]
+v_res_element = sim.snr().v_res_element
+iband = np.where((v_res_element > xextent[0]) & (v_res_element < xextent[1]))[0]
+plt.semilogy(mag_arr,np.median(np.array(snr_arr)[:,iband],axis=1),label=sim.filt.band) # sqrt 3 hack to get res element snr
 plt.plot(mag_arr,mag_arr*0 + 30,'k--')
 plt.legend()
 plt.xlabel('Magnitude')

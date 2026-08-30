@@ -1,47 +1,55 @@
 ##############################################################
-# General functions for noise calculations
-# contributors:
-# Ashley Baker abaker@caltech.edu
-# Huihao Zhang zhang.12043@osu.edu
-# many functions based on psisim https://github.com/planetarysystemsimager/psisim/
+# Observation: ties Star + Spectrograph + Atmosphere + AOSystem together for
+# a single exposure and derives the resulting SNR
 ###############################################################
+#
+# Replaces fill_data.observe() (load_inputs.py). Domain objects are
+# constructor args (an Observation is the thing most likely to get rebuilt
+# repeatedly -- texp/mag sweeps -- while Star/Spectrograph/Atmosphere/AOSystem
+# stay fixed); x is a .run() argument since it's a pipeline-wide grid
+# decided by the caller (the future Simulate builder), not a property of
+# the observation itself. Telescope area/diameter live on Spectrograph (see
+# specsim/instrument.py) rather than a separate Telescope object.
+
+from typing import Optional
+
+import os
 
 import numpy as np
-from scipy import interpolate
-import os
 import pandas as pd
-
-from astropy.modeling.models import BlackBody
+from scipy import interpolate
 from astropy import units as u
-from astropy import constants as c 
+from astropy.modeling.models import BlackBody
 
-from specsim.functions import tophat, resample
-from specsim.throughput_tools import get_emissivity, get_emissivities
+from specsim.atmosphere import Atmosphere
+from specsim.functions import degrade_spec, resample, sum_total_noise
+from specsim.instrument import AOSystem, Spectrograph
+from specsim.star import Star
+from specsim.throughput_tools import get_emissivity
 
-all = {'get_sky_bg','get_inst_bg','sum_total_noise','plot_noise_components'}
 
-def get_sky_bg(x,airmass=1.3,pwv=1.5,npix=3,R=100000,diam=10,area=76,skypath = '../../../../_DATA/sky/'):
+def get_sky_bg(x,sky_bg_v,sky_bg,npix=3,R=100000,diam=10,area=76):
     """
     Generate sky background per reduced pixel, default is HISPEC.
-    Loads the Mauna Kea sky emission model (OH lines + thermal continuum,
-    in ph/s/arcsec^2/nm/m^2) for the tabulated (pwv, airmass) grid point
-    nearest the requested values, interpolates it onto the input
-    wavelength grid, and converts it to a photon count rate by
-    multiplying by the telescope collecting area, the diffraction-limited
-    beam solid angle (from wavelength/diameter, corrected for a Gaussian
-    beam), and the wavelength width of one reduced-pixel resolution
-    element (wave/R/npix).
+    Takes an already-loaded Mauna Kea sky emission model (OH lines +
+    thermal continuum, in ph/s/arcsec^2/nm/m^2 -- see
+    atmosphere.load_sky_background/Atmosphere.sky_bg), interpolates
+    it onto the input wavelength grid, and converts it to a photon count
+    rate by multiplying by the telescope collecting area, the
+    diffraction-limited beam solid angle (from wavelength/diameter,
+    corrected for a Gaussian beam), and the wavelength width of one
+    reduced-pixel resolution element (wave/R/npix).
     Source: DMawet jup. notebook
 
     inputs:
     -------
     x : array [nm]
-        wavelength in nanometers
-    airmass: float [1,inf)
-        airmass of the observation. Defaults to 1.3
-    pwv: float [mm] [0,inf)
-        precipitable water vapor in millimeters during
-        the observation. Defaults to 1.5
+        wavelength in nanometers to evaluate/interpolate onto
+    sky_bg_v : array [nm]
+        wavelength grid sky_bg is sampled on (e.g. Atmosphere.v)
+    sky_bg : array [ph/s/arcsec^2/nm/m^2]
+        sky background surface brightness, sampled on sky_bg_v (e.g.
+        Atmosphere.sky_bg, from atmosphere.load_sky_background)
     npix: integer
         number of pixels, defaults to 3
     R: float
@@ -50,9 +58,6 @@ def get_sky_bg(x,airmass=1.3,pwv=1.5,npix=3,R=100000,diam=10,area=76,skypath = '
         diameter of telescope in meters
     area: float [m^2]
         area of telescope in meters squared
-    skypath: string
-        path to the directory containing the Mauna Kea sky background
-        model files (mk_skybg_zm_<pwv>_<airmass>_ph.dat)
 
     outputs:
     --------
@@ -64,20 +69,14 @@ def get_sky_bg(x,airmass=1.3,pwv=1.5,npix=3,R=100000,diam=10,area=76,skypath = '
     area = area * u.m * u.m
     wave = x*u.nm
 
-    pwv_rounded = np.round(pwv,1)
-    airmass_rounded = np.round(airmass,1)
-    
     fwhm = ((wave  / diam) * u.radian).to(u.arcsec)
     solidangle = fwhm**2 * 1.13 #corrected for Gaussian beam (factor 1.13)
-    
-    sky_background_MK_tmp  = np.genfromtxt(skypath+'mk_skybg_zm_'+str(pwv_rounded)+'_'+str(airmass_rounded)+'_ph.dat', skip_header=0)
-    sky_background_MK      = sky_background_MK_tmp[:,1]
-    sky_background_MK_wave = sky_background_MK_tmp[:,0] #* u.nm
 
-    pix_width_nm  = (wave/R/npix) #* u.nm 
-    sky_background_interp=np.interp(wave.value, sky_background_MK_wave, sky_background_MK) * u.photon/(u.s*u.arcsec**2*u.nm*u.m**2) * area * solidangle * pix_width_nm 
+    pix_width_nm  = (wave/R/npix) #* u.nm
+    sky_background_interp=np.interp(wave.value, sky_bg_v, sky_bg) * u.photon/(u.s*u.arcsec**2*u.nm*u.m**2) * area * solidangle * pix_width_nm
 
     return sky_background_interp.value # ph/s
+
 
 def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hispec_subsystems_11032022/'):
     """
@@ -157,125 +156,6 @@ def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hi
 
     return em_total # units of ph/s/reduced_pix
 
-def get_sky_bg_tracking(x,fwhm,airmass=1.5,pwv=1.5,area=76,skypath = '../../../../_DATA/sky/'):
-    """
-    Generate sky background per pixel for the tracking/acquisition camera,
-    default to HISPEC. Loads the Mauna Kea sky emission model (OH lines +
-    thermal continuum, in ph/s/arcsec^2/nm/m^2) for the given (pwv, airmass),
-    interpolates it onto the input wavelength grid, and converts it to a
-    photon count rate per nm by multiplying by the telescope collecting
-    area and the PSF solid angle (from the supplied FWHM, corrected for a
-    Gaussian beam). Unlike get_sky_bg, this does not divide by resolving
-    power/npix, so the result is per nm rather than per reduced pixel.
-    Source: DMawet jup. notebook
-
-    inputs:
-    -------
-    x : array [nm]
-        wavelength in nanometers
-    fwhm: float [arcsec]
-        full width at half maximum of the PSF on the tracking camera,
-        used to set the solid angle subtended by one resolution element
-    airmass: float [1,inf)
-        airmass of the observation. Defaults to 1.5
-    pwv: float [mm] [0,inf)
-        precipitable water vapor in millimeters during the observation.
-        Defaults to 1.5
-    area: float [m^2]
-        area of telescope in meters squared
-    skypath: string
-        path to the directory containing the Mauna Kea sky background
-        model files (mk_skybg_zm_<pwv>_<airmass>_ph.dat)
-
-    outputs:
-    --------
-    array [ph/s/nm]
-        sky background photon rate per nm, sampled on the input
-        wavelength grid x
-    """
-    area = area * u.m * u.m
-    wave = x*u.nm
-
-    fwhm *= u.arcsec
-    solidangle = fwhm**2 * 1.13 #corrected for Gaussian beam (factor 1.13)
-
-    sky_background_MK_tmp  = np.genfromtxt(skypath+'mk_skybg_zm_'+str(pwv)+'_'+str(round(airmass,1))+'_ph.dat', skip_header=0)
-    sky_background_MK      = sky_background_MK_tmp[:,1] * u.photon/(u.s*u.arcsec**2*u.nm*u.m**2) 
-    sky_background_MK_wave = sky_background_MK_tmp[:,0] * u.nm
-
-    sky_background_interp=np.interp(wave, sky_background_MK_wave, sky_background_MK)
-    sky_background_interp*= area * solidangle 
-    
-    return sky_background_interp.value # ph/s/nm
-
-def get_inst_bg_tracking(x,pixel_size,npix,datapath='./data/throughput/hispec_subsystems_11032022/'):
-    """
-    Generate the instrument thermal background seen by the tracking camera,
-    per pixel, default to HISPEC. Source: DMawet jup. notebook.
-    Models the thermal emission of the cryostat window as a blackbody at a
-    fixed temperature (277 K), attenuated by the blocking filter
-    transmission, the (fixed, approximate) window emissivity, and the
-    H2RG quantum efficiency (modeled as a tophat between 600-2600 nm).
-    The blackbody is scaled by the effective area x solid angle set by
-    the pixel size and the optical f-number, converted to a photon rate
-    per nm, and multiplied by npix to get the total thermal spectrum for
-    npix pixels; that spectrum is also integrated over wavelength to give
-    a single total photon rate.
-    change this to take emissivities and temps as inputs so dont
-    have to rely on get_emissivities
-
-    inputs:
-    -------
-    x : array [nm]
-        wavelength in nanometers
-    pixel_size: float [micron]
-        physical size of one detector pixel
-    npix: integer
-        number of pixels over which the thermal background is summed
-    datapath: string
-        path to where throughput data in HISPEC format is (used here to
-        load the blocking filter transmission curve)
-
-    outputs:
-    --------
-    thermal_spectrum: array [ph/s/nm]
-        instrument thermal background spectral photon rate for npix
-        pixels, sampled on the input wavelength grid x
-    thermal: float [ph/s]
-        thermal_spectrum integrated over wavelength, i.e. the total
-        instrument thermal background photon rate for npix pixels
-    """
-    wave = x * u.nm
-    window_temp = 277 * u.K # temperature of cryostat window will be close to AO room temperature
-    pixel_size *= u.micron
-    f_num = 6 # fnumber of cold snout
-    fudge_factor = 5 # ATC will view more than just the warm window, so include multiplicative factor to be conservative. 
-    # also we measure the thermal background to be 500ish e-/s as of 8/11/26 - TBU once done with ATC testing with painted cold snout
-
-    # Load blocking filter profile
-    fx,fy = np.loadtxt(datapath + 'feicam/blocking_filter.TXT',skiprows=20).T
-    f = interpolate.interp1d(fx[::-1]*u.nm,fy[::-1],bounds_error=False,fill_value=0)
-    blocking_filter   = f(wave)/100 # convert to fraction from percent
-    
-    # load window emissivity
-    #fx,fy = np.loadtxt(datapath + 'feicam/Infrasil_Window.txt').T
-    #f = interpolate.interp1d(fx[::-1]*u.nm,fy,bounds_error=False,fill_value=0)
-    window_emissivity = 0.05 #1 - f(wave)/100, this is conservative. emissivity should be max 0.01 but there will be other factors
-    
-    # Create QE profile for H2RG matching cutoff
-    QE = tophat(wave.value,600,2550,0.8) # sensitivity of h2rg, cuts off at 2.5um
-
-    area_times_omega = u.radian**2 * 1.13**2 * np.pi**2 * pixel_size**2 / 4 /f_num**2
-    bbtemp_fxn  = BlackBody(window_temp, scale=1.0 * u.erg / (u.micron * u.s * u.cm**2 * u.arcsec**2)) 
-    bb   = area_times_omega.to(u.cm**2 * u.arcsec**2) * bbtemp_fxn(wave)
-
-    bb_spec_dens = bb.to(u.photon/u.s/u.nm, equivalencies=u.spectral_density(wave))
-    
-    # thermal spectrum over npix, then integrate
-    thermal_spectrum = fudge_factor * npix * QE * window_emissivity * blocking_filter * bb_spec_dens # units of ph/nm/s/pix
-    thermal = np.trapz(thermal_spectrum,wave)
-
-    return thermal_spectrum, thermal.value # spectrum in units of ph/nm/s
 
 def get_contrast(wave,pl_sep,tel_diam,seeing,strehl):
     """
@@ -305,7 +185,6 @@ def get_contrast(wave,pl_sep,tel_diam,seeing,strehl):
         unocculted stellar peak) at the given planet separation, as a
         function of wavelength. Values are clipped to be <= 1.
     """
-
     p_law_kolmogorov = -11./3
     p_law_ao_coro_filter = -2 
     nactuators = 58             # number of actuators
@@ -346,6 +225,7 @@ def get_contrast(wave,pl_sep,tel_diam,seeing,strehl):
     contrast[contrast>1] = 1.
 
     return contrast
+
 
 def get_MODHIS_contrast(folder, ao_mode, seeing, zenith_angle, magnitude, waves, radius):
     """Function to get contrast from a particular file at a given radius.
@@ -516,7 +396,7 @@ def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,v
     # Convert jitter to lam/D
     ttlamD = tt_dyn.to(u.radian) / (wvs.to(u.m)/ tel_diam) / u.radian
 
-    # Use leakage approx. from Ruane et. al 2019 
+    # Use leakage approx. from Ruane et. al 2019
         # https://arxiv.org/pdf/1908.09780.pdf      Eq. 3
     ttnull = (ttlamD)**(2*vortex_charge)
 
@@ -535,223 +415,224 @@ def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,v
         geo_coeff = 3.5
     elif vortex_charge == 2:
         geo_coeff = 4.2
-    
+
     # Compute leakage
     geonull = (host_diam_LoD / geo_coeff)**(2*vortex_charge)
-    
+
     # Add to total contrast
     contrast += geonull
-        
+
     #convert to ndarray for consistency with contrast returned by other modes
     contrast = np.array(contrast)
-    
-    #Make sure nothing is greater than 1. 
+
+    #Make sure nothing is greater than 1.
     contrast[contrast>1] = 1.
-    
+
     return contrast
 
 
-
-def sum_total_noise(flux,texp, nsamp, inst_bg, sky_bg, darknoise,readnoise,npix,speckle,noisefloor=None):
+class Observation:
     """
-    noise in 1 exposure
-
-    inputs:
-    --------
-    flux - array [e-] 
-        spectrum of star in units of electrons
-    texp - float [seconds]
-        exposure time, (0s,900s] (for one frame)
-    nsamp - int
-        number of samples in a ramp which will reduce read noise [1,inf] - 16 max for kpic
-    inst_bg - array or float [e-/s]
-        instrument background, if array should match sampling of flux
-    sky_bg - array or float [e-/s]
-        sky background, if array should match sampling of flux
-    darknoise - float [e-/s/pix]
-        dark noise of detector
-    readnoise - float [e-/s]
-        read noise of detector
-    npix - float [pixels]
-        number of pixels in cross dispersion of spectrum being combined into one 1D spectrum
-    speckle - array [e-]
-        counts from speckle leakage from star. should be zeroes if on axis
-    noisefloor - float or None (default: None)
-        noise cap to be applied. Defined relative to flux such that 1/noisecap is the max SNR allowed
-    
-    outputs:
-    -------
-    noise: array [e-]
-        total noise sampled on flux grid
+    A single exposure: computed flux, background, noise, and SNR spectra
+    for an on-axis (or off-axis, with a companion) star observed through a
+    given Spectrograph/Atmosphere/AOSystem.
     """
-    # shot noise - array w/ wavelength or integrated over band
-    sig_flux = np.sqrt(np.abs(flux))
 
-    # speckle noise
-    speckle_noise = np.sqrt(speckle)
-    post_processing_gain = 100. # reduction of speckle related systematics in software
+    def __init__(self, star: Star, spectrograph: Spectrograph, atmosphere: Atmosphere,
+                 ao_system: AOSystem,
+                 texp: float = 900, texp_frame_set='default', nsamp: int = 1,
+                 zenith_angle: float = 45,
+                 companion: Optional[Star] = None, pl_sep: float = 0):
+        self.star = star
+        self.spectrograph = spectrograph
+        self.atmosphere = atmosphere
+        self.ao_system = ao_system
+        self.texp = texp
+        self.texp_frame_set = texp_frame_set
+        self.nsamp = nsamp
+        self.zenith_angle = zenith_angle
+        self.companion = companion
+        self.pl_sep = pl_sep
 
-    # background (instrument and sky) - array w/ wavelength matching flux array sampling or integrated over band
-    sig_bg   = background_noise(inst_bg,sky_bg, texp)
+        # derived state, set by run()
+        self.texp_frame: Optional[float] = None
+        self.nframes: Optional[int] = None
+        self.frame_phot_per_nm: Optional[np.ndarray] = None
+        self.frame_phot_per_nm_pl: Optional[np.ndarray] = None
+        self.v: Optional[np.ndarray] = None
+        self.s_frame_star: Optional[np.ndarray] = None
+        self.s_frame: Optional[np.ndarray] = None
+        self.contrast: Optional[np.ndarray] = None
+        self.speckle_frame: Optional[np.ndarray] = None
+        self.s: Optional[np.ndarray] = None
+        self.ytransmit: Optional[np.ndarray] = None
+        self.sky_bg_ph: Optional[np.ndarray] = None
+        self.inst_bg_ph: Optional[np.ndarray] = None
+        self.noise_frame: Optional[np.ndarray] = None
+        self.noise: Optional[np.ndarray] = None
+        self.snr: Optional[np.ndarray] = None
+        self.v_res_element: Optional[np.ndarray] = None
+        self.snr_res_element: Optional[np.ndarray] = None
+        self.snr_max_orders: Optional[np.ndarray] = None
+        self.snr_mean_orders: Optional[np.ndarray] = None
+        self.order_inds: Optional[list] = None
+        self.order_cens: Optional[np.ndarray] = None
+        self.ind_filter: Optional[np.ndarray] = None
 
-    # read noise  - reduces by number of ramps, limit to 6 at best
-    sig_read = read_noise(np.max((6,(readnoise/np.sqrt(nsamp)))), npix)
-    
-    # dark current - times time and pixels
-    sig_dark = dark_noise(darknoise,npix,texp) #* get dark noise every sample
-    
-    noise    = np.sqrt(sig_flux **2 + sig_bg**2 + sig_read**2 + sig_dark**2 + speckle_noise**2 + (speckle/post_processing_gain)**2) 
+    def run(self, x: np.ndarray) -> "Observation":
+        """
+        Compute the flux reaching the spectrometer (stellar spectrum x
+        telescope area x spectrograph throughput x telluric transmission),
+        pick the per-frame exposure time to avoid saturation (or use a
+        user-set value), degrade and resample the spectrum onto the
+        spectrograph's resolution/pixel grid, add sky and spectrograph thermal
+        background, and compute the total photon and read/dark noise per
+        frame and across all frames. From that, derive the SNR spectrum
+        per pixel (v, snr) and per resolution element (v_res_element,
+        snr_res_element), plus max/mean SNR per echelle order.
 
-    # cap the noise if a number is provided
-    if noisefloor is not None:
-        noise[np.where(noise < noisefloor)] = noisefloor * flux # noisecap is fraction of flux, 1/noisecap gives max SNR
+        If pl_sep>0 (off-axis companion), additionally computes the
+        companion flux and the stellar speckle contribution at the
+        companion's separation (via ao_system.contrast_profile_path/MODHIS
+        contrast calculator, falling back to an analytic contrast model),
+        and s/snr then refer to the companion signal with the star's
+        speckle halo as an added noise/background term.
 
-    return noise
+        Returns self, so calls can be chained: Observation(...).run(x).
+        """
+        star, spec, atm, aos = self.star, self.spectrograph, self.atmosphere, self.ao_system
 
-def background_noise(inst_bg,sky_bg, texp):
-    """
-    Compute the noise due to instrument and sky background photons
+        # flux density is stellar flux * telescope area * spectrograph throughput * atmospheric absorption
+        # If planet separation is >0, compute for the planet also
+        phot_per_sec_nm = star.s * spec.area_m2 * spec.ytransmit * np.abs(atm.s)
+        if self.pl_sep > 0:
+            phot_per_sec_nm_pl = self.companion.s * spec.area_m2 * spec.ytransmit * np.abs(atm.s)
+            try:
+                contrast = get_MODHIS_contrast(aos.contrast_profile_path, aos.mode_chosen, atm.seeing,
+                                                            self.zenith_angle, star.params.mag, x, self.pl_sep)  # new version, specific to MODHIS
+                print("Using new MODHIS contrast calculator with radial profile database.")
+            except Exception as e:
+                print(f"Warning: {e}, using old contrast calculator with analytic method.")
+                contrast = get_contrast(x, self.pl_sep, spec.diameter_m, atm.seeing, aos.strehl)  # old version
 
-    inputs
-    ------
-    inst_bg - float/array [photons/sec/reduced pixel]
-        the instrument background flux 
-    sky_bg  -  float/array [photons/sec/reduced pixel]
-        the sky background flux 
-    texp    - float [seconds]
-        the exposure time
+        # Figure out the exposure time per frame to avoid saturation
+        # Default case takes 900s as maximum frame exposure time length
+        if self.texp_frame_set == 'default':
+            if self.pl_sep > 0:  # use estimated planet flux if off axis mode
+                max_ph_per_s = np.max((phot_per_sec_nm_pl + contrast * phot_per_sec_nm) * spec.sig)
+            else:
+                max_ph_per_s = np.max(phot_per_sec_nm * spec.sig)
+            # set text frame
+            if self.texp < 900:
+                texp_frame_tmp = np.min((self.texp, spec.saturation / max_ph_per_s))
+            else:
+                texp_frame_tmp = np.min((900, spec.saturation / max_ph_per_s))
+            self.nframes = int(np.ceil(self.texp / texp_frame_tmp))
+            print('Nframes set to %s' % self.nframes)
+            self.texp_frame = np.round(self.texp / self.nframes, 2)
+            print('Texp per frame set to %s' % self.texp_frame)
+        # user defined exposure time per frame case:
+        else:
+            if self.texp < self.texp_frame_set:
+                print('Exposure time is less than the set exposure time per frame, will set frame time to the total exposure time')
+            self.texp_frame = np.min((self.texp_frame_set, self.texp))
+            self.nframes = int(np.ceil(self.texp / self.texp_frame))
+            print('Texp per frame set to user defined value %s' % self.texp_frame)
+            print('Nframes set to %s' % self.nframes)
 
-    returns
-    -------
-    float [photons]
-        the standard deviation noise of sky and instrument thermal background thermal
-    """
-    total_bg = texp * (inst_bg + sky_bg) # per reduced pixel already so dont need to include vertical pixel extent
-    
-    return np.sqrt(np.abs(total_bg) )
+        # Degrade to spectrograph resolution after applying frame exposure time
+        self.frame_phot_per_nm = phot_per_sec_nm * self.texp_frame
+        s_ccd_lores = degrade_spec(star.v, self.frame_phot_per_nm, spec.res)
 
+        if self.pl_sep > 0:
+            self.frame_phot_per_nm_pl = phot_per_sec_nm_pl * self.texp_frame
+            s_ccd_lores_pl = degrade_spec(star.v, self.frame_phot_per_nm_pl, spec.res)
 
-def read_noise(rn,npix):
-    """
-    Compute the total detector read noise contribution over npix pixels
-    by adding the per-pixel read noise in quadrature (rn * sqrt(npix)).
+        # Resample onto res element grid - new wavelength grid self.v
+        self.v, self.s_frame_star = resample(star.v, s_ccd_lores, sig=np.mean(spec.sig), dx=0, eta=1, mode='fast')
+        self.s_frame_star *= spec.extraction_frac
+        # remove negatives from star spectrum
+        self.s_frame_star = np.where(self.s_frame_star < 0, 0, self.s_frame_star)
+        if self.pl_sep > 0:
+            _, self.s_frame = resample(star.v, s_ccd_lores_pl, sig=np.mean(spec.sig), dx=0, eta=1, mode='fast')
+            self.s_frame *= spec.extraction_frac  # extraction fraction, reduce photons to mimic spectral extraction imperfection
 
-    input:
-    ------
-    rn: [e-/pix]
-        read noise per pixel (per read/ramp, already reduced by number
-        of samples by the caller if applicable)
-    npix [pix]
-        number of pixels
+            # interpolate contrast curve onto new low res array
+            spec_contrast_interp = interpolate.interp1d(spec.xtransmit, contrast)
+            self.contrast = spec_contrast_interp(self.v)
+            # speckle is the star flux times contrast
+            self.speckle_frame = self.contrast * self.s_frame_star
+        else:  # sframe is the star when on axis, speckle is zeros
+            self.s_frame = self.s_frame_star
+            self.speckle_frame = np.zeros_like(self.s_frame)
 
-    output:
-    -------
-    float [photons]
-        the standard deviation of detector read noise over npix
-    """
-    return np.sqrt(npix * rn**2)
+        # Get total spectrum for all frames
+        # save planet spectrum as main science spectrum
+        self.s = self.s_frame * self.nframes
 
-def dark_noise(darknoise,npix,texp):
-    """
-    Computes Poisson noise due to dark current, i.e. the standard
-    deviation of the Poisson-distributed dark current counts accumulated
-    over npix pixels during the exposure time (sqrt(darknoise * npix * texp)).
+        # Resample throughput for applying to sky background
+        base_throughput_interp = interpolate.interp1d(spec.xtransmit, spec.base_throughput)
+        self.ytransmit = base_throughput_interp(self.v)  # save throughput sampled to final spectrum
 
-    input:
-    ------
-    darknoise: [e-/pix/s]
-        dark current rate per pixel
-    npix [pix]
-        number of pixels
-    texp [s]
-        exposure time in seconds
+        # Load background spectrum - sky is top of telescope and will be reduced by spec BASE throughput.
+        # Coupling already accounted for in solid angle of fiber. Does spec bkg needs partial throughput
+        # applied - ignored for now to be conservative
+        self.sky_bg_ph = self.ytransmit * get_sky_bg(self.v, atm.v, atm.sky_bg, npix=spec.pix_vert,
+                                                                  R=spec.res, diam=spec.diameter_m, area=spec.area_m2)
+        self.inst_bg_ph = get_inst_bg(self.v, npix=spec.pix_vert, R=spec.res, diam=spec.diameter_m,
+                                                    area=spec.area_m2, datapath=spec.transmission_path)
 
-    output:
-    -------
-    sig_dark [photons]
-        the standard deviation of dark current photons over npix
-    """
-    sig_dark = np.sqrt(darknoise * npix * texp)
-    return sig_dark
+        # Calculate noise
+        if spec.pl_on:  # 3 port lantern hack
+            # need to figure out what to do for sky and spec bkg bc depends on coupling
+            noise_frame_yJ = np.sqrt(3) * sum_total_noise(
+                self.s_frame / 3, self.texp_frame, self.nsamp, self.inst_bg_ph / np.sqrt(3), self.sky_bg_ph / np.sqrt(3),
+                spec.darknoise, spec.readnoise, spec.pix_vert, self.speckle_frame)  # flux split evenly over 3 traces for each of 3 PL outputs
+            noise_frame = sum_total_noise(
+                self.s_frame, self.texp_frame, self.nsamp, self.inst_bg_ph, self.sky_bg_ph,
+                spec.darknoise, spec.readnoise, spec.pix_vert, self.speckle_frame)
+            yJ_sub = np.where(self.v < 1400)[0]
+            noise_frame[yJ_sub] = noise_frame_yJ[yJ_sub]  # fill in yj with sqrt(3) times noise in PL case
+        else:
+            noise_frame = sum_total_noise(
+                self.s_frame, self.texp_frame, self.nsamp, self.inst_bg_ph, self.sky_bg_ph,
+                spec.darknoise, spec.readnoise, spec.pix_vert, self.speckle_frame)
 
+        # Remove nans and 0s from noise frame, make these infinite
+        noise_frame[np.where(np.isnan(noise_frame))] = np.inf
+        noise_frame[np.where(noise_frame == 0)] = np.inf
 
+        # Combine noise in quadrature for all frames
+        self.noise_frame = noise_frame
+        self.noise = np.sqrt(self.nframes) * noise_frame
 
-########### PLOT
+        # Compute snr and resample to get SNR per res element (assumes flux in the number of pixels
+        # spanning a res element (3 for hispec/modhis) combine in quadrature)
+        self.snr = self.s / self.noise
+        self.v_res_element, self.snr_res_element = resample(
+            self.v, self.snr, sig=spec.res_samp, dx=0, eta=1 / np.sqrt(spec.res_samp), mode='pixels')
 
-def plot_bg(so, v,instbg,skybg):
-    """
-    Plot combined sky + instrument background versus wavelength,
-    with instrument bands overlaid
+        # compute median and max snr per order
+        order_snrs_mean, order_snrs_max, order_inds = [], [], []
+        for i, lam_cen in enumerate(spec.order_cens):
+            order_ind = np.where((self.v_res_element > lam_cen - 0.9 * spec.order_widths[i] / 2) &
+                                  (self.v_res_element < lam_cen + 0.9 * spec.order_widths[i] / 2))[0]
+            order_inds.append(order_ind)
+            if np.nanmean(self.snr_res_element[order_ind]) > 0.001:
+                order_snrs_mean.append(np.nanmean(self.snr_res_element[order_ind]))
+                order_snrs_max.append(np.nanmax(self.snr_res_element[order_ind]))
+            else:
+                order_snrs_mean.append(np.nan)
+                order_snrs_max.append(np.nan)
 
-    input
-    -----
-    so - storage object
-        used to get the instrument band definitions to overlay
-    v - array [nm]
-        wavelength array
-    instbg - array [e-/s/pix]
-        instrument background
-    skybg - array [e-/s/pix]
-        sky background
-    """
-    fig, ax = plt.subplots(1,1, figsize=(8,5))
-    ax.plot(v,instbg+skybg)
-    ax.set_xlim(900,2500)
-    ax.set_ylim(0,0.5)
-    ax.set_xlabel('Wavelength (nm)')
-    ax.set_ylabel('Sky + Inst Bg (e-/s/pix)')
-    ax2 = ax.twinx()
-    #ax2.fill_between(so.filt.v,so.filt.s,facecolor='gray',edgecolor='black',alpha=0.2)
-    #ax2.set_ylabel('Filter Response')
-    # plot band
-    ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.2)
-    ax2.text(20+np.min(so.inst.y),0.9, 'y')
-    ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.2)
-    ax2.text(50+np.min(so.inst.J),0.9, 'J')
-    ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.2)
-    ax2.text(50+np.min(so.inst.H),0.9, 'H')
-    ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.2)
-    ax2.text(50+np.min(so.inst.K),0.9, 'K')
-    ax2.set_ylim(0,1)
+        self.snr_max_orders = np.array(order_snrs_max)
+        self.snr_mean_orders = np.array(order_snrs_mean)
+        self.order_inds = order_inds
+        self.order_cens = spec.order_cens.copy()  # nice to have this in Observation too
 
-    fig, ax = plt.subplots(1,1, figsize=(8,5))  
-    ax.plot(v,instbg)
-    ax.set_xlim(900,2500)
-    ax.set_ylim(0,0.5)
-    ax.set_xlabel('Wavelength (nm)')
-    ax.set_ylabel('Inst Bg (e-/s/pix)')
-    ax2 = ax.twinx()
-    #ax2.fill_between(so.filt.v,so.filt.s,facecolor='gray',edgecolor='black',alpha=0.2)
-    #ax2.set_ylabel('Filter Response')
-    # plot band
-    ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.2)
-    ax2.text(20+np.min(so.inst.y),0.9, 'y')
-    ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.2)
-    ax2.text(50+np.min(so.inst.J),0.9, 'J')
-    ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.2)
-    ax2.text(50+np.min(so.inst.H),0.9, 'H')
-    ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.2)
-    ax2.text(50+np.min(so.inst.K),0.9, 'K')
-    ax2.set_ylim(0,1)
+        # define indices in passbands that actually fall on detectors (TODO should tweak these?)
+        ind_yj = np.where((self.v > 980) & (self.v < 1335))[0]
+        ind_hk = np.where((self.v > 1480) & (self.v < 2450))[0]
+        self.ind_filter = np.array(ind_yj.tolist() + ind_hk.tolist())
 
-
-    fig, ax = plt.subplots(1,1, figsize=(8,5))  
-    ax.plot(v,skybg)
-    ax.set_xlim(900,2500)
-    ax.set_ylim(0,0.5)
-    ax.set_xlabel('Wavelength (nm)')
-    ax.set_ylabel('Sky Bg (e-/s/pix)')
-    ax2 = ax.twinx()
-    #ax2.fill_between(so.filt.v,so.filt.s,facecolor='gray',edgecolor='black',alpha=0.2)
-    #ax2.set_ylabel('Filter Response')
-    # plot band
-    ax2.fill_between(so.inst.y,0,1,facecolor='k',edgecolor='black',alpha=0.2)
-    ax2.text(20+np.min(so.inst.y),0.9, 'y')
-    ax2.fill_between(so.inst.J,0,1,facecolor='k',edgecolor='black',alpha=0.2)
-    ax2.text(50+np.min(so.inst.J),0.9, 'J')
-    ax2.fill_between(so.inst.H,0,1,facecolor='k',edgecolor='black',alpha=0.2)
-    ax2.text(50+np.min(so.inst.H),0.9, 'H')
-    ax2.fill_between(so.inst.K,0,1,facecolor='k',edgecolor='black',alpha=0.2)
-    ax2.text(50+np.min(so.inst.K),0.9, 'K')
-    ax2.set_ylim(0,1)
-
+        return self

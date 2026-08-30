@@ -1,0 +1,51 @@
+# Instrument-fixed parameters for MODHIS (TMT): telescope, detector,
+# AO/tracking-camera hardware and data file paths. These don't change
+# from one simulation to the next -- per-run parameters (star magnitude,
+# exposure time, observing conditions, etc.) live in the user-facing
+# .cfg file that references this file via [run] instrument=modhis.
+
+telescope:
+  area_m2: 655
+  diameter_m: 30
+
+filt:
+  filter_path: ./data/filters/
+  zp_file: ./data/filters/zeropoints.txt
+
+atm:
+  telluric_file: ./data/telluric/psg_out_2020.08.02_l0_800nm_l1_2700nm_res_0.001nm_lon_204.53_lat_19.82_pres_0.5826.fits
+  sky_path: ./data/telluric/sky/
+
+spectrograph:
+  transmission_path: ./data/instrument/modhis/throughput/
+  order_bounds_file: ./data/instrument/modhis/order_bounds.csv
+  atm: 0
+  adc: 0
+  l0: 500
+  l1: 2650
+  res: 100000
+  res_samp: 3
+  pix_vert: 3
+  extraction_frac: 0.925
+  readnoise: 12
+  darknoise: 0.01
+  saturation: 100000
+  pl_on: 1
+  rv_floor: 0.5
+
+ao:
+  tt_static: 0.5
+  lo_wfe: 0
+  defocus: 0
+  tt_dynamic_file: ./data/instrument/modhis/ao/TTDYNAMIC_NFIRAOS_091123.csv
+  ho_wfe_file: ./data/instrument/modhis/ao/HOWFE_NFIRAOS_091123.csv
+  contrast_profile_path: ./data/instrument/modhis/ao/contrastcurves/
+
+track:
+  band: JHgap
+  fratio: 35
+  camera: h2rg
+  transmission_file: ./data/track/trackingcamera.csv
+  texp: 1
+  field_r: 0
+  aberrations_file: ./data/track/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt

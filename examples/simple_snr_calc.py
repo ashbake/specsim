@@ -12,9 +12,8 @@ from pathlib import Path
 try: sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 except: pass # if running in terminal must run from main directory to see specsim folder
 
-from specsim.objects import load_object
-from specsim.load_inputs import fill_data
-from specsim import plot_tools
+from specsim.config import simulate_from_config
+from specsim import plot
 import os
 
 plt.ion()
@@ -24,15 +23,14 @@ if __name__=='__main__':
 	print("Current working directory:", os.getcwd())
 	# Change current directory to parent directory
 	if os.getcwd().split('/')[-1] == 'examples': os.chdir('..')
-	
-	configfile = './configs/modhis_snr.cfg'
-	so    = load_object(configfile)
-	cload = fill_data(so) # put coupling files in load and wfe stuff too
 
-	#plot_tools.plot_snr_orders(so,snrtype='res_element',mode='peak',savepath='./output/')
+	configfile = './configs/modhis_snr.cfg'
+	sim = simulate_from_config(configfile)
+
+	observation = sim.snr()
+	#plot.plot_snr_orders(observation, sim.spectrograph, sim.ao_system, sim.filt, sim.star, snrtype='res_element', mode='peak', savepath='./output/')
 	#plt.axhline(30,c='k',ls='--')
-	#plot_tools.plot_snr(so,snrtype='res_element',savepath='./output/')
+	#plot.plot_snr(observation, sim.ao_system, sim.filt, sim.star, sim.spectrograph, snrtype='res_element', savepath='./output/')
 	#plt.axhline(30,c='k',ls='--')
-	cload.compute_rv(so,telluric_cutoff=0.2,velocity_cutoff=2)
-	plot_tools.plot_rv_err(so,savefig=True,savepath='./')
-	
+	rv = sim.rv_precision(telluric_cutoff=0.2, velocity_cutoff=2)
+	plot.plot_rv_err(observation, sim.spectrograph, rv, sim.atmosphere, sim.star, sim.filt, savefig=True, savepath='./')
