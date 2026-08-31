@@ -110,17 +110,17 @@ Configuration is split across two files. A user-facing `.cfg` file (e.g. `./conf
 
 We can then use some plotting tools to plot the snr
 ```
-> plot.plot_snr(observation, sim.ao_system, sim.filt, sim.star, sim.spectrograph, snrtype='res_element', savepath=savepath)
+> plot.plot_snr(sim.spectrograph, sim.ao_system, sim.filt, sim.star, snrtype='res_element', savepath=savepath)
 ```
 
-The instrument wavelength and instrument flux per pixel in units of photons are stored in `observation.v` and `observation.s`, respectively. The per resolution element wavelength grid and SNR are in `observation.v_res_element` and `observation.snr_res_element`.
+`sim.snr()` returns the observed `Spectrograph` itself (the same object as `sim.spectrograph`) -- it carries both the hardware and the results, the same way `TrackingCamera` does. The instrument wavelength and flux per pixel in photons are in `.v` and `.s`; the per-resolution-element wavelength grid and SNR are in `.v_res_element` and `.snr_res_element`. Note `.ytransmit` is the total throughput on the model grid, while `.base_throughput_v` is the base throughput resampled onto `.v`.
 
 To scan over a parameter (e.g. magnitude) without rebuilding the whole scene from scratch, use `sim.set_star_mag(mag)` / `sim.set_ao_mode(mode)` / `sim.set_texp(texp)`, then call `sim.snr()` again -- see `examples/median_bin_snr.py`.
 
 
 # Code structure
 
-Data flows in one direction: **config files** are read into **scene objects**, the scene is combined into a single **Observation**, and everything downstream (**analysis**, **plots**) reads that Observation. Each box below is one class or module; arrows are "is built from" / "feeds into".
+Data flows in one direction: **config files** are read into **scene objects**, the scene is exposed on the detectors, and everything downstream (**analysis**, **plots**) reads the result. Each detector owns both its hardware and its exposure -- `Spectrograph.load()` then `.observe()`, and `TrackingCamera.observe()` -- so the science and guide paths have the same shape. Each box below is one class or module; arrows are "is built from" / "feeds into".
 
 ```mermaid
 flowchart TD
@@ -134,14 +134,13 @@ flowchart TD
         BP["<b>Bandpass</b> · bandpass.py<br/><i>filter curve + zeropoint.<br/>Family derived from the band</i>"]
         STAR["<b>Star</b> · star.py<br/><i>PHOENIX/Sonora spectrum, scaled<br/>to mag in Bandpass, vsini + RV</i>"]
         ATM["<b>Atmosphere</b> · atmosphere.py<br/><i>telluric transmission per species,<br/>sky background, seeing</i>"]
-        AO["<b>AOSystem</b> · instrument.py<br/><i>picks AO mode from guide-star mag,<br/>gives HO WFE / tip-tilt / Strehl</i>"]
-        SPEC["<b>Spectrograph</b> · instrument.py<br/><i>throughput x fiber coupling (needs<br/>the AO Strehl), orders, detector</i>"]
-        TRACK["<b>TrackingCamera</b> · instrument.py<br/><i>optional; also takes Star + Atmosphere.<br/>Guide-camera PSF, backgrounds,<br/>centroid error</i>"]
+        AO["<b>AOSystem</b> · aosystem.py<br/><i>picks AO mode from guide-star mag,<br/>gives HO WFE / tip-tilt / Strehl</i>"]
+        SPEC["<b>Spectrograph</b> · spectrograph.py<br/><i>.load(): throughput x fiber coupling<br/>(needs the AO Strehl), orders, detector.<br/>.observe(): photons, backgrounds, noise,<br/>SNR per pixel/res element/order</i>"]
+        TRACK["<b>TrackingCamera</b> · trackingcamera.py<br/><i>optional; also takes Star + Atmosphere.<br/>.observe(): guide-camera PSF,<br/>backgrounds, centroid error</i>"]
     end
 
     subgraph RUN ["③ Run"]
-        SIM["<b>Simulate</b> · simulate.py<br/><i>owns the scene; set_star_mag/teff,<br/>set_ao_mode, set_texp rebuild<br/>only what changed</i>"]
-        OBS["<b>Observation</b> · observation.py<br/><i>.run() gives photons on the detector,<br/>sky + instrument background,<br/>total noise, SNR per pixel/<br/>resolution element/order</i>"]
+        SIM["<b>Simulate</b> · simulate.py<br/><i>owns the scene; calls spectrograph.observe()<br/>on demand. set_star_mag/teff, set_ao_mode,<br/>set_texp rebuild only what changed</i>"]
     end
 
     subgraph OUT ["④ Analysis and output"]
@@ -163,41 +162,38 @@ flowchart TD
     STAR --> AO
     ATM --> AO
     AO --> SPEC
-    SPEC --> OBS
-    STAR --> OBS
-    ATM --> OBS
-    AO --> OBS
+    STAR --> SPEC
+    ATM --> SPEC
     AO --> TRACK
     SPEC --> TRACK
 
-    SIM --> OBS
-    OBS --> ANA
-    OBS --> PLOT
+    SIM --> SPEC
+    SPEC --> ANA
+    SPEC --> PLOT
     ANA --> PLOT
     TRACK --> PLOT
 
     FUNC -.-> STAR
     FUNC -.-> SPEC
-    FUNC -.-> OBS
     FUNC -.-> ANA
     THRU -.-> SPEC
-    THRU -.-> OBS
 ```
 
-The build order in the scene is not arbitrary: the star's magnitude sets which AO mode is chosen, the AO mode sets the wavefront error, and the wavefront error sets the fiber coupling that goes into the spectrograph throughput. That is why `set_star_mag()` and `set_star_teff()` re-run the AO selection and reload the coupling, while `set_texp()` only invalidates the cached Observation.
+The build order in the scene is not arbitrary: the star's magnitude sets which AO mode is chosen, the AO mode sets the wavefront error, and the wavefront error sets the fiber coupling that goes into the spectrograph throughput. That is why `set_star_mag()` and `set_star_teff()` re-run the AO selection and reload the coupling, while `set_texp()` only marks the exposure stale so the next `sim.snr()` re-runs `observe()`.
 
 ## Module reference
 
 | Module | Holds | Notes |
 | --- | --- | --- |
 | `config.py` | `simulate_from_config()` | Only place that reads config files |
-| `simulate.py` | `Simulate` | User-facing entry point; caches the Observation |
+| `simulate.py` | `Simulate` | User-facing entry point; re-runs `observe()` only when an input changes |
 | `bandpass.py` | `Bandpass`, `YJHK` | Filter loading, zeropoints, band→family convention |
 | `star.py` | `Star`, `StarParams` | `load_phoenix`/`load_sonora` module-level |
 | `atmosphere.py` | `Atmosphere` | `load_telluric_transmission`/`load_sky_background` module-level |
-| `instrument.py` | `AOSystem`, `Spectrograph`, `TrackingCamera` | Hardware; the three reference each other |
-| `observation.py` | `Observation` | Signal + background + noise for one exposure |
-| `analyze.py` | `Analyze`, result dataclasses | Everything downstream of an Observation |
+| `aosystem.py` | `AOSystem` | AO mode choice -> WFE -> Strehl; `load_WFE` module-level |
+| `spectrograph.py` | `Spectrograph` | Science detector: `.load()` throughput, then `.observe()` an exposure |
+| `trackingcamera.py` | `TrackingCamera` | Guide detector: `.observe()` PSF, backgrounds, centroid error |
+| `analyze.py` | `Analyze`, result dataclasses | Everything downstream of an exposure |
 | `plot.py` | plotting functions | Takes domain objects, never a config |
 | `functions.py` | generic math | No specsim imports — the bottom of the stack |
 | `throughput_tools.py` | throughput/coupling file readers | Instrument-file format lives here |

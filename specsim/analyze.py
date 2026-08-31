@@ -4,7 +4,7 @@
 ###############################################################
 #
 # Merges the old ccf_tools.py and etc_tools.py. All four calculations took
-# the same (observation, spectrograph, atmosphere, star) bundle as leading
+# the same (spectrograph, atmosphere, star) bundle as leading
 # arguments, so they are methods on one class that holds that bundle.
 # Simulate.rv_precision()/ccf_snr()/exposure_time_for_snr()/
 # exposure_time_for_ccf_snr() delegate here, or use sim.analysis directly.
@@ -213,7 +213,7 @@ class RVPrecisionResult:
     rv_order: np.ndarray       # per-order RV precision including the spectrograph/telluric noise floor [m/s]
     rv_tot: float              # total RV precision across the full spectrum, including the noise floor [m/s]
     telluric_mask: np.ndarray  # boolean/weight mask excluding regions near deep telluric lines
-    s_telcont_free: np.ndarray  # stellar spectrum with spectrograph throughput continuum and telluric absorption removed, resampled onto observation.v
+    s_telcont_free: np.ndarray  # stellar spectrum with spectrograph throughput continuum and telluric absorption removed, resampled onto spectrograph.v
 
 
 @dataclass
@@ -236,15 +236,15 @@ class ETCResult:
 
 class Analyze:
     """
-    Post-processing of one Observation: RV precision, matched-filter CCF
-    SNR, and exposure times. Holds the scene the observation was made in
-    (spectrograph/atmosphere/star) since every calculation needs some
+    Post-processing of one exposure: RV precision, matched-filter CCF SNR,
+    and exposure times. Holds the observed Spectrograph (which carries both
+    the hardware and the resulting spectra) plus the Atmosphere and Star the
+    exposure was taken through, since every calculation needs some
     combination of them. Cheap to construct -- it only stores references.
     """
 
-    def __init__(self, observation, spectrograph, atmosphere, star):
-        self.observation = observation
-        self.spectrograph = spectrograph
+    def __init__(self, spectrograph, atmosphere, star):
+        self.spectrograph = spectrograph   # already .load()-ed and .observe()-d
         self.atmosphere = atmosphere
         self.star = star
 
@@ -280,30 +280,30 @@ class Analyze:
         # there's no throughput/telluric transmission to divide out in the first place
         continuum_safe = np.where(continuum == 0, np.inf, continuum)
         tel_s_safe = np.where(self.atmosphere.s == 0, np.inf, np.abs(self.atmosphere.s))
-        if self.observation.pl_sep > 0:
-            telcont_free_hires = self.observation.nframes * self.observation.frame_phot_per_nm_pl / continuum_safe / tel_s_safe
+        if self.spectrograph.pl_sep > 0:
+            telcont_free_hires = self.spectrograph.nframes * self.spectrograph.frame_phot_per_nm_pl / continuum_safe / tel_s_safe
         else:
-            telcont_free_hires = self.observation.nframes * self.observation.frame_phot_per_nm / continuum_safe / tel_s_safe
+            telcont_free_hires = self.spectrograph.nframes * self.spectrograph.frame_phot_per_nm / continuum_safe / tel_s_safe
 
         # remove telurics
         telcont_free_lores = degrade_spec(self.star.v, telcont_free_hires, self.spectrograph.res)
         v, telcont_free = resample(self.star.v, telcont_free_lores, sig=np.mean(self.spectrograph.sig), dx=0, eta=1, mode='fast')
         telcont_free[np.where(np.isnan(telcont_free))] = 0
         f_interp = interpolate.interp1d(v, telcont_free, bounds_error=False, fill_value=0)
-        s_telcont_free = f_interp(self.observation.v)
+        s_telcont_free = f_interp(self.spectrograph.v)
 
-        # make telluric only spectrum, resample onto observation.v to match observation.s
+        # make telluric only spectrum, resample onto spectrograph.v to match spectrograph.s
         self.atmosphere.rayleigh[self.atmosphere.rayleigh == 0] = np.inf
         telluric_spec = self.atmosphere.s / self.atmosphere.rayleigh / self.atmosphere.o3  # no continuum altering things!
         telluric_spec[np.where(np.isnan(telluric_spec))] = 0
         telluric_spec_lores = degrade_spec(self.star.v, telluric_spec, self.spectrograph.res)
         v, telluric_spec_lores_resamp = resample(self.star.v, telluric_spec_lores, sig=np.mean(self.spectrograph.sig), dx=0, eta=1, mode='fast')
         tel_interp = interpolate.interp1d(v, telluric_spec_lores_resamp, bounds_error=False, fill_value=0)
-        s_tel = tel_interp(self.observation.v) / np.max(tel_interp(self.observation.v))
+        s_tel = tel_interp(self.spectrograph.v) / np.max(tel_interp(self.spectrograph.v))
 
         # run radial velocity precision
-        telluric_mask = make_telluric_mask(self.observation.v, s_tel, cutoff=telluric_cutoff, velocity_cutoff=velocity_cutoff)
-        dv_tot, dv_spec, dv_vals = get_rv_precision(self.observation.v, s_telcont_free, self.observation.noise,
+        telluric_mask = make_telluric_mask(self.spectrograph.v, s_tel, cutoff=telluric_cutoff, velocity_cutoff=velocity_cutoff)
+        dv_tot, dv_spec, dv_vals = get_rv_precision(self.spectrograph.v, s_telcont_free, self.spectrograph.noise,
                                                      self.spectrograph.order_cens, self.spectrograph.order_widths,
                                                      noise_floor=self.spectrograph.rv_floor, mask=telluric_mask)
 
@@ -318,7 +318,7 @@ class Analyze:
         using a matched-filter formalism, i.e. the SNR that would be obtained
         by cross-correlating the observed spectrum against a stellar/telluric
         template (as used for high-resolution spectroscopy detections/RV
-        work), for the full observation.s spectrum and separately for the
+        work), for the full spectrograph.s spectrum and separately for the
         y/J/H/K bands.
 
         Inputs:
@@ -336,14 +336,14 @@ class Analyze:
         https://arxiv.org/pdf/1909.07571.pdf
         https://arxiv.org/pdf/2305.19355.pdf
         '''
-        return _matched_filter_snr(self.observation.v, self.observation.s, self.observation.noise, self.star.v, self.atmosphere.s, self.atmosphere.rayleigh,
+        return _matched_filter_snr(self.spectrograph.v, self.spectrograph.s, self.spectrograph.noise, self.star.v, self.atmosphere.s, self.atmosphere.rayleigh,
                                     self.spectrograph.res, model=model, systematics_residuals=systematics_residuals,
                                     kernel_size=kernel_size, norm_cutoff=norm_cutoff)
 
     def exposure_time_for_snr(self, target_snr):
         """
         Given the per-frame SNR already computed by Observation.run()
-        (self.observation.s_frame/self.observation.noise_frame, scaled to a resolution
+        (self.spectrograph.s_frame/self.spectrograph.noise_frame, scaled to a resolution
         element), scale by (target_snr/snr_frame)^2 to derive the total
         exposure time needed to reach target_snr, per pixel/resolution-element
         and per order using both the per-order max and mean SNR.
@@ -356,15 +356,15 @@ class Analyze:
         ------
         ETCResult
         """
-        snr_frame = np.sqrt(self.spectrograph.res_samp) * self.observation.s_frame / self.observation.noise_frame  # per resolution element
+        snr_frame = np.sqrt(self.spectrograph.res_samp) * self.spectrograph.s_frame / self.spectrograph.noise_frame  # per resolution element
         # make 0s nans so doesnt blow up
         inan = np.where(snr_frame == 0)[0]
         snr_frame[inan] = np.nan
 
         # result is in seconds
-        etc = self.observation.texp_frame * (target_snr / snr_frame) ** 2  # texp per frame times nframes - per snr element
-        etc_order_max = self.observation.texp_frame * (target_snr / (self.observation.snr_max_orders / np.sqrt(self.observation.nframes))) ** 2  # per order max
-        etc_order_mean = self.observation.texp_frame * (target_snr / (self.observation.snr_mean_orders / np.sqrt(self.observation.nframes))) ** 2
+        etc = self.spectrograph.texp_frame * (target_snr / snr_frame) ** 2  # texp per frame times nframes - per snr element
+        etc_order_max = self.spectrograph.texp_frame * (target_snr / (self.spectrograph.snr_max_orders / np.sqrt(self.spectrograph.nframes))) ** 2  # per order max
+        etc_order_mean = self.spectrograph.texp_frame * (target_snr / (self.spectrograph.snr_mean_orders / np.sqrt(self.spectrograph.nframes))) ** 2
 
         return ETCResult(etc=etc, etc_order_max=etc_order_max, etc_order_mean=etc_order_mean)
 
@@ -373,11 +373,11 @@ class Analyze:
         Calculates the exposure time required to achieve a desired CCF SNR
         (goal_ccf) with a matched filter. This is the same matched-filter
         calculation as compute_ccf_snr but run on a single frame's
-        signal/noise (self.observation.s_frame, self.observation.noise_frame) instead of
+        signal/noise (self.spectrograph.s_frame, self.spectrograph.noise_frame) instead of
         the full multi-frame spectrum; the model is always signal/sky_trans
         (no user-supplied model option, unlike compute_ccf_snr). Since CCF SNR
         scales as sqrt(exposure time), the per-frame CCF SNR in each band is
-        scaled by (goal_ccf/ccf_snr)^2 x self.observation.texp_frame to get the
+        scaled by (goal_ccf/ccf_snr)^2 x self.spectrograph.texp_frame to get the
         needed total exposure time, computed separately for the y/J/H/K
         bands. Does not currently account for systematics_residuals scaling
         with exposure time.
@@ -397,9 +397,9 @@ class Analyze:
         # TODO: This function does not account for systematics at the moment
         # To account for read_noise, we need to change how the number of frames is done in PSISIM
         # For systematics, we need to find a nice way to invert the CCF SNR equation when systematics are present
-        result = _matched_filter_snr(self.observation.v, self.observation.s_frame, self.observation.noise_frame, self.star.v, self.atmosphere.s, self.atmosphere.rayleigh,
+        result = _matched_filter_snr(self.spectrograph.v, self.spectrograph.s_frame, self.spectrograph.noise_frame, self.star.v, self.atmosphere.s, self.atmosphere.rayleigh,
                                       self.spectrograph.res, model=None, systematics_residuals=systematics_residuals,
                                       kernel_size=kernel_size, norm_cutoff=norm_cutoff)
 
-        return {band: self.observation.texp_frame * goal_ccf ** 2 / getattr(result, f'ccf_snr_{band}') ** 2
+        return {band: self.spectrograph.texp_frame * goal_ccf ** 2 / getattr(result, f'ccf_snr_{band}') ** 2
                 for band in ('y', 'J', 'H', 'K')}

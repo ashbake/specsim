@@ -8,7 +8,7 @@ The golden values were originally captured from the pre-refactor
 fill_data(so) pipeline and cross-checked against Simulate/
 simulate_from_config bit-for-bit (see git history for
 tests/test_characterization.py, this file's predecessor). They were
-regenerated once since, to reflect a real bugfix: Observation.run()'s
+regenerated once since, to reflect a real bugfix: the exposure's
 call to get_sky_bg() previously never passed npix/R/diam/area,
 so the sky-background contribution to the noise budget silently used the
 function's HISPEC-shaped defaults (diam=10m, area=76m^2) regardless of

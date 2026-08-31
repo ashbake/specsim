@@ -1,19 +1,27 @@
 ##############################################################
-# Observation: ties Star + Spectrograph + Atmosphere + AOSystem together for
-# a single exposure and derives the resulting SNR
+# Spectrograph: the science detector -- throughput, orders, and the exposure
+# taken through them
 ###############################################################
 #
-# Replaces fill_data.observe() (load_inputs.py). Domain objects are
-# constructor args (an Observation is the thing most likely to get rebuilt
-# repeatedly -- texp/mag sweeps -- while Star/Spectrograph/Atmosphere/AOSystem
-# stay fixed); x is a .run() argument since it's a pipeline-wide grid
-# decided by the caller (the future Simulate builder), not a property of
-# the observation itself. Telescope area/diameter live on Spectrograph (see
-# specsim/instrument.py) rather than a separate Telescope object.
-
-from typing import Optional
+# Merges the old instrument.Spectrograph (hardware) with observation.Observation
+# (one exposure). They were split, but TrackingCamera already did both in one
+# class, so the science and guide detectors now have the same shape:
+#
+#     Spectrograph(...).load(x, ao).observe(x, star, atm, ao, texp=...)
+#     TrackingCamera(...).observe(x, star, atm, ao, spectrograph)
+#
+# The background/contrast helpers that only this detector uses live here too,
+# mirroring get_sky_bg_tracking/get_inst_bg_tracking in trackingcamera.py.
+#
+# Note two same-named quantities that are NOT the same array:
+#   .ytransmit         total throughput (base x coupling x dichroic) on grid x
+#   .base_throughput_v base throughput resampled onto the observed grid .v
+# The second was called `ytransmit` on the old Observation; it is renamed here
+# because observe() reads .ytransmit to build the stellar flux and would
+# otherwise clobber it.
 
 import os
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -21,12 +29,12 @@ from scipy import interpolate
 from astropy import units as u
 from astropy.modeling.models import BlackBody
 
+from specsim import throughput_tools
+from specsim.aosystem import AOSystem
 from specsim.atmosphere import Atmosphere
 from specsim.functions import degrade_spec, resample, sum_total_noise
-from specsim.instrument import AOSystem, Spectrograph
 from specsim.star import Star
 from specsim.throughput_tools import get_emissivity
-
 
 def get_sky_bg(x,sky_bg_v,sky_bg,npix=3,R=100000,diam=10,area=76):
     """
@@ -431,41 +439,90 @@ def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,v
     return contrast
 
 
-class Observation:
+def get_order_bounds(filename):
     """
-    A single exposure: computed flux, background, noise, and SNR spectra
-    for an on-axis (or off-axis, with a companion) star observed through a
-    given Spectrograph/Atmosphere/AOSystem.
+    open order bounds file
+
+    input
+    -----
+    filename - name of order file containing wavelength [nm], order width [nm] comma delimited
+
+    output
+    ------
+    cenlam - order center wavelength [nm]
+    width  - order width [nm]
+    """
+    f = np.loadtxt(filename,delimiter=',')
+    cenlam, width = f.T[0],f.T[1]
+    return cenlam, width
+
+
+class Spectrograph:
+    """
+    Spectrograph wavelength range, resolution, detector properties, echelle
+    order geometry, and total optical throughput, plus the telescope
+    collecting area/diameter (area_m2/diameter_m) it's paired with -- these
+    are fixed per instrument (e.g. HISPEC/Keck vs. MODHIS/TMT), not
+    independently variable, so they live here rather than on a separate
+    Telescope object. (Renamed from Instrument, since AOSystem/TrackingCamera
+    are also part of "the instrument" and now live in this same module.)
     """
 
-    def __init__(self, star: Star, spectrograph: Spectrograph, atmosphere: Atmosphere,
-                 ao_system: AOSystem,
-                 texp: float = 900, texp_frame_set='default', nsamp: int = 1,
-                 zenith_angle: float = 45,
-                 companion: Optional[Star] = None, pl_sep: float = 0):
-        self.star = star
-        self.spectrograph = spectrograph
-        self.atmosphere = atmosphere
-        self.ao_system = ao_system
-        self.texp = texp
-        self.texp_frame_set = texp_frame_set
-        self.nsamp = nsamp
-        self.zenith_angle = zenith_angle
-        self.companion = companion
-        self.pl_sep = pl_sep
+    def __init__(self, l0: float = 900, l1: float = 2500, res: float = 100000, res_samp: float = 3,
+                 pix_vert: float = 4, extraction_frac: float = 0.925,
+                 saturation: float = 100000, readnoise: float = 12, darknoise: float = 0.01,
+                 pl_on: int = 1, rv_floor: float = 0.5, atm: int = 1, adc: int = 1,
+                 transmission_path: Optional[str] = None, transmission_file: Optional[str] = None,
+                 order_bounds_file: Optional[str] = None,
+                 area_m2: float = 76, diameter_m: float = 10):
+        self.l0 = l0
+        self.l1 = l1
+        self.res = res
+        self.res_samp = res_samp
+        self.pix_vert = pix_vert
+        self.extraction_frac = extraction_frac
+        self.saturation = saturation
+        self.readnoise = readnoise
+        self.darknoise = darknoise
+        self.pl_on = pl_on
+        self.rv_floor = rv_floor
+        self.atm = atm
+        self.adc = adc
+        self.transmission_path = transmission_path
+        self.transmission_file = transmission_file
+        self.order_bounds_file = order_bounds_file
+        self.area_m2 = area_m2        # telescope collecting area [m^2] -- tied to the instrument's telescope, not independently variable
+        self.diameter_m = diameter_m  # telescope diameter [m]
 
-        # derived state, set by run()
+        # derived state, set by load()
+        self.order_cens: Optional[np.ndarray] = None
+        self.order_widths: Optional[np.ndarray] = None
+        self.sig: Optional[np.ndarray] = None
+        self.base_throughput: Optional[np.ndarray] = None
+        self.coupling: Optional[np.ndarray] = None
+        self.xtransmit: Optional[np.ndarray] = None
+        self.ytransmit: Optional[np.ndarray] = None    # total throughput on grid x (base x coupling x dichroic)
+        # derived state, set by observe()
+        self.star: Optional[Star] = None
+        self.atmosphere = None
+        self.ao_system = None
+        self.texp: Optional[float] = None
+        self.texp_frame_set = 'default'
+        self.nsamp: Optional[int] = None
+        self.zenith_angle: Optional[float] = None
+        self.companion: Optional[Star] = None
+        self.pl_sep: float = 0
         self.texp_frame: Optional[float] = None
         self.nframes: Optional[int] = None
         self.frame_phot_per_nm: Optional[np.ndarray] = None
         self.frame_phot_per_nm_pl: Optional[np.ndarray] = None
-        self.v: Optional[np.ndarray] = None
+        self.v: Optional[np.ndarray] = None                    # wavelength grid of the observed spectrum [nm]
         self.s_frame_star: Optional[np.ndarray] = None
         self.s_frame: Optional[np.ndarray] = None
         self.contrast: Optional[np.ndarray] = None
         self.speckle_frame: Optional[np.ndarray] = None
-        self.s: Optional[np.ndarray] = None
-        self.ytransmit: Optional[np.ndarray] = None
+        self.s: Optional[np.ndarray] = None                    # observed spectrum, all frames [photons]
+        self.base_throughput_v: Optional[np.ndarray] = None    # base_throughput resampled onto self.v (NOT ytransmit, which is the total throughput on x)
         self.sky_bg_ph: Optional[np.ndarray] = None
         self.inst_bg_ph: Optional[np.ndarray] = None
         self.noise_frame: Optional[np.ndarray] = None
@@ -476,10 +533,58 @@ class Observation:
         self.snr_max_orders: Optional[np.ndarray] = None
         self.snr_mean_orders: Optional[np.ndarray] = None
         self.order_inds: Optional[list] = None
-        self.order_cens: Optional[np.ndarray] = None
         self.ind_filter: Optional[np.ndarray] = None
 
-    def run(self, x: np.ndarray) -> "Observation":
+    def load(self, x: np.ndarray, ao_system: AOSystem) -> "Spectrograph":
+        """
+        Load the echelle order geometry, the per-pixel wavelength sampling,
+        and the total instrument throughput curve (base optical/detector
+        throughput times fiber coupling efficiency times the AO dichroic).
+        If transmission_file is set (and loadable), a user-supplied total
+        throughput curve is used directly instead. Depends on ao_system
+        already having been built (needs ho_wfe/tt_static/tt_dynamic/
+        defocus/pywfs_dichroic).
+
+        inputs
+        ------
+        x - array, shared wavelength grid [nm]
+        ao_system - AOSystem, already .select()-ed
+
+        output
+        ------
+        self, with order_cens/order_widths/sig/base_throughput/coupling/
+        xtransmit/ytransmit set
+        """
+        self.order_cens, self.order_widths = get_order_bounds(self.order_bounds_file)
+        self.sig = x / self.res / self.res_samp  # lambda/res = dlambda, nm per pixel
+
+        try:  # if a custom transmission file is given and loadable, use it, otherwise load HISPEC/MODHIS version
+            thput_x, thput_y = np.loadtxt(self.transmission_file, delimiter=',').T
+            if np.max(thput_x) < 5: thput_x *= 1000  # convert to nanometers
+            tck_thput = interpolate.splrep(thput_x, thput_y, k=1, s=0)
+            self.xtransmit = x
+            self.ytransmit = interpolate.splev(x, tck_thput, der=0, ext=1)
+            self.ytransmit = np.where(self.ytransmit < 0, 0, self.ytransmit)  # make negative throughput values to 0
+            self.base_throughput = self.ytransmit.copy()
+            print('Loaded Custom Transmission File')
+        except Exception:
+            self.base_throughput, _ = throughput_tools.get_base_throughput(x, datapath=self.transmission_path)  # everything except coupling
+            self.base_throughput = np.where(self.base_throughput < 0, 0, self.base_throughput)  # make negative throughput values to 0
+
+            self.coupling, _ = throughput_tools.pick_coupling_rounded(
+                self.transmission_path, x, ao_system.ho_wfe, ao_system.tt_dynamic,
+                lo_wfe=ao_system.lo_wfe, tt_static=ao_system.tt_static, defocus=ao_system.defocus,
+                atm=self.atm, adc=self.adc, pl_on=self.pl_on)
+
+            self.xtransmit = x
+            self.ytransmit = self.base_throughput * self.coupling * ao_system.pywfs_dichroic  # pywfs not being considered typically so pywfs_dichroic is one here
+
+        return self
+
+    def observe(self, x: np.ndarray, star: Star, atmosphere: Atmosphere, ao_system: AOSystem,
+                texp: float = 900, texp_frame_set='default', nsamp: int = 1,
+                zenith_angle: float = 45, companion: Optional[Star] = None,
+                pl_sep: float = 0) -> "Spectrograph":
         """
         Compute the flux reaching the spectrometer (stellar spectrum x
         telescope area x spectrograph throughput x telluric transmission),
@@ -498,9 +603,14 @@ class Observation:
         and s/snr then refer to the companion signal with the star's
         speckle halo as an added noise/background term.
 
-        Returns self, so calls can be chained: Observation(...).run(x).
+        Requires .load() to have been called first (needs ytransmit/sig/
+        order_cens). Returns self, so calls can be chained:
+        Spectrograph(...).load(x, ao).observe(x, star, atm, ao).
         """
-        star, spec, atm, aos = self.star, self.spectrograph, self.atmosphere, self.ao_system
+        self.star, self.atmosphere, self.ao_system = star, atmosphere, ao_system
+        self.texp, self.texp_frame_set, self.nsamp = texp, texp_frame_set, nsamp
+        self.zenith_angle, self.companion, self.pl_sep = zenith_angle, companion, pl_sep
+        spec, atm, aos = self, atmosphere, ao_system
 
         # flux density is stellar flux * telescope area * spectrograph throughput * atmospheric absorption
         # If planet separation is >0, compute for the planet also
@@ -572,12 +682,12 @@ class Observation:
 
         # Resample throughput for applying to sky background
         base_throughput_interp = interpolate.interp1d(spec.xtransmit, spec.base_throughput)
-        self.ytransmit = base_throughput_interp(self.v)  # save throughput sampled to final spectrum
+        self.base_throughput_v = base_throughput_interp(self.v)  # base throughput resampled onto self.v
 
         # Load background spectrum - sky is top of telescope and will be reduced by spec BASE throughput.
         # Coupling already accounted for in solid angle of fiber. Does spec bkg needs partial throughput
         # applied - ignored for now to be conservative
-        self.sky_bg_ph = self.ytransmit * get_sky_bg(self.v, atm.v, atm.sky_bg, npix=spec.pix_vert,
+        self.sky_bg_ph = self.base_throughput_v * get_sky_bg(self.v, atm.v, atm.sky_bg, npix=spec.pix_vert,
                                                                   R=spec.res, diam=spec.diameter_m, area=spec.area_m2)
         self.inst_bg_ph = get_inst_bg(self.v, npix=spec.pix_vert, R=spec.res, diam=spec.diameter_m,
                                                     area=spec.area_m2, datapath=spec.transmission_path)
@@ -628,7 +738,6 @@ class Observation:
         self.snr_max_orders = np.array(order_snrs_max)
         self.snr_mean_orders = np.array(order_snrs_mean)
         self.order_inds = order_inds
-        self.order_cens = spec.order_cens.copy()  # nice to have this in Observation too
 
         # define indices in passbands that actually fall on detectors (TODO should tweak these?)
         ind_yj = np.where((self.v > 980) & (self.v < 1335))[0]

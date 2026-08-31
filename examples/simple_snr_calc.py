@@ -28,9 +28,9 @@ if __name__=='__main__':
 	sim = simulate_from_config(configfile)
 
 	observation = sim.snr()
-	#plot.plot_snr_orders(observation, sim.spectrograph, sim.ao_system, sim.filt, sim.star, snrtype='res_element', mode='peak', savepath='./output/')
+	#plot.plot_snr_orders(sim.spectrograph, sim.ao_system, sim.filt, sim.star, snrtype='res_element', mode='peak', savepath='./output/')
 	#plt.axhline(30,c='k',ls='--')
-	#plot.plot_snr(observation, sim.ao_system, sim.filt, sim.star, sim.spectrograph, snrtype='res_element', savepath='./output/')
+	#plot.plot_snr(sim.spectrograph, sim.ao_system, sim.filt, sim.star, snrtype='res_element', savepath='./output/')
 	#plt.axhline(30,c='k',ls='--')
 	rv = sim.rv_precision(telluric_cutoff=0.2, velocity_cutoff=2)
-	plot.plot_rv_err(observation, sim.spectrograph, rv, sim.atmosphere, sim.star, sim.filt, savefig=True, savepath='./')
+	plot.plot_rv_err(sim.spectrograph, rv, sim.atmosphere, sim.star, sim.filt, savefig=True, savepath='./')

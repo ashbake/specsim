@@ -14,18 +14,19 @@ Spectrograph, TrackingCamera, Observation) are re-exported here so they can
 be constructed directly when a config file isn't wanted.
 """
 
+from specsim.analyze import Analyze, CCFSNRResult, ETCResult, RVPrecisionResult
+from specsim.aosystem import AOSystem
 from specsim.atmosphere import Atmosphere
 from specsim.bandpass import Bandpass, YJHK
 from specsim.config import load_config, load_instrument_yaml, simulate_from_config
-from specsim.analyze import Analyze, CCFSNRResult, ETCResult, RVPrecisionResult
-from specsim.instrument import AOSystem, Spectrograph, TrackingCamera
-from specsim.observation import Observation
+from specsim.spectrograph import Spectrograph
 from specsim.simulate import Simulate
 from specsim.star import Star, StarParams
+from specsim.trackingcamera import TrackingCamera
 
 __all__ = [
     'simulate_from_config', 'load_config', 'load_instrument_yaml',
-    'Simulate', 'Observation',
+    'Simulate',
     'Star', 'StarParams', 'Bandpass', 'Atmosphere',
     'AOSystem', 'Spectrograph', 'TrackingCamera',
     'Analyze', 'ETCResult', 'RVPrecisionResult', 'CCFSNRResult',

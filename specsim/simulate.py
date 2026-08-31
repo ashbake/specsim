@@ -1,6 +1,6 @@
 ##############################################################
 # Simulate: top-level entry point tying Star/Bandpass/Atmosphere/AOSystem/
-# Spectrograph/Observation together into one user-facing object
+# Spectrograph/TrackingCamera together into one user-facing object
 ###############################################################
 #
 # Replaces the fill_data(so)-then-plot(so) pattern: the user builds a
@@ -9,7 +9,7 @@
 # .exposure_time_for_snr() to get results, with no `so` anywhere. See
 # simulate_from_config() (specsim/config.py) for building one from the
 # existing flat .cfg files. Telescope area/diameter live on Spectrograph
-# (see specsim/instrument.py) rather than a separate Telescope object.
+# (see specsim/spectrograph.py) rather than a separate Telescope object.
 
 from dataclasses import replace
 from typing import Optional
@@ -19,8 +19,9 @@ import numpy as np
 from specsim.analyze import Analyze
 from specsim.atmosphere import Atmosphere
 from specsim.bandpass import Bandpass, YJHK
-from specsim.instrument import AOSystem, Spectrograph, TrackingCamera
-from specsim.observation import Observation
+from specsim.aosystem import AOSystem
+from specsim.spectrograph import Spectrograph
+from specsim.trackingcamera import TrackingCamera
 from specsim.star import Star, StarParams
 
 
@@ -61,29 +62,30 @@ class Simulate:
 
         self.atmosphere.load(self.x, self.zenith_angle)
         self.ao_system.select(self.x, self.star, self.filt, self.filter_path, self.zp_file,
-                               self.spectrograph, self.zenith_angle, self.atmosphere.seeing_set, YJHK)
+                               self.spectrograph.diameter_m, self.zenith_angle, self.atmosphere.seeing_set, YJHK)
         self.spectrograph.load(self.x, self.ao_system)
 
         self.tracking_camera: Optional[TrackingCamera] = None
-        self._observation: Optional[Observation] = None
+        self._observed = False
 
-    def _get_observation(self) -> Observation:
-        if self._observation is None:
-            self._observation = Observation(
-                self.star, self.spectrograph, self.atmosphere, self.ao_system,
+    def _get_observation(self) -> Spectrograph:
+        "Run the exposure on the spectrograph if it hasn't been run since the last input change, and return it."
+        if not self._observed:
+            self.spectrograph.observe(
+                self.x, self.star, self.atmosphere, self.ao_system,
                 texp=self.texp, texp_frame_set=self.texp_frame_set, nsamp=self.nsamp,
-                zenith_angle=self.zenith_angle, companion=self.companion, pl_sep=self.pl_sep,
-            ).run(self.x)
-        return self._observation
+                zenith_angle=self.zenith_angle, companion=self.companion, pl_sep=self.pl_sep)
+            self._observed = True
+        return self.spectrograph
 
-    def snr(self) -> Observation:
-        "Return the Observation (per-pixel/per-resolution-element/per-order SNR), computing it on first call."
+    def snr(self) -> Spectrograph:
+        "Return the observed Spectrograph (per-pixel/per-resolution-element/per-order SNR on .snr/.snr_res_element/.snr_max_orders), computing the exposure on first call."
         return self._get_observation()
 
     @property
     def analysis(self) -> Analyze:
-        "Analyze bound to the current Observation and scene. Rebuilt on each access (it only stores references); the expensive Observation underneath is still cached."
-        return Analyze(self._get_observation(), self.spectrograph, self.atmosphere, self.star)
+        "Analyze bound to the observed spectrograph and the rest of the scene. Rebuilt on each access (it only stores references); the exposure itself is only re-run when an input changes."
+        return Analyze(self._get_observation(), self.atmosphere, self.star)
 
     def rv_precision(self, telluric_cutoff: float = 0.01, velocity_cutoff: float = 30):
         "Achievable RV precision (analyze.RVPrecisionResult) for the current scene."
@@ -117,30 +119,30 @@ class Simulate:
         "Reload the on-axis star at a new magnitude (same band), then re-select the AO mode and reload the spectrograph coupling, since both can depend on the science star. Invalidates the cached Observation/tracking. (Uses Star.load(), not Star.rescaled() -- rescaled() skips setting .v/.s, which Observation needs.)"
         self.star = Star(replace(self.star.params, mag=mag)).load(self.x, self.filt)
         self.ao_system.select(self.x, self.star, self.filt, self.filter_path, self.zp_file,
-                               self.spectrograph, self.zenith_angle, self.atmosphere.seeing_set, YJHK)
+                               self.spectrograph.diameter_m, self.zenith_angle, self.atmosphere.seeing_set, YJHK)
         self.spectrograph.load(self.x, self.ao_system)
-        self._observation = None
+        self._observed = False
         self.tracking_camera = None
 
     def set_star_teff(self, teff: float):
         "Reload the on-axis star at a new effective temperature (same magnitude/band), then re-select the AO mode and reload the spectrograph coupling. Teff changes the star's colour, so its magnitude in the AO mode's native band -- and hence the WFE and coupling -- changes too. Invalidates the cached Observation/tracking. Requires a model grid file for the requested teff (PHOENIX for teff >= 2300K, Sonora below)."
         self.star = Star(replace(self.star.params, teff=teff)).load(self.x, self.filt)
         self.ao_system.select(self.x, self.star, self.filt, self.filter_path, self.zp_file,
-                               self.spectrograph, self.zenith_angle, self.atmosphere.seeing_set, YJHK)
+                               self.spectrograph.diameter_m, self.zenith_angle, self.atmosphere.seeing_set, YJHK)
         self.spectrograph.load(self.x, self.ao_system)
-        self._observation = None
+        self._observed = False
         self.tracking_camera = None
 
     def set_ao_mode(self, mode: str):
         "Change the AO mode and reload the spectrograph coupling (which depends on the chosen mode's ho_wfe/tt_dynamic). Invalidates the cached Observation/tracking."
         self.ao_system.mode = mode
         self.ao_system.select(self.x, self.star, self.filt, self.filter_path, self.zp_file,
-                               self.spectrograph, self.zenith_angle, self.atmosphere.seeing_set, YJHK)
+                               self.spectrograph.diameter_m, self.zenith_angle, self.atmosphere.seeing_set, YJHK)
         self.spectrograph.load(self.x, self.ao_system)
-        self._observation = None
+        self._observed = False
         self.tracking_camera = None
 
     def set_texp(self, texp: float):
         "Change the total exposure time. Invalidates only the cached Observation -- cheapest setter, no AO/spectrograph recompute."
         self.texp = texp
-        self._observation = None
+        self._observed = False

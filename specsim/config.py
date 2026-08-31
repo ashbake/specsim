@@ -27,8 +27,10 @@ import os
 
 import yaml
 
+from specsim.aosystem import AOSystem
 from specsim.atmosphere import Atmosphere
-from specsim.instrument import AOSystem, Spectrograph, TrackingCamera
+from specsim.spectrograph import Spectrograph
+from specsim.trackingcamera import TrackingCamera
 from specsim.simulate import Simulate
 from specsim.star import StarParams
 

@@ -16,7 +16,8 @@ os.chdir('./')
 from dataclasses import replace
 
 from specsim import throughput_tools
-from specsim.instrument import get_order_bounds, get_tracking_band
+from specsim.spectrograph import get_order_bounds
+from specsim.trackingcamera import get_tracking_band
 from specsim.bandpass import Bandpass, YJHK
 from specsim.star import Star, StarParams
 from specsim.functions import *
@@ -125,14 +126,14 @@ def plot_doppler_spectrographs(sim):
 		filt_i = Bandpass.load(sim.filter_path, sim.zp_file, band)
 		ax.plot(filt_i.xraw,filt_i.yraw*.5,'darkgray',lw=0.8)
 
-def plot_rv_err(observation,spectrograph,rv_result,atmosphere,star,filt,savefig=True,savepath=SAVEPATH,text_pos=0,tag='test'):
+def plot_rv_err(spectrograph,rv_result,atmosphere,star,filt,savefig=True,savepath=SAVEPATH,text_pos=0,tag='test'):
 	"""
 	Plot per-order SNR/pixel and per-order RV precision vs. wavelength,
 	side by side in two vertically stacked panels, to compare achievable
 	RV precision and SNR across the spectrograph's wavelength range for
 	a given star/exposure setup.
 
-	Top panel: SNR per pixel (observation.snr_res_element/sqrt(res_samp))
+	Top panel: SNR per pixel (spectrograph.snr_res_element/sqrt(res_samp))
 	vs. wavelength [nm] for each order, colored by order center wavelength
 	(Spectral_r colormap), with telluric absorption (atmosphere.s) and
 	total spectrograph throughput (spectrograph.ytransmit) overplotted on a
@@ -146,10 +147,9 @@ def plot_rv_err(observation,spectrograph,rv_result,atmosphere,star,filt,savefig=
 
 	Parameters
 	----------
-	observation : specsim.observation.Observation
-		already .run(); uses .v_res_element, .snr_res_element, .order_inds, .texp
-	spectrograph : specsim.instrument.Spectrograph
-		already .load(); uses .rv_floor, .order_cens, .res_samp, .ytransmit
+	spectrograph : specsim.spectrograph.Spectrograph
+		already .load() and .observe(); uses .rv_floor, .order_cens, .res_samp,
+		.ytransmit, .v_res_element, .snr_res_element, .order_inds, .texp
 	rv_result : specsim.analyze.RVPrecisionResult
 		from Analyze.rv_precision(); uses .rv_order
 	atmosphere : specsim.atmosphere.Atmosphere
@@ -177,7 +177,7 @@ def plot_rv_err(observation,spectrograph,rv_result,atmosphere,star,filt,savefig=
 	fig, axs : matplotlib Figure and array of Axes
 		the created figure and its two subplots. If savefig is True, the
 		figure is also written to
-		'<savepath>/./RV_precision_<tag>_<star.params.teff>K_<filt.band>mag<star.params.mag>_<observation.texp>s_vsini<star.params.vsini>kms.png'
+		'<savepath>/./RV_precision_<tag>_<star.params.teff>K_<filt.band>mag<star.params.mag>_<spectrograph.texp>s_vsini<star.params.vsini>kms.png'
 	"""
 	col_table = plt.get_cmap('Spectral_r')
 	fig, axs = plt.subplots(2,figsize=(7,7),sharex=True)
@@ -196,7 +196,7 @@ def plot_rv_err(observation,spectrograph,rv_result,atmosphere,star,filt,savefig=
 	axs[1].set_xlabel('Wavelength [nm]')
 
 	axs[0].set_ylabel('SNR/pixel')
-	axs[0].set_title('M$_%s$=%s, T$_{eff}$=%sK,\n $t_{exp}$=%ss, vsini=%skm/s'%(filt.band,star.params.mag,int(star.params.teff),int(observation.texp),star.params.vsini))
+	axs[0].set_title('M$_%s$=%s, T$_{eff}$=%sK,\n $t_{exp}$=%ss, vsini=%skm/s'%(filt.band,star.params.mag,int(star.params.teff),int(spectrograph.texp),star.params.vsini))
 
 	axs[0].grid('True')
 	ax2 = axs[0].twinx()
@@ -205,7 +205,7 @@ def plot_rv_err(observation,spectrograph,rv_result,atmosphere,star,filt,savefig=
 	ax2.set_ylabel('Transmission',fontsize=12)
 	for i,lam_cen in enumerate(spectrograph.order_cens):
 		wvl_norm = (lam_cen - 900.) / (2500. - 900.)
-		axs[0].plot(observation.v_res_element[observation.order_inds[i]],observation.snr_res_element[observation.order_inds[i]]/np.sqrt(spectrograph.res_samp),zorder=200,color=col_table(wvl_norm))
+		axs[0].plot(spectrograph.v_res_element[spectrograph.order_inds[i]],spectrograph.snr_res_element[spectrograph.order_inds[i]]/np.sqrt(spectrograph.res_samp),zorder=200,color=col_table(wvl_norm))
 		axs[1].plot(lam_cen,rv_result.rv_order[i],'o',zorder=100,color=col_table(wvl_norm),markeredgecolor='k')
 
 	sub_yj = rv_result.rv_order[np.where((rv_result.rv_order!=np.inf) & (spectrograph.order_cens < 1400))[0]]
@@ -221,12 +221,12 @@ def plot_rv_err(observation,spectrograph,rv_result,atmosphere,star,filt,savefig=
 	axs[1].text(1500,text_pos,r'$\sigma_{HK}$=%sm/s'%round(dv_hk_tot,1),fontsize=12,zorder=101)
 	ax2.legend(fontsize=8,loc=1)
 	if savefig:
-		plt.savefig(savepath + './RV_precision_%s_%sK_%smag%s_%ss_vsini%skms.png'%(tag,star.params.teff,filt.band,star.params.mag,observation.texp,star.params.vsini))
+		plt.savefig(savepath + './RV_precision_%s_%sK_%smag%s_%ss_vsini%skms.png'%(tag,star.params.teff,filt.band,star.params.mag,spectrograph.texp,star.params.vsini))
 
 	return fig,axs
 
 
-def plot_telluric_mask(observation,rv_result,atmosphere):
+def plot_telluric_mask(spectrograph,rv_result,atmosphere):
 	"""
 	Not tested.
 
@@ -238,17 +238,17 @@ def plot_telluric_mask(observation,rv_result,atmosphere):
 	- inverted telluric mask (1 - rv_result.telluric_mask) as a filled
 	  black region labeled 'Masked'
 	- telluric spectrum labeled 'Telluric' (atmosphere.s interpolated
-	  onto observation.v; the exact intermediate the old so.obs.s_tel
+	  onto spectrograph.v; the exact intermediate the old so.obs.s_tel
 	  held -- a degraded/resampled, continuum-normalized telluric-only
 	  spectrum -- isn't retained by Analyze.rv_precision, so
 	  this is an approximation of the same shape for the visual check)
-	- normalized stellar spectrum (observation.s/max(observation.s))
+	- normalized stellar spectrum (spectrograph.s/max(spectrograph.s))
 	  labeled 'Stellar'
 
 	Parameters
 	----------
-	observation : specsim.observation.Observation
-		already .run(); uses .v, .s
+	spectrograph : specsim.spectrograph.Spectrograph
+		already .load() and .observe(); uses .v, .s
 	rv_result : specsim.analyze.RVPrecisionResult
 		from Analyze.rv_precision(); uses .telluric_mask
 	atmosphere : specsim.atmosphere.Atmosphere
@@ -260,12 +260,12 @@ def plot_telluric_mask(observation,rv_result,atmosphere):
 		Does not return anything and does not call plt.savefig; draws
 		on a new figure left open for the caller to save or display.
 	"""
-	s_tel = np.interp(observation.v,atmosphere.v,atmosphere.s)
+	s_tel = np.interp(spectrograph.v,atmosphere.v,atmosphere.s)
 	plt.figure()
-	plt.fill_between(observation.v,1-rv_result.telluric_mask,facecolor='k',alpha=0.8,label='Masked')
-	plt.plot(observation.v,s_tel,label='Telluric')
-	#plt.plot(observation.v,20*all_w/np.max(all_w),label='IC')
-	plt.plot(observation.v,observation.s/np.max(observation.s),'k',label='Stellar')
+	plt.fill_between(spectrograph.v,1-rv_result.telluric_mask,facecolor='k',alpha=0.8,label='Masked')
+	plt.plot(spectrograph.v,s_tel,label='Telluric')
+	#plt.plot(spectrograph.v,20*all_w/np.max(all_w),label='IC')
+	plt.plot(spectrograph.v,spectrograph.s/np.max(spectrograph.s),'k',label='Stellar')
 	plt.xlim(2192,2198)
 	plt.legend()
 	plt.xlabel('Wavelength (nm)')
@@ -685,14 +685,14 @@ def plot_throughput_nice(telluric_file,datapath='./data/throughput/hispec_subsys
 
 
 # REQUIRES OBSERVATION/AO/FILT/STAR/INSTRUMENT INSTANCES
-def plot_snr(observation,ao_system,filt,star,spectrograph,snrtype='pixel',savepath='./',bands=YJHK):
+def plot_snr(spectrograph,ao_system,filt,star,snrtype='pixel',savepath='./',bands=YJHK):
 	"""
-	Plot SNR vs. wavelength for the whole spectrum computed in the
-	observation, to check the overall SNR level and its shape across the
+	Plot SNR vs. wavelength for the whole spectrum computed by
+	.observe(), to check the overall SNR level and its shape across the
 	spectrograph bandpass for a given AO mode/exposure/star setup.
 
-	Plots SNR (either observation.snr per pixel or
-	observation.snr_res_element per resolution element) vs. wavelength
+	Plots SNR (either spectrograph.snr per pixel or
+	spectrograph.snr_res_element per resolution element) vs. wavelength
 	[nm], with a dashed horizontal reference line at SNR=30, x-axis
 	limited to 970-2500nm, a title giving the AO mode, filter
 	band/magnitude, exposure time [hr], and Teff, and a secondary y-axis
@@ -700,21 +700,19 @@ def plot_snr(observation,ao_system,filt,star,spectrograph,snrtype='pixel',savepa
 
 	Parameters
 	----------
-	observation : specsim.observation.Observation
-		already .run(); uses .v, .snr, .v_res_element, .snr_res_element, .texp
+	spectrograph : specsim.spectrograph.Spectrograph
+		already .load() and .observe(); uses .darknoise, .v, .snr,
+		.v_res_element, .snr_res_element, .texp
 	ao_system : specsim.aosystem.AOSystem
 		already .select(); uses .mode_chosen (title) and .mode (filename)
 	filt : specsim.bandpass.Bandpass
 		uses .band
 	star : specsim.star.Star
 		uses .params.mag/.teff
-	spectrograph : specsim.instrument.Spectrograph
-		uses .darknoise
-
 	snrtype : str
-		'pixel' selects per-pixel SNR (observation.snr vs observation.v);
+		'pixel' selects per-pixel SNR (spectrograph.snr vs spectrograph.v);
 		'res_element' selects per-resolution-element SNR
-		(observation.snr_res_element vs observation.v_res_element); any
+		(spectrograph.snr_res_element vs spectrograph.v_res_element); any
 		other value prints an error message and returns without plotting
 		(default 'pixel')
 
@@ -729,17 +727,17 @@ def plot_snr(observation,ao_system,filt,star,spectrograph,snrtype='pixel',savepa
 	-------
 	None
 		Does not return anything. Saves the figure to
-		'<savepath>/snr_<ao_system.mode>_<filt.band>mag_<star.params.mag>_texp_<observation.texp>s_dark_<spectrograph.darknoise>.png',
+		'<savepath>/snr_<ao_system.mode>_<filt.band>mag_<star.params.mag>_texp_<spectrograph.texp>s_dark_<spectrograph.darknoise>.png',
 		unless snrtype is invalid, in which case nothing is saved.
 	"""
 	fig, ax = plt.subplots(1,1, figsize=(10,8))
-	if snrtype =='pixel':  ax.plot(observation.v,observation.snr)
-	elif snrtype=='res_element': ax.plot(observation.v_res_element,observation.snr_res_element)
+	if snrtype =='pixel':  ax.plot(spectrograph.v,spectrograph.snr)
+	elif snrtype=='res_element': ax.plot(spectrograph.v_res_element,spectrograph.snr_res_element)
 	else: print('Choose pixel or res_element for snrtype'); return
 	ax.set_ylabel('SNR')
 	ax.set_xlabel('Wavelength (nm)')
 	ax.set_title('AO Mode: %s, %s=%s, t=%shr, Teff=%sK'%(ao_system.mode_chosen,\
-			filt.band,round(star.params.mag,1),np.round(observation.texp/3600,2),\
+			filt.band,round(star.params.mag,1),np.round(spectrograph.texp/3600,2),\
 			int(star.params.teff)))
 	ax.axhline(y=30,color='k',ls='--')
 	#plt.legend()
@@ -756,17 +754,17 @@ def plot_snr(observation,ao_system,filt,star,spectrograph,snrtype='pixel',savepa
 	ax2.text(50+np.min(bands['K']),0.9, 'K')
 	ax2.set_ylim(0,1)
 	ax.set_xlim(970,2500)
-	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(ao_system.mode,filt.band,star.params.mag,observation.texp,spectrograph.darknoise)
+	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(ao_system.mode,filt.band,star.params.mag,spectrograph.texp,spectrograph.darknoise)
 	plt.savefig(savepath + figname)
 
-def plot_snr_orders(observation,spectrograph,ao_system,filt,star,snrtype='res_element',mode='mean',height=0.055,savepath=SAVEPATH,bands=YJHK):
+def plot_snr_orders(spectrograph,ao_system,filt,star,snrtype='res_element',mode='mean',height=0.055,savepath=SAVEPATH,bands=YJHK):
 	"""
 	Plot per-order SNR (mean or peak) vs. order center wavelength, to
 	compare SNR across the spectrograph's echelle orders in a single
 	summary curve rather than the full per-pixel spectrum.
 
 	Uses get_order_value to collapse the SNR spectrum
-	(observation.snr or observation.snr_res_element, depending on
+	(spectrograph.snr or spectrograph.snr_res_element, depending on
 	snrtype) into a peak and mean SNR value per order, using
 	spectrograph.order_bounds_file to define order boundaries. Plots the
 	chosen statistic (snr_peaks or snr_means) vs. order center wavelength
@@ -777,10 +775,9 @@ def plot_snr_orders(observation,spectrograph,ao_system,filt,star,snrtype='res_el
 
 	Parameters
 	----------
-	observation : specsim.observation.Observation
-		already .run(); uses .v, .snr, .v_res_element, .snr_res_element, .texp
-	spectrograph : specsim.instrument.Spectrograph
-		uses .order_bounds_file, .darknoise
+	spectrograph : specsim.spectrograph.Spectrograph
+		already .load() and .observe(); uses .order_bounds_file, .darknoise,
+		.v, .snr, .v_res_element, .snr_res_element, .texp
 	ao_system : specsim.aosystem.AOSystem
 		uses .mode
 	filt : specsim.bandpass.Bandpass
@@ -789,10 +786,10 @@ def plot_snr_orders(observation,spectrograph,ao_system,filt,star,snrtype='res_el
 		uses .params.teff/.mag
 
 	snrtype : str
-		'pixel' selects per-pixel SNR (observation.snr, observation.v)
+		'pixel' selects per-pixel SNR (spectrograph.snr, spectrograph.v)
 		as the input spectrum; 'res_element' selects
-		per-resolution-element SNR (observation.snr_res_element,
-		observation.v_res_element) (default 'res_element')
+		per-resolution-element SNR (spectrograph.snr_res_element,
+		spectrograph.v_res_element) (default 'res_element')
 
 	mode : str
 		plots SNR as either the average ('mean') or the peak ('peak')
@@ -815,19 +812,19 @@ def plot_snr_orders(observation,spectrograph,ao_system,filt,star,snrtype='res_el
 		order center wavelengths [nm] and the per-order peak/mean SNR
 		values computed by get_order_value. The figure is also
 		saved to
-		'<savepath>/snr_<ao_system.mode>_<filt.band>mag_<star.params.mag>_texp_<observation.texp>s_dark_<spectrograph.darknoise>.png'
+		'<savepath>/snr_<ao_system.mode>_<filt.band>mag_<star.params.mag>_texp_<spectrograph.texp>s_dark_<spectrograph.darknoise>.png'
 	"""
-	if snrtype=='pixel': cen_lam, snr_peaks,snr_means = get_order_value(observation.v,observation.snr,spectrograph.order_bounds_file)
-	if snrtype=='res_element':cen_lam, snr_peaks,snr_means = get_order_value(observation.v_res_element,observation.snr_res_element,spectrograph.order_bounds_file)
+	if snrtype=='pixel': cen_lam, snr_peaks,snr_means = get_order_value(spectrograph.v,spectrograph.snr,spectrograph.order_bounds_file)
+	if snrtype=='res_element':cen_lam, snr_peaks,snr_means = get_order_value(spectrograph.v_res_element,spectrograph.snr_res_element,spectrograph.order_bounds_file)
 
 	fig, ax = plt.subplots(1,1, figsize=(8,6))
 	if mode=='peak': ax.plot(cen_lam, snr_peaks,lw=2)
 	elif mode=='mean': ax.plot(cen_lam, snr_means,lw=2)
 	ax.set_ylabel('SNR')
 	ax.set_xlabel('Wavelength (nm)')
-	ax.set_title('AO Mode: %s, T$_{eff}$=%sK, %s=%s, t=%shr'%(ao_system.mode,star.params.teff,filt.band,star.params.mag,round(observation.texp/3600,2)))
+	ax.set_title('AO Mode: %s, T$_{eff}$=%sK, %s=%s, t=%shr'%(ao_system.mode,star.params.teff,filt.band,star.params.mag,round(spectrograph.texp/3600,2)))
 	#ax.axhline(y=30,color='k',ls='--')
-	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(ao_system.mode,filt.band,star.params.mag,observation.texp,spectrograph.darknoise)
+	figname = 'snr_%s_%smag_%s_texp_%ss_dark_%s.png' %(ao_system.mode,filt.band,star.params.mag,spectrograph.texp,spectrograph.darknoise)
 
 	# duplicate axis to plot filter response
 	# plot band
@@ -862,7 +859,7 @@ def plot_base_throughput(spectrograph,savepath=SAVEPATH,bands=YJHK):
 
 	Parameters
 	----------
-	spectrograph : specsim.instrument.Spectrograph
+	spectrograph : specsim.spectrograph.Spectrograph
 		already .load(); uses .xtransmit, .base_throughput
 
 	savepath : str
@@ -915,7 +912,7 @@ def plot_coupling(spectrograph,savepath=SAVEPATH,bands=YJHK):
 
 	Parameters
 	----------
-	spectrograph : specsim.instrument.Spectrograph
+	spectrograph : specsim.spectrograph.Spectrograph
 		already .load(); uses .xtransmit, .coupling
 
 	savepath : str
@@ -1034,21 +1031,21 @@ def plot_track_background(star,tracking_camera,filt,savepath=SAVEPATH,bands=YJHK
 	#plt.savefig('./output/trackingcamera/noise_flux_%sK_%s_%smag.pdf'%(star.params.teff,filt.band,star.params.mag))
 	plt.savefig(savepath + 'noise_flux_%sK_%s_%smag.png'%(star.params.teff,filt.band,star.params.mag))
 
-def plot_spec_background(observation,star,filt,savepath=SAVEPATH,bands=YJHK):
+def plot_spec_background(spectrograph,star,filt,savepath=SAVEPATH,bands=YJHK):
 	"""
 	Plot the spectrograph's combined spectrograph+sky background vs.
 	wavelength, to inspect the background photon rate the science
 	spectrum sits on top of across the spectrograph bandpass.
 
-	Plots observation.sky_bg_ph [phot/s] vs. observation.v [nm], with a
+	Plots spectrograph.sky_bg_ph [phot/s] vs. spectrograph.v [nm], with a
 	dashed reference line at y=0.5, x-axis limited to 950-2450nm, y-axis
 	limited to (-0.001,0.6), and a secondary y-axis showing the y/J/H/K
 	filter bands as shaded regions with text labels.
 
 	Parameters
 	----------
-	observation : specsim.observation.Observation
-		already .run(); uses .v, .sky_bg_ph
+	spectrograph : specsim.spectrograph.Spectrograph
+		already .load() and .observe(); uses .v, .sky_bg_ph
 	star : specsim.star.Star
 		uses .params.teff/.mag
 	filt : specsim.bandpass.Bandpass
@@ -1083,9 +1080,9 @@ def plot_spec_background(observation,star,filt,savepath=SAVEPATH,bands=YJHK):
 	#axs[1].set_ylabel('Sky Bkg \n(phot/nm/s)')
 	axs[0].set_ylim(-0.001,0.6)
 	#axs[1].set_ylim(-0,20)
-	#axs[1].plot(star.v,observation.sky_bg_ph,'m',alpha=0.5,zorder=100,label='Sky Background')
-	#axs[0].plot(observation.v,observation.inst_bg_ph,'b',lw=2,alpha=0.5,zorder=100,label='Instrument Background')
-	axs[0].plot(observation.v,observation.sky_bg_ph,'b',lw=2,alpha=0.5,zorder=100,label='Instrument Background')
+	#axs[1].plot(star.v,spectrograph.sky_bg_ph,'m',alpha=0.5,zorder=100,label='Sky Background')
+	#axs[0].plot(spectrograph.v,spectrograph.inst_bg_ph,'b',lw=2,alpha=0.5,zorder=100,label='Instrument Background')
+	axs[0].plot(spectrograph.v,spectrograph.sky_bg_ph,'b',lw=2,alpha=0.5,zorder=100,label='Instrument Background')
 	axs[0].set_xlabel('Wavelength [nm]')
 	axs[0].set_ylabel('Spectrograph + Sky Bkg \n(phot/s)')
 
@@ -1103,8 +1100,8 @@ def plot_spec_background(observation,star,filt,savepath=SAVEPATH,bands=YJHK):
 		ax2.set_ylim(0.1,1)
 
 	plt.savefig(savepath + 'noise_flux_%sK_%s_%smag.png'%(star.params.teff,filt.band,star.params.mag))
-	#np.savetxt('inst_background.txt',np.vstack((observation.v,observation.inst_bg_ph)).T,header='wave[nm],bkg[ph/s]')
-	#np.savetxt('sky_background.txt',np.vstack((observation.v,observation.sky_bg_ph)).T,header='wave[nm],bkg[ph/s]')
+	#np.savetxt('inst_background.txt',np.vstack((spectrograph.v,spectrograph.inst_bg_ph)).T,header='wave[nm],bkg[ph/s]')
+	#np.savetxt('sky_background.txt',np.vstack((spectrograph.v,spectrograph.sky_bg_ph)).T,header='wave[nm],bkg[ph/s]')
 
 def plot_tracking_bands(star,atmosphere,ao_system,trackbands=['J','JHgap','H'],plot_telluric=True,savepath=SAVEPATH):
 	"""
@@ -1228,7 +1225,7 @@ if __name__=='__main__':
 
 
 ########## THROUGHPUT PLOTS (moved here from throughput_tools.py) 
-def plot_throughput(spectrograph, star, filt, ao_system, observation, savepath=SAVEPATH):
+def plot_throughput(spectrograph, star, filt, ao_system, savepath=SAVEPATH):
     """
     Plot fiber coupling efficiency, base throughput (everything but
     coupling), and total throughput vs wavelength for a single simulation
@@ -1237,16 +1234,15 @@ def plot_throughput(spectrograph, star, filt, ao_system, observation, savepath=S
 
     inputs
     ------
-    spectrograph : specsim.instrument.Spectrograph
-        already .load(); uses .coupling, .base_throughput, .ytransmit
+    spectrograph : specsim.spectrograph.Spectrograph
+        already .load() and .observe(); uses .coupling, .base_throughput,
+        .ytransmit, .texp
     star : specsim.star.Star
         the on-axis star; uses .v (wavelength grid) and .params.mag/.teff
     filt : specsim.bandpass.Bandpass
         uses .band
-    ao_system : specsim.instrument.AOSystem
+    ao_system : specsim.aosystem.AOSystem
         uses .mode (the requested mode, e.g. 'auto' -- not .mode_chosen)
-    observation : specsim.observation.Observation
-        already .run(); uses .texp (total exposure time)
     savepath : str
         directory to save the figure into (default SAVEPATH)
 
@@ -1254,7 +1250,7 @@ def plot_throughput(spectrograph, star, filt, ao_system, observation, savepath=S
     -------
     None
         Draws the figure on a new matplotlib figure/axes and saves it to
-        '<savepath>/throughput_<ao_system.mode>_<filt.band>mag_<star.params.mag>_Teff_<star.params.teff>_texp_<observation.texp>s.png'
+        '<savepath>/throughput_<ao_system.mode>_<filt.band>mag_<star.params.mag>_Teff_<star.params.teff>_texp_<spectrograph.texp>s.png'
     """
     plt.figure(figsize=(7,4))
     plt.plot(star.v,spectrograph.coupling,label='Coupling Only')
@@ -1267,7 +1263,7 @@ def plot_throughput(spectrograph, star, filt, ao_system, observation, savepath=S
     plt.axhline(y=0.05,color='m',ls='--',label='5%')
     plt.legend()
     plt.grid()
-    figname = 'throughput_%s_%smag_%s_Teff_%s_texp_%ss.png' %(ao_system.mode,filt.band,star.params.mag,star.params.teff,int(observation.texp))
+    figname = 'throughput_%s_%smag_%s_Teff_%s_texp_%ss.png' %(ao_system.mode,filt.band,star.params.mag,star.params.teff,int(spectrograph.texp))
     plt.savefig(savepath + figname)
 
 
