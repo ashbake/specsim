@@ -15,8 +15,7 @@ os.chdir('./')
 
 from dataclasses import replace
 
-from specsim import throughput_tools
-from specsim.spectrograph import get_order_bounds
+from specsim.spectrograph import get_order_bounds, grid_interp_coupling, pick_coupling_rounded
 from specsim.trackingcamera import get_tracking_band
 from specsim.bandpass import Bandpass, YJHK
 from specsim.star import Star, StarParams
@@ -463,15 +462,15 @@ def plot_stellar_colors():
 	plt.grid()
 	plt.savefig(SAVEPATH + 'stellar_colors_H.png')
 
-def plot_tracking_cam_spot_rms(camera='h2rg',aberrations_file=DATAPATH + 'track/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt'):
+def plot_tracking_cam_spot_rms(camera='h2rg',aberrations_file=DATAPATH + 'instrument/hispec/track/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt'):
 	"""
 	Plot tracking camera optical spot size (RMS diameter, in pixels) vs.
 	field radius, to check how spot blur grows toward the edge of the
 	tracking camera field of view at different wavelengths.
 
-	Reads a spot-size vs. field text file (default
-	DATAPATH+'track/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt',
-	the same file the tracking camera's aberrations_file points at) containing
+	Reads a spot-size vs. field text file (default the HISPEC copy under
+	DATAPATH+'instrument/hispec/track/', the same file the tracking camera's
+	aberrations_file points at) containing
 	field angle [deg] and RMS spot size [um] at several wavelengths, and
 	plots RMS spot diameter (converted to pixels via a fixed 18um pixel
 	pitch and a sqrt(2) diagonal-cut factor) vs. field radius [arcsec]
@@ -484,8 +483,8 @@ def plot_tracking_cam_spot_rms(camera='h2rg',aberrations_file=DATAPATH + 'track/
 		the function body (the pixel pitch is hardcoded to 18um instead
 		of being looked up for this camera) (default 'h2rg')
 	aberrations_file : str
-		path to the ZEMAX spot-size vs. field text file (default
-		DATAPATH+'track/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt')
+		path to the ZEMAX spot-size vs. field text file (default the HISPEC
+		copy under DATAPATH+'instrument/hispec/track/')
 
 	Returns
 	-------
@@ -1346,8 +1345,8 @@ def plot_throughput_components_HK(telluric_file=DATAPATH + 'telluric/psg_out_202
  
     #load coupling for two options
     # inputs : waves,dynwfe,ttStatic,ttDynamic
-    data['coupling_NGS'],strehl  = throughput_tools.pick_coupling_rounded(transmission_path,w,ngs_wfe[0], ngs_wfe[1])
-    data['coupling_LGS'],strehl2 = throughput_tools.pick_coupling_rounded(transmission_path,w,lgs_wfe[0], lgs_wfe[1])
+    data['coupling_NGS'],strehl  = pick_coupling_rounded(transmission_path,w,ngs_wfe[0], ngs_wfe[1])
+    data['coupling_LGS'],strehl2 = pick_coupling_rounded(transmission_path,w,lgs_wfe[0], lgs_wfe[1])
 
 
     if np.max(w)>1000: w/=1000
@@ -1495,12 +1494,12 @@ def plot_throughput_components_YJ(telluric_file=DATAPATH + 'telluric/psg_out_202
  
     #load coupling for two options
     # inputs : waves,dynwfe,ttStatic,ttDynamic
-    out = throughput_tools.grid_interp_coupling(1,path=transmission_path  + 'coupling/',atm=atm,adc=adc)
+    out = grid_interp_coupling(1,path=transmission_path  + 'coupling/',atm=atm,adc=adc)
     #data['coupling_NGS'],strehl  = pick_coupling(w,ngs_wfe[0],0,ngs_wfe[1],LO=0,PLon=1,points=out[0],values=out[1:])
-    data['coupling_NGS'],strehl = throughput_tools.pick_coupling_rounded(transmission_path,w,ngs_wfe[0], ngs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=1,adc=1,pl_on=1,piaa_boost=1.3)
-    out = throughput_tools.grid_interp_coupling(1,path=transmission_path +'coupling/',atm=atm,adc=adc)
+    data['coupling_NGS'],strehl = pick_coupling_rounded(transmission_path,w,ngs_wfe[0], ngs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=1,adc=1,pl_on=1,piaa_boost=1.3)
+    out = grid_interp_coupling(1,path=transmission_path +'coupling/',atm=atm,adc=adc)
     #data['coupling_LGS'],strehl2 = pick_coupling(w,lgs_wfe[0],0,lgs_wfe[1],LO=30,PLon=1,points=out[0],values=out[1:])
-    data['coupling_LGS'],strehl2  = throughput_tools.pick_coupling_rounded(transmission_path,w,lgs_wfe[0], lgs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=1,adc=1,pl_on=1,piaa_boost=1.3)
+    data['coupling_LGS'],strehl2  = pick_coupling_rounded(transmission_path,w,lgs_wfe[0], lgs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=1,adc=1,pl_on=1,piaa_boost=1.3)
 
     if np.max(w)>1000: w/=1000
     # plot blue only
@@ -1661,11 +1660,11 @@ def plot_throughput_components(telluric_file=DATAPATH + 'telluric/psg_out_2020.0
  
     #load coupling for two options
     # inputs : waves,dynwfe,ttStatic,ttDynamic
-    out = throughput_tools.grid_interp_coupling(1,path=transmission_path  + 'coupling/',atm=atm,adc=adc)
-    data['coupling_NGS'],strehl = throughput_tools.pick_coupling_rounded(transmission_path,w,ngs_wfe[0], ngs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=atm,adc=adc,pl_on=0,piaa_boost=1.3)
+    out = grid_interp_coupling(1,path=transmission_path  + 'coupling/',atm=atm,adc=adc)
+    data['coupling_NGS'],strehl = pick_coupling_rounded(transmission_path,w,ngs_wfe[0], ngs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=atm,adc=adc,pl_on=0,piaa_boost=1.3)
  
-    out = throughput_tools.grid_interp_coupling(1,path=transmission_path +'coupling/',atm=atm,adc=adc)
-    data['coupling_LGS'],strehl2  = throughput_tools.pick_coupling_rounded(transmission_path,w,lgs_wfe[0], lgs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=atm,adc=adc,pl_on=0,piaa_boost=1.3)
+    out = grid_interp_coupling(1,path=transmission_path +'coupling/',atm=atm,adc=adc)
+    data['coupling_LGS'],strehl2  = pick_coupling_rounded(transmission_path,w,lgs_wfe[0], lgs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=atm,adc=adc,pl_on=0,piaa_boost=1.3)
 
     if np.max(w)>1000: w/=1000
     lw=2

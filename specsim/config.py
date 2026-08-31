@@ -121,7 +121,8 @@ def simulate_from_config(configfile, instrument_configfile=None, **overrides):
     [filt] -> band (user; family is derived from it unless set explicitly)
               + filter_path/zp_file (instrument)
     [atm]  -> pwv/seeing_set (user) + telluric_file/sky_path (instrument)
-    [telescope] -> merged into Spectrograph.area_m2/diameter_m (instrument-only)
+    [telescope] -> area_m2/diameter_m, fed to AOSystem, Spectrograph and
+              TrackingCamera alike (instrument-only)
     [spectrograph] -> Spectrograph (instrument-only)
     [ao]   -> AOSystem (mode/mag/teff/mag_band from user; tt_static/lo_wfe/
               defocus/ho_wfe_file/tt_dynamic_file/contrast_profile_path
@@ -169,6 +170,10 @@ def simulate_from_config(configfile, instrument_configfile=None, **overrides):
     filt = _resolve_paths(_section(config, 'filt'), data_folder)
     atm = _resolve_paths(_section(config, 'atm'), data_folder)
     telescope_cfg = _section(config, 'telescope')
+    # telescope geometry is fed to every object that needs it, rather than
+    # routed through Spectrograph -- see the [telescope] section note below
+    telescope = dict(area_m2=telescope_cfg.get('area_m2', 76),
+                     diameter_m=telescope_cfg.get('diameter_m', 10))
     spectrograph_cfg = _resolve_paths(_section(config, 'spectrograph'), data_folder)
     ao = _resolve_paths(_section(config, 'ao'), data_folder)
     obs = _section(config, 'obs')
@@ -193,7 +198,7 @@ def simulate_from_config(configfile, instrument_configfile=None, **overrides):
                          tt_dynamic_file=ao.get('tt_dynamic_file'), ho_wfe_set=ao.get('ho_wfe_set'),
                          tt_dynamic_set=ao.get('tt_dynamic_set'), mag=ao.get('mag', 'default'),
                          mag_band=ao.get('mag_band', 'default'), teff=ao.get('teff', 'default'),
-                         contrast_profile_path=ao.get('contrast_profile_path'))
+                         contrast_profile_path=ao.get('contrast_profile_path'), **telescope)
 
     spectrograph = Spectrograph(l0=spectrograph_cfg.get('l0', 900), l1=spectrograph_cfg.get('l1', 2500), res=spectrograph_cfg.get('res', 100000),
                                 res_samp=spectrograph_cfg.get('res_samp', 3), pix_vert=spectrograph_cfg.get('pix_vert', 4),
@@ -202,15 +207,15 @@ def simulate_from_config(configfile, instrument_configfile=None, **overrides):
                                 pl_on=spectrograph_cfg.get('pl_on', 1), rv_floor=spectrograph_cfg.get('rv_floor', 0.5),
                                 atm=spectrograph_cfg.get('atm', 1), adc=spectrograph_cfg.get('adc', 1),
                                 transmission_path=spectrograph_cfg.get('transmission_path'), transmission_file=spectrograph_cfg.get('transmission_file'),
-                                order_bounds_file=spectrograph_cfg.get('order_bounds_file'),
-                                area_m2=telescope_cfg.get('area_m2', 76), diameter_m=telescope_cfg.get('diameter_m', 10))
+                                order_bounds_file=spectrograph_cfg.get('order_bounds_file'), **telescope)
 
     tracking_camera = None
     if track:
         tracking_camera = TrackingCamera(camera=track.get('camera', 'h2rg'), band=track.get('band', 'JHgap'),
                                          fratio=track.get('fratio', 35), texp=track.get('texp', 1),
                                          field_r=track.get('field_r', 0), transmission_file=track.get('transmission_file'),
-                                         aberrations_file=track.get('aberrations_file'))
+                                         aberrations_file=track.get('aberrations_file'),
+                                         blocking_filter_file=track.get('blocking_filter_file'), **telescope)
 
     kwargs = dict(star=star, spectrograph=spectrograph, atmosphere=atmosphere, ao_system=ao_system,
                   filt_band=filt.get('band', 'J'), filt_family=filt.get('family'),

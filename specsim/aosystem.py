@@ -4,8 +4,8 @@
 #
 # Split out of instrument.py, which still holds the Spectrograph and
 # TrackingCamera it feeds. Nothing here imports them back: select() takes the
-# telescope diameter as a plain float rather than a Spectrograph, so this
-# module sits below instrument.py in the dependency order with no cycle.
+# telescope diameter as a constructor parameter rather than reaching for it on
+# a Spectrograph, so this module has no dependency on the detector modules.
 #
 # AOSystem is the first thing built in a scene that
 # actually depends on the star: the guide-star magnitude picks the AO mode,
@@ -99,8 +99,11 @@ class AOSystem:
                  ho_wfe_file: Optional[str] = None, tt_dynamic_file: Optional[str] = None,
                  ho_wfe_set: Optional[float] = None, tt_dynamic_set: Optional[float] = None,
                  mag='default', mag_band='default', teff='default',
-                 contrast_profile_path: Optional[str] = None):
+                 contrast_profile_path: Optional[str] = None,
+                 area_m2: float = 76, diameter_m: float = 10):
         self.mode = mode
+        self.area_m2 = area_m2        # telescope collecting area [m^2]; carried for symmetry with the detectors
+        self.diameter_m = diameter_m  # telescope diameter [m], used to turn tip-tilt residual into a Strehl term
         self.tt_static = tt_static
         self.lo_wfe = lo_wfe
         self.defocus = defocus
@@ -127,7 +130,7 @@ class AOSystem:
         self.ao_star: Optional[Star] = None  # only set when teff != 'default' (a fresh model is loaded for the AO star)
 
     def select(self, x: np.ndarray, star: Star, filt: Bandpass, filter_path: str, zp_file: str,
-               diameter_m: float, zenith_angle: float, seeing_set: str, bands: dict) -> "AOSystem":
+               zenith_angle: float, seeing_set: str, bands: dict) -> "AOSystem":
         """
         Determine the AO correction quality (high-order and tip-tilt
         wavefront error, and resulting Strehl) for the on-axis star. If
@@ -153,8 +156,6 @@ class AOSystem:
         filt - Bandpass, the on-axis star's photometric filter
         filter_path, zp_file - str, needed to load a Bandpass for
             mag_band/a WFE mode's native band if different from filt's
-        diameter_m - float, telescope diameter [m] (Spectrograph.diameter_m);
-            only used to turn the tip-tilt residual into a Strehl term
         zenith_angle - float [deg]
         seeing_set - str ('good'/'average'/'bad')
         bands - dict of {band: [lo, hi]} wavelength edges (yJHK), used to
@@ -209,7 +210,7 @@ class AOSystem:
 
                 # compute strehl and save total
                 strehl_ho = calc_strehl_marechal(ho_wfe, filt.center_wavelength)
-                strehl_tt = tt_to_strehl(tt_wfe, filt.center_wavelength, diameter_m)
+                strehl_tt = tt_to_strehl(tt_wfe, filt.center_wavelength, self.diameter_m)
                 strehl.append(strehl_ho * strehl_tt)
                 ho_wfes.append(ho_wfe)
                 tt_wfes.append(tt_wfe)

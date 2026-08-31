@@ -17,7 +17,8 @@
 # kernel is a pure math helper with no star state, so it lives in
 # functions.py as lsf_rotate() alongside define_lsf(). All of these used
 # to live in source_tools.py, which no longer exists. The filter-side
-# helpers (load_filter/get_zp/family_for_band) live on Bandpass.
+# helpers (load_filter/get_zp module-level, family_for_band on Bandpass)
+# live in bandpass.py.
 
 import os
 from dataclasses import dataclass, replace

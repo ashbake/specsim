@@ -20,7 +20,6 @@ from astropy.modeling.models import BlackBody
 from specsim.aosystem import AOSystem
 from specsim.atmosphere import Atmosphere
 from specsim.functions import calc_plate_scale, calc_strehl, sum_total_noise, tophat
-from specsim.spectrograph import Spectrograph
 from specsim.star import Star
 
 
@@ -117,7 +116,6 @@ def get_tracking_cam(camera='h2rg',x=None):
         saturation = 33000
 
     return rn, pixel_pitch, qe_mod, dark, saturation
-
 
 def get_tracking_band(wave,band):
     """
@@ -265,7 +263,6 @@ def get_tracking_band(wave,band):
 
     return bandpass, center_wavelength
 
-
 def get_sky_bg_tracking(x,fwhm,sky_bg_v,sky_bg,area=76):
     """
     Generate sky background per pixel for the tracking/acquisition camera,
@@ -312,7 +309,7 @@ def get_sky_bg_tracking(x,fwhm,sky_bg_v,sky_bg,area=76):
     return sky_background_interp.value # ph/s/nm
 
 
-def get_inst_bg_tracking(x,pixel_size,npix,datapath='./data/throughput/hispec_subsystems_11032022/'):
+def get_inst_bg_tracking(x,pixel_size,npix,blocking_filter_file):
     """
     Generate the instrument thermal background seen by the tracking camera,
     per pixel, default to HISPEC. Source: DMawet jup. notebook.
@@ -336,9 +333,9 @@ def get_inst_bg_tracking(x,pixel_size,npix,datapath='./data/throughput/hispec_su
         physical size of one detector pixel
     npix: integer
         number of pixels over which the thermal background is summed
-    datapath: string
-        path to where throughput data in HISPEC format is (used here to
-        load the blocking filter transmission curve)
+    blocking_filter_file: string
+        path to the cold-snout blocking filter transmission curve
+        (wavelength [nm], transmission [percent], 20 header rows)
 
     outputs:
     --------
@@ -357,7 +354,7 @@ def get_inst_bg_tracking(x,pixel_size,npix,datapath='./data/throughput/hispec_su
     # also we measure the thermal background to be 500ish e-/s as of 8/11/26 - TBU once done with ATC testing with painted cold snout
 
     # Load blocking filter profile
-    fx,fy = np.loadtxt(datapath + 'feicam/blocking_filter.TXT',skiprows=20).T
+    fx,fy = np.loadtxt(blocking_filter_file,skiprows=20).T
     f = interpolate.interp1d(fx[::-1]*u.nm,fy[::-1],bounds_error=False,fill_value=0)
     blocking_filter   = f(wave)/100 # convert to fraction from percent
     
@@ -391,7 +388,9 @@ class TrackingCamera:
 
     def __init__(self, camera: str = 'h2rg', band: str = 'JHgap', fratio: float = 35,
                  texp: float = 1, field_r: float = 0,
-                 transmission_file=None, aberrations_file: Optional[str] = None):
+                 transmission_file=None, aberrations_file: Optional[str] = None,
+                 blocking_filter_file: Optional[str] = None,
+                 area_m2: float = 76, diameter_m: float = 10):
         self.camera = camera
         self.band = band
         self.fratio = fratio
@@ -399,8 +398,11 @@ class TrackingCamera:
         self.field_r = field_r
         self.transmission_file = transmission_file
         self.aberrations_file = aberrations_file
+        self.blocking_filter_file = blocking_filter_file
+        self.area_m2 = area_m2        # telescope collecting area [m^2] -- fed in directly rather than reached for on a Spectrograph
+        self.diameter_m = diameter_m  # telescope diameter [m]
 
-        # derived state, set by observe()
+        # derived state, set by load()
         self.pixel_pitch: Optional[float] = None
         self.dark: Optional[float] = None
         self.rn: Optional[float] = None
@@ -429,19 +431,23 @@ class TrackingCamera:
         self.snr: Optional[float] = None
         self.centroid_err: Optional[float] = None
 
-    def observe(self, x: np.ndarray, star: Star, atmosphere: Atmosphere, ao_system: AOSystem,
-                spectrograph: Spectrograph) -> "TrackingCamera":
+    def load(self, x: np.ndarray, ao_system: AOSystem) -> "TrackingCamera":
         """
-        Load the tracking camera detector properties and throughput curve,
-        compute the plate scale and PSF FWHM (from ao_system.ho_wfe/
-        tt_dynamic via load_WFE), the sky and instrument background seen
-        by the camera, and the stellar photon signal integrated over the
-        tracking band and PSF core. From the resulting SNR, derive the
-        centroid error used to characterize tracking/guiding precision. If
-        the peak flux would saturate the tracking detector, an equivalent
-        neutral-density filter (od) is applied to cap the signal.
+        Set up the camera: detector properties for the selected camera, the
+        throughput curve, the plate scale, the tracking bandpass, the PSF
+        FWHM and Strehl implied by the AO correction, and the instrument
+        thermal background those imply. Everything here depends only on the
+        hardware and the AO system -- not on the star or the sky -- so it
+        holds across exposures, mirroring Spectrograph.load().
 
-        Returns self, so calls can be chained: TrackingCamera(...).observe(...).
+        inputs
+        ------
+        x - array, shared wavelength grid [nm]
+        ao_system - AOSystem, already .select()-ed (needs ho_wfe/tt_dynamic/
+            pywfs_dichroic)
+
+        Returns self, so calls can be chained:
+        TrackingCamera(...).load(x, ao).observe(x, star, atm).
         """
         # pick guide camera - eventually settle on one and put params in config file!
         rn, pixel_pitch, qe_mod, dark, saturation = get_tracking_cam(camera=self.camera, x=x)
@@ -460,7 +466,7 @@ class TrackingCamera:
             self.xtransmit, self.ytransmit = x, f(x) * self.qe_mod
 
         # get plate scale
-        self.platescale = calc_plate_scale(self.pixel_pitch, D=spectrograph.diameter_m, fratio=self.fratio)
+        self.platescale = calc_plate_scale(self.pixel_pitch, D=self.diameter_m, fratio=self.fratio)
 
         # load tracking band
         bandpass, self.center_wavelength = get_tracking_band(x, self.band)
@@ -468,24 +474,45 @@ class TrackingCamera:
 
         # get fwhm (in pixels)
         self.fwhm = float(self.get_fwhm(ao_system.ho_wfe, ao_system.tt_dynamic,
-                                         self.center_wavelength, spectrograph.diameter_m))
+                                         self.center_wavelength, self.diameter_m))
         self.npix = np.pi * (self.fwhm / 2) ** 2  # only take noise in circle of diameter FWHM
         print('Tracking FWHM=%spix' % self.fwhm)
 
         self.strehl = calc_strehl(ao_system.ho_wfe, self.center_wavelength)
 
-        # get sky background and instrument background, spec is ph/nm/s
-        # fwhm must be in arcsec
-        self.sky_bg_spec = get_sky_bg_tracking(x, self.fwhm * self.platescale, atmosphere.v,
-                                                            atmosphere.sky_bg, area=spectrograph.area_m2)
-        self.sky_bg_ph = np.trapz(self.sky_bg_spec * self.bandpass * self.ytransmit, x)  # sky bkg needs mult by throughput and bandpass profile
-
         # get background spec (takes thermal emission from warm cryostat window)
         # units of ph/nm/s for spectrum and ph/s for inst_bg_ph
-        self.inst_bg_spec, self.inst_bg_ph = get_inst_bg_tracking(x, self.pixel_pitch, self.npix, datapath=spectrograph.transmission_path)
+        self.inst_bg_spec, self.inst_bg_ph = get_inst_bg_tracking(x, self.pixel_pitch, self.npix, blocking_filter_file=self.blocking_filter_file)
+
+        return self
+
+    def observe(self, x: np.ndarray, star: Star, atmosphere: Atmosphere) -> "TrackingCamera":
+        """
+        Expose on a star: the sky background through the tracking band, the
+        stellar photon signal integrated over the band and PSF core, the
+        total noise, and from those the SNR and centroid error that
+        characterise tracking/guiding precision. If the peak flux would
+        saturate the detector, an equivalent neutral-density filter (od) is
+        applied to cap the signal.
+
+        Requires .load() to have been called first (needs fwhm/npix/
+        platescale/bandpass/ytransmit and the detector properties).
+
+        inputs
+        ------
+        x - array, shared wavelength grid [nm]
+        star - Star, already .load()-ed
+        atmosphere - Atmosphere, already .load()-ed
+
+        Returns self, so calls can be chained.
+        """
+        # get sky background, spec is ph/nm/s. fwhm must be in arcsec
+        self.sky_bg_spec = get_sky_bg_tracking(x, self.fwhm * self.platescale, atmosphere.v,
+                                                            atmosphere.sky_bg, area=self.area_m2)
+        self.sky_bg_ph = np.trapz(self.sky_bg_spec * self.bandpass * self.ytransmit, x)  # sky bkg needs mult by throughput and bandpass profile
 
         # get photons in band
-        self.signal_spec = star.s * self.texp * spectrograph.area_m2 * self.ytransmit * np.abs(atmosphere.s)
+        self.signal_spec = star.s * self.texp * self.area_m2 * self.ytransmit * np.abs(atmosphere.s)
 
         # fac is empirically the fraction of light approx under 2D gaussian of FWHM~4pix,
         # which scales npix. This was tuned based on a actual toy centroiding model fit and gets results to match

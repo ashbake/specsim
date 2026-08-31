@@ -47,4 +47,5 @@ track:
   transmission_file: ./data/track/trackingcamera.csv
   texp: 1
   field_r: 0
-  aberrations_file: ./data/track/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt
+  aberrations_file: ./data/instrument/hispec/track/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt
+  blocking_filter_file: ./data/instrument/hispec/throughput/feicam/blocking_filter.TXT

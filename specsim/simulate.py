@@ -62,7 +62,7 @@ class Simulate:
 
         self.atmosphere.load(self.x, self.zenith_angle)
         self.ao_system.select(self.x, self.star, self.filt, self.filter_path, self.zp_file,
-                               self.spectrograph.diameter_m, self.zenith_angle, self.atmosphere.seeing_set, YJHK)
+                               self.zenith_angle, self.atmosphere.seeing_set, YJHK)
         self.spectrograph.load(self.x, self.ao_system)
 
         self.tracking_camera: Optional[TrackingCamera] = None
@@ -112,14 +112,14 @@ class Simulate:
             raise ValueError("no tracking_camera was passed to Simulate()")
         if self.tracking_camera is None:
             self.tracking_camera = self.tracking_camera_config
-            self.tracking_camera.observe(self.x, self.star, self.atmosphere, self.ao_system, self.spectrograph)
+            self.tracking_camera.load(self.x, self.ao_system).observe(self.x, self.star, self.atmosphere)
         return self.tracking_camera
 
     def set_star_mag(self, mag: float):
         "Reload the on-axis star at a new magnitude (same band), then re-select the AO mode and reload the spectrograph coupling, since both can depend on the science star. Invalidates the cached Observation/tracking. (Uses Star.load(), not Star.rescaled() -- rescaled() skips setting .v/.s, which Observation needs.)"
         self.star = Star(replace(self.star.params, mag=mag)).load(self.x, self.filt)
         self.ao_system.select(self.x, self.star, self.filt, self.filter_path, self.zp_file,
-                               self.spectrograph.diameter_m, self.zenith_angle, self.atmosphere.seeing_set, YJHK)
+                               self.zenith_angle, self.atmosphere.seeing_set, YJHK)
         self.spectrograph.load(self.x, self.ao_system)
         self._observed = False
         self.tracking_camera = None
@@ -128,7 +128,7 @@ class Simulate:
         "Reload the on-axis star at a new effective temperature (same magnitude/band), then re-select the AO mode and reload the spectrograph coupling. Teff changes the star's colour, so its magnitude in the AO mode's native band -- and hence the WFE and coupling -- changes too. Invalidates the cached Observation/tracking. Requires a model grid file for the requested teff (PHOENIX for teff >= 2300K, Sonora below)."
         self.star = Star(replace(self.star.params, teff=teff)).load(self.x, self.filt)
         self.ao_system.select(self.x, self.star, self.filt, self.filter_path, self.zp_file,
-                               self.spectrograph.diameter_m, self.zenith_angle, self.atmosphere.seeing_set, YJHK)
+                               self.zenith_angle, self.atmosphere.seeing_set, YJHK)
         self.spectrograph.load(self.x, self.ao_system)
         self._observed = False
         self.tracking_camera = None
@@ -137,7 +137,7 @@ class Simulate:
         "Change the AO mode and reload the spectrograph coupling (which depends on the chosen mode's ho_wfe/tt_dynamic). Invalidates the cached Observation/tracking."
         self.ao_system.mode = mode
         self.ao_system.select(self.x, self.star, self.filt, self.filter_path, self.zp_file,
-                               self.spectrograph.diameter_m, self.zenith_angle, self.atmosphere.seeing_set, YJHK)
+                               self.zenith_angle, self.atmosphere.seeing_set, YJHK)
         self.spectrograph.load(self.x, self.ao_system)
         self._observed = False
         self.tracking_camera = None
