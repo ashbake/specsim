@@ -213,7 +213,7 @@ class RVPrecisionResult:
     rv_order: np.ndarray       # per-order RV precision including the spectrograph/telluric noise floor [m/s]
     rv_tot: float              # total RV precision across the full spectrum, including the noise floor [m/s]
     telluric_mask: np.ndarray  # boolean/weight mask excluding regions near deep telluric lines
-    s_telcont_free: np.ndarray  # stellar spectrum with spectrograph throughput continuum and telluric absorption removed, resampled onto spectrograph.v
+    s_tel_free: np.ndarray  # stellar spectrum with telluric absorption divided out (throughput continuum deliberately left in -- see rv_precision), resampled onto spectrograph.v
 
 
 @dataclass
@@ -251,8 +251,8 @@ class Analyze:
     def rv_precision(self, telluric_cutoff=0.01, velocity_cutoff=30):
         """
         Compute the achievable radial velocity precision for this observation.
-        Builds a "telluric/continuum-free" version of the observed spectrum
-        (throughput continuum and telluric absorption divided out) so the RV
+        Builds a telluric-free version of the observed spectrum (telluric
+        absorption divided out, throughput continuum left alone) so the RV
         information content reflects only the stellar lines, builds a mask
         that excludes wavelengths near deep telluric lines (deeper than
         telluric_cutoff, masked out to +/-velocity_cutoff in velocity space),
@@ -273,24 +273,29 @@ class Analyze:
         ------
         RVPrecisionResult
         """
-        # Create spectrum with continuum removed and tellurics removed
-        # the noise spectrum will consider tellurics but shouldnt be in the spectrum for computing RV
-        continuum = self.spectrograph.ytransmit / np.max(self.spectrograph.ytransmit)
-        # guard 0/0 (-> nan, which would smear via degrade_spec's convolution below) wherever
-        # there's no throughput/telluric transmission to divide out in the first place
-        continuum_safe = np.where(continuum == 0, np.inf, continuum)
+        # Divide out telluric absorption only, so the RV information content comes
+        # from stellar lines rather than telluric ones.
+        #
+        # The throughput continuum is deliberately NOT divided out. It is smooth,
+        # so it removes no line structure; all it does is rescale the spectrum
+        # without rescaling the noise passed to get_rv_precision() below, which
+        # inflates the information content W = lam^2 (dS/dlam)^2 / sigma^2 by
+        # 1/continuum^2 and so makes low-throughput orders look artificially
+        # precise.
+        # guard 0/0 (-> nan, which would smear via degrade_spec's convolution below)
+        # wherever there's no telluric transmission to divide out in the first place
         tel_s_safe = np.where(self.atmosphere.s == 0, np.inf, np.abs(self.atmosphere.s))
         if self.spectrograph.pl_sep > 0:
-            telcont_free_hires = self.spectrograph.nframes * self.spectrograph.frame_phot_per_nm_pl / continuum_safe / tel_s_safe
+            tel_free_hires = self.spectrograph.nframes * self.spectrograph.frame_phot_per_nm_pl / tel_s_safe
         else:
-            telcont_free_hires = self.spectrograph.nframes * self.spectrograph.frame_phot_per_nm / continuum_safe / tel_s_safe
+            tel_free_hires = self.spectrograph.nframes * self.spectrograph.frame_phot_per_nm / tel_s_safe
 
         # remove telurics
-        telcont_free_lores = degrade_spec(self.star.v, telcont_free_hires, self.spectrograph.res)
-        v, telcont_free = resample(self.star.v, telcont_free_lores, sig=np.mean(self.spectrograph.sig), dx=0, eta=1, mode='fast')
-        telcont_free[np.where(np.isnan(telcont_free))] = 0
-        f_interp = interpolate.interp1d(v, telcont_free, bounds_error=False, fill_value=0)
-        s_telcont_free = f_interp(self.spectrograph.v)
+        tel_free_lores = degrade_spec(self.star.v, tel_free_hires, self.spectrograph.res)
+        v, tel_free = resample(self.star.v, tel_free_lores, sig=np.mean(self.spectrograph.sig), dx=0, eta=1, mode='fast')
+        tel_free[np.where(np.isnan(tel_free))] = 0
+        f_interp = interpolate.interp1d(v, tel_free, bounds_error=False, fill_value=0)
+        s_tel_free = f_interp(self.spectrograph.v)
 
         # make telluric only spectrum, resample onto spectrograph.v to match spectrograph.s
         self.atmosphere.rayleigh[self.atmosphere.rayleigh == 0] = np.inf
@@ -301,16 +306,34 @@ class Analyze:
         tel_interp = interpolate.interp1d(v, telluric_spec_lores_resamp, bounds_error=False, fill_value=0)
         s_tel = tel_interp(self.spectrograph.v) / np.max(tel_interp(self.spectrograph.v))
 
+        # The signal above had the telluric transmission divided out of it, so the
+        # noise has to be divided by the same thing to stay on the same footing:
+        # dividing a spectrum by a transmission T divides its noise by T too.
+        # Skipping this inflates W = lam^2 (dS/dlam)^2 / sigma^2 by 1/T^2, making
+        # absorbed regions look artificially precise. Degrade/resample the
+        # transmission the same way the signal was, so the two grids match.
+        tel_trans_lores = degrade_spec(self.star.v, np.abs(self.atmosphere.s), self.spectrograph.res)
+        v, tel_trans = resample(self.star.v, tel_trans_lores, sig=np.mean(self.spectrograph.sig), dx=0, eta=1, mode='fast')
+        trans_interp = interpolate.interp1d(v, tel_trans, bounds_error=False, fill_value=0)
+        # renormalise to a true 0-1 transmission: resample() rebins, so it scales
+        # the curve by the bin-width ratio (~200x here) and the result is no
+        # longer a transmission. Same reason s_tel above divides by its max.
+        transmission = trans_interp(self.spectrograph.v)
+        transmission = transmission / np.max(transmission)
+        # a saturated line core carries no RV information; floor the divisor so it
+        # becomes huge noise (weight -> 0) rather than a divide-by-zero
+        noise_tel_free = self.spectrograph.noise / np.clip(transmission, 1e-3, None)
+
         # run radial velocity precision
         telluric_mask = make_telluric_mask(self.spectrograph.v, s_tel, cutoff=telluric_cutoff, velocity_cutoff=velocity_cutoff)
-        dv_tot, dv_spec, dv_vals = get_rv_precision(self.spectrograph.v, s_telcont_free, self.spectrograph.noise,
+        dv_tot, dv_spec, dv_vals = get_rv_precision(self.spectrograph.v, s_tel_free, noise_tel_free,
                                                      self.spectrograph.order_cens, self.spectrograph.order_widths,
                                                      noise_floor=self.spectrograph.rv_floor, mask=telluric_mask)
 
         rv_order = dv_tot  # per order rv with noise floor
         rv_tot = np.sqrt(dv_spec ** 2 + self.spectrograph.rv_floor ** 2)  # add noise floor
 
-        return RVPrecisionResult(rv_order=rv_order, rv_tot=rv_tot, telluric_mask=telluric_mask, s_telcont_free=s_telcont_free)
+        return RVPrecisionResult(rv_order=rv_order, rv_tot=rv_tot, telluric_mask=telluric_mask, s_tel_free=s_tel_free)
 
     def ccf_snr(self, model=None, systematics_residuals=0.01, kernel_size=201, norm_cutoff=0.95):
         '''

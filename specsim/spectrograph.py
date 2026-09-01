@@ -32,6 +32,7 @@ from astropy.modeling.models import BlackBody
 from specsim.aosystem import AOSystem
 from specsim.atmosphere import Atmosphere
 from specsim.functions import calc_strehl_marechal, degrade_spec, resample, sum_total_noise
+from specsim.paths import DATA_DIR
 from specsim.star import Star
 
 def get_sky_bg(x,sky_bg_v,sky_bg,npix=3,R=100000,diam=10,area=76):
@@ -84,7 +85,7 @@ def get_sky_bg(x,sky_bg_v,sky_bg,npix=3,R=100000,diam=10,area=76):
     return sky_background_interp.value # ph/s
 
 
-def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath='./data/throughput/hispec_subsystems_11032022/'):
+def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath=DATA_DIR + 'throughput/hispec_subsystems_11032022/'):
     """
     Generate instrument thermal background per reduced pixel, default to HISPEC.
     Loads the emissivity and physical temperature of each red-arm and
@@ -658,7 +659,7 @@ def pick_coupling_interpolate(w,dynwfe,ttStatic,ttDynamic,LO=50,PLon=0,piaa_boos
     return coupling, ho_strehl
 
 
-def grid_interp_coupling(PLon=1,path='./data/instrument/hispec/throughput/coupling/',atm=1,adc=1):
+def grid_interp_coupling(PLon=1,path=DATA_DIR + 'instrument/hispec/throughput/coupling/',atm=1,adc=1):
     """
     Build the N-D coupling-efficiency grid (axes: low-order WFE, static
     tip-tilt, dynamic tip-tilt, wavelength) used by pick_coupling_interpolate
@@ -732,7 +733,7 @@ def grid_interp_coupling(PLon=1,path='./data/instrument/hispec/throughput/coupli
         return points,values_1
 
 
-def get_emissivity(wave,datapath='./data/instrument/hispec/throughput/'):
+def get_emissivity(wave,datapath=DATA_DIR + 'instrument/hispec/throughput/'):
     """
     Load and interpolate the per-surface emissivity curves for each optical
     element in the red and blue optical paths (excluding fiber coupling),
@@ -792,7 +793,7 @@ def get_emissivity(wave,datapath='./data/instrument/hispec/throughput/'):
     return em_red,em_blue,temps
 
 
-def get_emissivities(wave,surfaces=['tel'],datapath='./data/instrument/hispec/throughput/'):
+def get_emissivities(wave,surfaces=['tel'],datapath=DATA_DIR + 'instrument/hispec/throughput/'):
     """
     Derive per-surface emissivity as (1 - throughput) for an arbitrary list
     of named surfaces, by loading each surface's '<surface>_throughput.csv'
@@ -832,7 +833,7 @@ def get_emissivities(wave,surfaces=['tel'],datapath='./data/instrument/hispec/th
     return em
 
 
-def get_base_throughput(wave,datapath='./data/instrument/hispec/throughput/'):
+def get_base_throughput(wave,datapath=DATA_DIR + 'instrument/hispec/throughput/'):
     """
     Compute the total instrument throughput excluding fiber coupling, by
     multiplying together the per-surface throughput curves along the red
@@ -934,7 +935,7 @@ def load_photonic_lantern():
         e.g. [n_wave, n_mode, n_mode])
     """
     wavearr = np.linspace(970,1350,20)
-    data = np.load('./data/throughput/photonic_lantern/unitary_matrices.npy')
+    data = np.load(DATA_DIR + 'throughput/photonic_lantern/unitary_matrices.npy')
     
     return wavearr,data
 

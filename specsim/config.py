@@ -21,6 +21,13 @@
 # wins on any key collision) and translated into typed Simulate
 # constructor kwargs exactly as before -- everything downstream of the
 # merge is unchanged.
+#
+# Only the .cfg is the user's to write. The instrument YAML is looked up
+# next to their .cfg first (so a project can override one) and otherwise
+# comes from the copy bundled with specsim, and every relative path in
+# either file resolves against the specsim source tree rather than the
+# current working directory (see specsim/paths.py). Together that means a
+# .cfg can live anywhere and be run from anywhere.
 
 import configparser
 import os
@@ -29,13 +36,14 @@ import yaml
 
 from specsim.aosystem import AOSystem
 from specsim.atmosphere import Atmosphere
+from specsim.paths import BUNDLED_CONFIGS, SPECSIM_ROOT, resolve
 from specsim.spectrograph import Spectrograph
 from specsim.trackingcamera import TrackingCamera
 from specsim.simulate import Simulate
 from specsim.star import StarParams
 
 PATH_ATTR_SUFFIXES = ('_file', '_folder', '_path')
-INSTRUMENTS_SUBDIR = 'instruments'  # relative to the user .cfg's own directory
+INSTRUMENTS_SUBDIR = 'instruments'
 
 
 def load_config(configfile):
@@ -108,8 +116,8 @@ def _section(config, name):
 def _resolve_paths(section, data_folder):
     "resolve any *_file/*_folder/*_path value in section against data_folder, unless already absolute"
     for key, value in section.items():
-        if key.endswith(PATH_ATTR_SUFFIXES) and isinstance(value, str) and not os.path.isabs(value):
-            section[key] = os.path.join(data_folder, value)
+        if key.endswith(PATH_ATTR_SUFFIXES) and isinstance(value, str):
+            section[key] = resolve(value, data_folder)
     return section
 
 
@@ -133,12 +141,16 @@ def simulate_from_config(configfile, instrument_configfile=None, **overrides):
     inputs
     ------
     configfile : str
-        path to the user-facing .cfg file. Its [run] section must set
-        `instrument` (e.g. `instrument=hispec`) unless instrument_configfile
-        is given explicitly.
+        path to the user-facing .cfg file, resolved against the current
+        working directory (it's the caller's own file, so it can live
+        anywhere). Its [run] section must set `instrument` (e.g.
+        `instrument=hispec`) unless instrument_configfile is given
+        explicitly.
     instrument_configfile : str, optional
-        path to the instrument YAML file. If not given, defaults to
-        '<dir of configfile>/instruments/<[run] instrument, lowercased>.yaml'
+        path to the instrument YAML file. If not given, it is looked for
+        at '<dir of configfile>/instruments/<instrument, lowercased>.yaml'
+        and then at '<specsim root>/configs/instruments/<instrument>.yaml',
+        so writing a .cfg is all that's normally needed.
     **overrides
         Simulate constructor kwargs to override after translation, e.g.
         simulate_from_config(path, texp=1800)
@@ -146,6 +158,11 @@ def simulate_from_config(configfile, instrument_configfile=None, **overrides):
     output
     ------
     Simulate
+
+    Relative paths inside either config file are resolved against the
+    specsim source tree, not the working directory, so a run works from
+    any folder; use absolute paths (or an absolute [run] data_folder) to
+    point at data outside it.
     """
     if not os.path.isfile(configfile):
         raise FileNotFoundError(f"Config file not found: {configfile}")
@@ -157,14 +174,30 @@ def simulate_from_config(configfile, instrument_configfile=None, **overrides):
         if not instrument_name:
             raise ValueError(f"{configfile}: [run] section must set 'instrument' (e.g. instrument=hispec), "
                               "or pass instrument_configfile explicitly")
-        instrument_configfile = os.path.join(os.path.dirname(os.path.abspath(configfile)),
-                                              INSTRUMENTS_SUBDIR, f'{str(instrument_name).lower()}.yaml')
+        # Look next to the user's own .cfg first, so a self-contained project
+        # can ship its own instrument file, then fall back to the ones bundled
+        # with specsim -- so writing a .cfg is all a user has to do.
+        filename = f'{str(instrument_name).lower()}.yaml'
+        candidates = [os.path.join(os.path.dirname(os.path.abspath(configfile)), INSTRUMENTS_SUBDIR, filename),
+                      os.path.join(BUNDLED_CONFIGS, INSTRUMENTS_SUBDIR, filename)]
+        instrument_configfile = next((path for path in candidates if os.path.isfile(path)), None)
+        if instrument_configfile is None:
+            available = sorted(name[:-len('.yaml')]
+                               for name in os.listdir(os.path.join(BUNDLED_CONFIGS, INSTRUMENTS_SUBDIR))
+                               if name.endswith('.yaml'))
+            raise FileNotFoundError(
+                f"No instrument config for [run] instrument={instrument_name}. Looked in:\n  "
+                + "\n  ".join(candidates)
+                + f"\nInstruments bundled with specsim: {', '.join(available)}")
     if not os.path.isfile(instrument_configfile):
         raise FileNotFoundError(f"Instrument config file not found: {instrument_configfile}")
 
     instrument_config = load_instrument_yaml(instrument_configfile)
     config = {**instrument_config, **user_config}  # user .cfg wins on any key collision
-    data_folder = run.get('data_folder', './')
+    # './data/...' in a config means specsim's own data/, not the CWD's, so a
+    # run works from any folder. Point data_folder at an absolute path to use
+    # your own data tree instead.
+    data_folder = resolve(run.get('data_folder', './'), SPECSIM_ROOT)
 
     stel = _resolve_paths(_section(config, 'stel'), data_folder)
     filt = _resolve_paths(_section(config, 'filt'), data_folder)
@@ -218,7 +251,7 @@ def simulate_from_config(configfile, instrument_configfile=None, **overrides):
                                          blocking_filter_file=track.get('blocking_filter_file'), **telescope)
 
     kwargs = dict(star=star, spectrograph=spectrograph, atmosphere=atmosphere, ao_system=ao_system,
-                  filt_band=filt.get('band', 'J'), filt_family=filt.get('family'),
+                  filt_band=filt.get('band', 'H'), filt_family=filt.get('family'),
                   filter_path=filt.get('filter_path'), zp_file=filt.get('zp_file'),
                   texp=obs.get('texp', 900), texp_frame_set=obs.get('texp_frame_set', 'default'),
                   nsamp=obs.get('nsamp', 1), zenith_angle=obs.get('zenith_angle', 45),

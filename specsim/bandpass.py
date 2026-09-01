@@ -22,9 +22,10 @@
 # objects.py) wherever a bandpass is needed.
 
 import glob
-from dataclasses import dataclass, field
+import os
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
-from typing import Optional
+from typing import ClassVar, Optional
 
 import numpy as np
 from scipy import interpolate
@@ -47,15 +48,56 @@ def load_zp_table(zp_file):
     return np.loadtxt(zp_file, dtype=str).T
 
 
+def available_bands(zp_file):
+    """
+    Sorted [(family, band)] that have a zeropoint entry, i.e. the bands
+    that are loadable at all. Pairs with Bandpass.loaded(), which reports
+    what has actually been loaded this session.
+
+    Note a band listed here still needs a matching '*<family>*<band>.dat'
+    curve in the filter directory. The shipped data has one mismatch of
+    exactly that kind: zeropoints.txt lists family 'Tess' band 'red' while
+    the curve on disk is 'TESS.Red.dat', so neither spelling loads -- one
+    fails the (case-sensitive) glob in load_filter, the other fails the
+    lookup here.
+
+    inputs
+    ------
+    zp_file : str
+        path to the zeropoint table (family, band, zp columns)
+
+    output
+    ------
+    list of (family, band) tuples
+    """
+    zps = load_zp_table(zp_file)
+    return sorted(zip(zps[0].tolist(), zps[1].tolist()))
+
+
+def _available_str(zp_file):
+    "Human-readable 'family band' list for the errors below; best effort, since it only runs on a failure path."
+    try:
+        return ', '.join('%s %s' % pair for pair in available_bands(zp_file))
+    except Exception:
+        return '(could not read %s)' % zp_file
+
+
 def get_zp(zp_file, family, band):
     """
     Zeropoint flux [Jy] for a given filter family/band, read from zp_file
     (family, band, zp columns). The file itself is cached across calls, so
     looking this up repeatedly (e.g. once per AO mode) doesn't re-read (or
     re-warn on) it from disk each time.
+
+    Raises ValueError naming the available pairs if family/band isn't in
+    the table -- otherwise this failed with a bare IndexError from the
+    indexing below, which said nothing about what went wrong.
     """
     zps = load_zp_table(zp_file)
     izp = np.where((zps[0] == family) & (zps[1] == band))[0]
+    if len(izp) == 0:
+        raise ValueError("No zeropoint for family=%r band=%r in %s.\nAvailable: %s"
+                         % (family, band, zp_file, _available_str(zp_file)))
     return float(zps[2][izp][0])
 
 
@@ -113,7 +155,12 @@ def load_filter(filter_path, zp_file, family, band):
     center_wavelength - float
         transmission-weighted center wavelength [nm]
     """
-    filter_file    = glob.glob(filter_path + '*' + family + '*' + band + '.dat')[0]
+    pattern = filter_path + '*' + family + '*' + band + '.dat'
+    matches = sorted(glob.glob(pattern))  # sorted: glob order is arbitrary, so [0] would otherwise vary by machine
+    if not matches:
+        raise ValueError("No filter curve matching %r (family=%r, band=%r).\nAvailable: %s"
+                         % (pattern, family, band, _available_str(zp_file)))
+    filter_file    = matches[0]
     xraw, yraw     = np.loadtxt(filter_file).T # units vary by file (Angstrom or micron)
     if np.mean(xraw) > 3000: xraw = xraw / 10    # Angstrom -> nm
     if np.mean(xraw) < 10: xraw = xraw * 1000    # micron -> nm
@@ -142,6 +189,14 @@ class Bandpass:
     center_wavelength: float
     x: Optional[np.ndarray] = field(default=None, repr=False)
     y: Optional[np.ndarray] = field(default=None, repr=False)
+
+    # Every (filter_path, zp_file, family, band) loaded this session, held as
+    # pristine un-resampled instances -- see loaded(). This is for
+    # introspection and reuse, NOT a speed cache: load_filter()'s lru_cache
+    # above already makes the repeat disk read free, so there is no
+    # measurable time to win back here. ClassVar keeps @dataclass from
+    # treating it as a field with a mutable default (which it rejects).
+    _loaded: ClassVar[dict] = {}
 
     @staticmethod
     def family_for_band(band):
@@ -176,12 +231,41 @@ class Bandpass:
             family = cls.family_for_band(band)
         xraw, yraw, zp, dl_l, center_wavelength = load_filter(filter_path, zp_file, family, band)
         bp = cls(family=family, band=band, xraw=xraw, yraw=yraw, zp=zp, dl_l=dl_l, center_wavelength=center_wavelength)
+        # Register the pristine (un-resampled) instance, and hand the caller its
+        # own copy: resample() mutates, so a shared instance would let two
+        # callers on different x grids clobber each other. replace() shares the
+        # xraw/yraw arrays rather than copying them, which is already the status
+        # quo -- load_filter's cache has always returned the same arrays to
+        # every caller, and nothing anywhere mutates them in place.
+        cls._loaded.setdefault((filter_path, zp_file, family, band), bp)
+        out = replace(bp)
         if x is not None:
-            bp.resample(x)
-        return bp
+            out.resample(x)
+        return out
+
+    @classmethod
+    def loaded(cls) -> dict:
+        """
+        {(family, band): Bandpass} for every band loaded so far this
+        session, as pristine un-resampled copies -- safe to resample or
+        otherwise mutate without disturbing anything else.
+
+        For what is *loadable* rather than what has been loaded, see
+        available_bands(). If two different filter directories supplied the
+        same family/band, this projection keeps only one of them (the
+        internal registry keys on the full path and distinguishes them).
+        """
+        return {(family, band): replace(bp) for (_, _, family, band), bp in cls._loaded.items()}
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        "Drop the registry and the underlying disk-read caches. Mainly for tests, and for picking up an edited filter file without restarting."
+        cls._loaded.clear()
+        load_filter.cache_clear()
+        load_zp_table.cache_clear()
 
     def resample(self, x: np.ndarray) -> "Bandpass":
-        "Interpolate the transmission curve onto x."
+        "Interpolate the transmission curve onto x, storing it on .x/.y. Mutates self and returns it, so it can be chained."
         self.x, self.y = x, self.interp()(x)
         return self
 

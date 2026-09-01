@@ -6,7 +6,6 @@ try:
 except NameError: # running interactively; assume cwd is examples/
 	_root = str(Path.cwd().parent)
 sys.path.insert(0, _root)
-os.chdir(_root)
 
 import numpy as np
 import matplotlib.pylab as plt
@@ -17,14 +16,14 @@ from specsim.bandpass import YJHK
 #plt.ion()
 
 #load inputs
-configfile = './configs/modhis_snr.cfg'
+configfile = os.path.join(_root, 'configs', 'modhis_snr.cfg')
 sim = simulate_from_config(configfile)
 
 # step through magnitudes
 mag_arr= np.arange(8,22)
 snr_arr = [] # snr
 for mag in mag_arr:
-	sim.set_star_mag(mag)
+	sim.set_star(mag=mag)
 	snr_arr.append(sim.snr().snr_res_element)
 
 
@@ -49,6 +48,7 @@ plt.yticks(my_yticks,my_yticks)
 plt.subplots_adjust(left=0.15,bottom=0.15)
 plt.grid()
 plt.text(9,33,'SNR=30')
-plt.savefig('./examples/output/median_bin_snr_per_band.png')
+os.makedirs('./output', exist_ok=True)
+plt.savefig('./output/median_bin_snr_per_band.png')
 
 plt.show()

@@ -25,6 +25,24 @@ from specsim.trackingcamera import TrackingCamera
 from specsim.star import Star, StarParams
 
 
+class _Unset:
+    "Type of the UNSET sentinel below."
+    def __repr__(self):
+        return '<unset>'
+
+
+# Default for every Simulate.set_*() argument, marking one the caller didn't
+# pass. A plain None default wouldn't do: None and 'default' are both real,
+# distinct values here -- set_ao(ho_wfe=None) clears the WFE override, and
+# set_ao(mag='default') goes back to inheriting the science star's magnitude.
+UNSET = _Unset()
+
+
+def _given(**kwargs):
+    "Drop the arguments the caller didn't pass, keeping the real values (including None and 'default')."
+    return {name: value for name, value in kwargs.items() if value is not UNSET}
+
+
 class Simulate:
     """
     Builds the scene (Bandpass, Star(s), Atmosphere, AOSystem, Spectrograph)
@@ -44,8 +62,6 @@ class Simulate:
         self.spectrograph = spectrograph
         self.atmosphere = atmosphere
         self.ao_system = ao_system
-        self.filt_family = filt_family
-        self.filt_band = filt_band
         self.filter_path = filter_path
         self.zp_file = zp_file
         self.texp = texp
@@ -67,6 +83,19 @@ class Simulate:
 
         self.tracking_camera: Optional[TrackingCamera] = None
         self._observed = False
+
+    # Read off the Bandpass rather than stored separately: set_star(band=...)
+    # rebuilds self.filt, and a second copy of the band would silently drift
+    # out of step with it.
+    @property
+    def filt_band(self) -> str:
+        "Photometric band the science star's magnitude is defined in. Change it with set_star(band=...)."
+        return self.filt.band
+
+    @property
+    def filt_family(self) -> str:
+        "Filter family behind filt_band (e.g. '2mass' for H). Derived from the band unless one was set explicitly."
+        return self.filt.family
 
     def _get_observation(self) -> Spectrograph:
         "Run the exposure on the spectrograph if it hasn't been run since the last input change, and return it."
@@ -115,34 +144,186 @@ class Simulate:
             self.tracking_camera.load(self.x, self.ao_system).observe(self.x, self.star, self.atmosphere)
         return self.tracking_camera
 
-    def set_star_mag(self, mag: float):
-        "Reload the on-axis star at a new magnitude (same band), then re-select the AO mode and reload the spectrograph coupling, since both can depend on the science star. Invalidates the cached Observation/tracking. (Uses Star.load(), not Star.rescaled() -- rescaled() skips setting .v/.s, which Observation needs.)"
-        self.star = Star(replace(self.star.params, mag=mag)).load(self.x, self.filt)
-        self.ao_system.select(self.x, self.star, self.filt, self.filter_path, self.zp_file,
-                               self.zenith_angle, self.atmosphere.seeing_set, YJHK)
-        self.spectrograph.load(self.x, self.ao_system)
+    # ---- setters: one per domain object, changing any subset of its inputs ----
+    #
+    # The scene builds in one direction -- star -> AO -> fiber coupling ->
+    # exposure -- so each setter reloads its own object and everything
+    # downstream of it, then marks the cached exposure stale. Arguments left
+    # out are unchanged; passing several at once does the reload work once
+    # instead of once per parameter.
+
+    def _invalidate(self):
+        "Mark the cached exposure and tracking observation stale, so the next snr()/tracking() recomputes them."
         self._observed = False
         self.tracking_camera = None
 
-    def set_star_teff(self, teff: float):
-        "Reload the on-axis star at a new effective temperature (same magnitude/band), then re-select the AO mode and reload the spectrograph coupling. Teff changes the star's colour, so its magnitude in the AO mode's native band -- and hence the WFE and coupling -- changes too. Invalidates the cached Observation/tracking. Requires a model grid file for the requested teff (PHOENIX for teff >= 2300K, Sonora below)."
-        self.star = Star(replace(self.star.params, teff=teff)).load(self.x, self.filt)
+    def _reselect_ao(self):
+        "Re-run AO mode selection and reload the fiber coupling that depends on its WFE, then invalidate. Every setter that touches something upstream of the AO ends here."
         self.ao_system.select(self.x, self.star, self.filt, self.filter_path, self.zp_file,
                                self.zenith_angle, self.atmosphere.seeing_set, YJHK)
         self.spectrograph.load(self.x, self.ao_system)
-        self._observed = False
-        self.tracking_camera = None
+        self._invalidate()
 
-    def set_ao_mode(self, mode: str):
-        "Change the AO mode and reload the spectrograph coupling (which depends on the chosen mode's ho_wfe/tt_dynamic). Invalidates the cached Observation/tracking."
-        self.ao_system.mode = mode
-        self.ao_system.select(self.x, self.star, self.filt, self.filter_path, self.zp_file,
-                               self.zenith_angle, self.atmosphere.seeing_set, YJHK)
-        self.spectrograph.load(self.x, self.ao_system)
-        self._observed = False
-        self.tracking_camera = None
+    def set_star(self, *, mag=UNSET, teff=UNSET, vsini=UNSET, rv=UNSET, logg=UNSET,
+                 phoenix_folder=UNSET, sonora_folder=UNSET,
+                 band=UNSET, family=UNSET) -> "Simulate":
+        """
+        Change the on-axis star and reload its spectrum, then re-select the
+        AO mode and reload the spectrograph coupling -- both depend on the
+        science star, since its magnitude (and, through its colour, its
+        Teff) sets the guide-star magnitude the WFE tables are sampled at.
 
-    def set_texp(self, texp: float):
-        "Change the total exposure time. Invalidates only the cached Observation -- cheapest setter, no AO/spectrograph recompute."
-        self.texp = texp
+        inputs (all optional; anything not passed is left unchanged)
+        ------
+        mag - float, apparent magnitude in the `band` below
+        teff - float [K], needs a model grid file present (PHOENIX for
+            teff >= 2300, Sonora below)
+        vsini - float [km/s], rotational broadening
+        rv - float [km/s], Doppler shift (e.g. to move lines off tellurics)
+        logg - float, surface gravity; PHOENIX models only
+        phoenix_folder, sonora_folder - str, where to read model grids
+            from, if not the folders the config pointed at
+        band - str, the photometric band `mag` is quoted in (e.g. 'K').
+            Unlike the arguments above, this isn't a StarParams field --
+            it rebuilds the scene's Bandpass. It lives here because a
+            magnitude and the band it's quoted in are one statement, so
+            set_star(mag=12, band='K') is a single reload rather than two.
+        family - str, filter family for `band`, for the cases where the
+            conventional one isn't wanted (e.g. 'decam' rather than 'cfht'
+            for y). Passing `band` alone RESETS the family to the
+            conventional one for that band; pass both to keep a
+            non-conventional one.
+
+        Changing the band REINTERPRETS the magnitude rather than
+        colour-converting it: an H=10 star becomes a K=10 star, so its
+        physical flux -- and the SNR -- change. Two knock-on effects worth
+        knowing, both correct rather than bugs:
+          - a companion, whose magnitude is quoted in the same band, is
+            renormalised too;
+          - [ao] mag_band='default' MEANS "the science band", so an AO
+            guide magnitude left at default follows the band as well, and
+            with mode='auto' a different AO mode can win (filt's center
+            wavelength sets the Strehl, and the high-order and tip-tilt
+            terms scale differently with wavelength).
+
+        output
+        ------
+        self, so calls can be chained: sim.set_star(mag=12).snr()
+        """
+        if band is not UNSET or family is not UNSET:
+            new_band = self.filt.band if band is UNSET else band
+            # a new band re-derives the family, so switching away from an
+            # explicit 'decam' y to K doesn't go looking for a 'decam K' curve
+            new_family = family if family is not UNSET else (None if band is not UNSET else self.filt.family)
+            if self.ao_system.mag_band == 'default' and self.ao_system.mag != 'default':
+                print("WARNING: [ao] mag=%s was quoted in the '%s' band and mag_band is 'default', so it is now "
+                      "being read as '%s'. Set [ao] mag_band to pin it." % (self.ao_system.mag, self.filt.band, new_band))
+            # assign only once the load succeeds, so a bad band leaves the scene usable
+            self.filt = Bandpass.load(self.filter_path, self.zp_file, new_band, new_family, x=self.x)
+            if self.companion is not None:
+                # its magnitude is quoted in the same band, so it renormalises too
+                self.companion.load(self.x, self.filt)
+
+        # Star.load(), not Star.rescaled() -- rescaled() skips setting .v/.s, which the exposure needs.
+        # Unconditional and after the filter rebuild, so changing band and star params together is one reload.
+        updates = _given(mag=mag, teff=teff, vsini=vsini, rv=rv, logg=logg,
+                          phoenix_folder=phoenix_folder, sonora_folder=sonora_folder)
+        self.star = Star(replace(self.star.params, **updates)).load(self.x, self.filt)
+        self._reselect_ao()
+        return self
+
+    def set_filter(self, *, band=UNSET, family=UNSET) -> "Simulate":
+        "Change the photometric band the science magnitude is defined in. Alias for set_star(band=..., family=...) -- see there for the semantics, which are not a colour conversion."
+        return self.set_star(band=band, family=family)
+
+    def set_ao(self, *, mode=UNSET, mag=UNSET, mag_band=UNSET, teff=UNSET,
+               ho_wfe=UNSET, tt_dynamic=UNSET) -> "Simulate":
+        """
+        Change the AO system and re-run mode selection, then reload the
+        spectrograph coupling (which depends on the resulting WFE).
+
+        inputs (all optional; anything not passed is left unchanged)
+        ------
+        mode - str, 'auto' to pick the highest-Strehl mode, or a mode name
+            from the instrument's WFE tables (e.g. 'NGS', 'LGS_ON')
+        mag - float, guide-star magnitude, or 'default' to inherit the
+            science star's
+        mag_band - str, the band `mag` is quoted in (e.g. 'R'), or
+            'default' to treat it as the science star's [filt] band.
+            specsim colour-converts from here into whatever band the
+            chosen mode's WFE table is indexed by.
+        teff - float [K], assumed guide-star temperature, or 'default' to
+            reuse the science star's model. Only affects that colour
+            conversion; a new model grid is loaded when it isn't 'default'.
+        ho_wfe - float [nm], pins the high-order WFE instead of reading it
+            off the chosen mode. Must be passed together with tt_dynamic.
+            Pass ho_wfe=None, tt_dynamic=None to go back to the mode lookup.
+        tt_dynamic - float [mas], pins the dynamic tip-tilt residual.
+            Keep this on the instrument's tabulated coupling grid (MODHIS
+            ships 0-4.5 mas in 0.5 mas steps); off-grid values fail on the
+            missing coupling file.
+
+        output
+        ------
+        self, so calls can be chained: sim.set_ao(mode='NGS').snr()
+        """
+        for name, value in _given(mode=mode, mag=mag, mag_band=mag_band, teff=teff,
+                                   ho_wfe_set=ho_wfe, tt_dynamic_set=tt_dynamic).items():
+            setattr(self.ao_system, name, value)
+        self._reselect_ao()
+        return self
+
+    def set_atmosphere(self, *, pwv=UNSET, seeing_set=UNSET, zenith_angle=UNSET) -> "Simulate":
+        """
+        Change the observing conditions and reload the atmosphere (telluric
+        transmission and sky background, both scaled by airmass).
+
+        Seeing and zenith angle also index the AO WFE tables, so changing
+        either re-runs AO selection and reloads the coupling as well;
+        changing pwv alone does not, since it doesn't reach the AO.
+
+        inputs (all optional; anything not passed is left unchanged)
+        ------
+        pwv - float [mm], precipitable water vapour
+        seeing_set - str, 'good', 'average' or 'bad'
+        zenith_angle - float [deg], sets the airmass; the WFE tables are
+            only tabulated at 0, 30, 45 and 60
+
+        output
+        ------
+        self, so calls can be chained: sim.set_atmosphere(pwv=3).snr()
+        """
+        conditions = _given(pwv=pwv, seeing_set=seeing_set)
+        for name, value in conditions.items():
+            setattr(self.atmosphere, name, value)
+        if zenith_angle is not UNSET:
+            self.zenith_angle = zenith_angle
+        self.atmosphere.load(self.x, self.zenith_angle)
+
+        if 'seeing_set' in conditions or zenith_angle is not UNSET:
+            self._reselect_ao()
+        else:
+            self._invalidate()  # pwv only reaches the exposure, not the AO
+        return self
+
+    def set_obs(self, *, texp=UNSET, texp_frame_set=UNSET, nsamp=UNSET) -> "Simulate":
+        """
+        Change the exposure. Cheapest setter: it only marks the cached
+        exposure stale, with no star/AO/coupling recompute, and leaves the
+        tracking camera alone (it has its own, independent texp).
+
+        inputs (all optional; anything not passed is left unchanged)
+        ------
+        texp - float [s], total integration time
+        texp_frame_set - float [s] per frame, or 'default' to let the
+            spectrograph pick a frame time that avoids saturation
+        nsamp - int, samples up the ramp
+
+        output
+        ------
+        self, so calls can be chained: sim.set_obs(texp=1800).snr()
+        """
+        for name, value in _given(texp=texp, texp_frame_set=texp_frame_set, nsamp=nsamp).items():
+            setattr(self, name, value)
         self._observed = False
+        return self

@@ -65,7 +65,7 @@ The tracking camera has its own transmission file variable (`transmission_file`)
 The cold-snout blocking filter used for the camera's thermal background is pointed to by `blocking_filter_file` under `track:`, and lives in each instrument's `throughput/feicam/` folder. Previously it was found implicitly by appending `feicam/blocking_filter.TXT` to the spectrograph's `transmission_path`, which only HISPEC had -- so tracking-camera calculations failed for MODHIS. Both the blocking filter and the aberrations file are currently HISPEC-derived and copied into the MODHIS tree, so each instrument can be repointed independently as MODHIS-specific versions become available.
 
 #### Filter Files
-The filters used primarily here are 2MASS J/H/K and CFHT y band, similar to PSISIM. These are provided in the `data/filters/` folder (pointed to by `filter_path`/`zp_file` under `filt:` in the instrument YAML). Other filters can be used, but the code relies on the file `zeropoints.txt`, which contains zero point information for each filter. This file must be updated if a new filter is added. The filter band is specified under `[filt]` in the user `.cfg`; the filter family is derived from the band by `Bandpass.family_for_band` (2MASS for J/H/K, CFHT for y, Johnson otherwise), so you only set `band`. Set `family` explicitly under `[filt]` only for a band whose conventional family is not the one you want (e.g. the SLOAN, decam, or TESS curves in `data/filters/`). This filter profile is primarily used to correctly scale the magnitude of the stellar model.
+The filters used primarily here are 2MASS J/H/K and CFHT y band, similar to PSISIM. These are provided in the `data/filters/` folder (pointed to by `filter_path`/`zp_file` under `filt:` in the instrument YAML). Other filters can be used, but the code relies on the file `zeropoints.txt`, which contains zero point information for each filter. This file must be updated if a new filter is added. The filter band is specified under `[filt]` in the user `.cfg`; the filter family is derived from the band by `Bandpass.family_for_band` (2MASS for J/H/K, CFHT for y, Johnson otherwise), so you only set `band`. Set `family` explicitly under `[filt]` only for a band whose conventional family is not the one you want (e.g. the SLOAN, decam, or TESS curves in `data/filters/`). This filter profile is primarily used to correctly scale the magnitude of the stellar model. The band can also be changed at runtime with `sim.set_star(band='K')`. `specsim.available_bands(zp_file)` lists every `(family, band)` that can be loaded, and `Bandpass.loaded()` reports the ones loaded so far this session.
 
 The [SVO service](http://svo2.cab.inta-csic.es/theory/fps/index.php?mode=browse&gname=2MASS&asttype=) is a handy place to download filter profiles.
 
@@ -78,12 +78,12 @@ A spectrum is zipped and provided in `data/telluric/` that spans 800 to 2700nm. 
 
 Phoenix Files: 
 
-We recommend downloading specific Phoenix models [here](http://phoenix.astro.physik.uni-goettingen.de/?page_id=15), but if the full Phoenix HiRes Library is desired, it can be downloaded through FTP here: (ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/). These go in any directory, specified as ```phoenix_folder``` under ```[stel]``` in the user `.cfg` (default `./data/stel/phoenix/`). PHOENIX models are used for teff >= 2300 K.
+We recommend downloading specific Phoenix models [here](http://phoenix.astro.physik.uni-goettingen.de/?page_id=15), but if the full Phoenix HiRes Library is desired, it can be downloaded through FTP here: (ftp://phoenix.astro.physik.uni-goettingen.de/HiResFITS/). By default these come from `./data/stel/phoenix/`, set as ```phoenix_folder``` under ```stel:``` in the instrument YAML, so a user `.cfg` doesn't have to mention them. To use your own directory, give an **absolute** path -- either as ```phoenix_folder``` under ```[stel]``` in your `.cfg` (which overrides the YAML), or per run via `sim.set_star(phoenix_folder=...)` / `StarParams(phoenix_folder=...)`. A *relative* path in a `.cfg` resolves inside the specsim tree, not your working directory. PHOENIX models are used for teff >= 2300 K.
 
 
 [Sonora](https://zenodo.org/record/1309035#.XbtLtpNKhMA) files: 
 
-These should be unzipped into any directory, which should be specified as the variable ```sonora_folder``` under ```[stel]``` in the user `.cfg` (default `./data/stel/sonora/`). Sonora models are used for teff < 2300 K.
+These default to `./data/stel/sonora/` via ```sonora_folder``` under ```stel:``` in the instrument YAML, and are overridden the same way as `phoenix_folder` above. Sonora models are used for teff < 2300 K.
 
 ### Contrast Files
 For nonzero planet separations, specsim can calculate the expected contrast between star and planet using a database of radial profile files. These are specified by `contrast_profile_path` under `ao:` in the instrument YAML (e.g. `./data/instrument/modhis/ao/contrastcurves/`). In the case that these files are not installed, specsim will revert to using an analytical method of calculating the contrast based on input parameters. 
@@ -105,6 +105,22 @@ Configuration is split across two files. A user-facing `.cfg` file (e.g. `./conf
 > sim = simulate_from_config(configfile)       # merges configs/instruments/modhis.yaml in automatically and builds the scene
 ```
 
+### Running from your own folder
+
+Writing a `.cfg` is all you need to do -- the instrument YAML is optional, and you can run from anywhere:
+
+- **The instrument YAML is found for you.** specsim looks for `instruments/<instrument>.yaml` next to your own `.cfg` first, so a project can ship an override, and otherwise falls back to the copy bundled with specsim. Naming an instrument specsim doesn't have raises an error listing the ones it does.
+- **Relative paths mean "inside the specsim tree", not "inside your working directory".** A `./data/...` path in either config file resolves against specsim's own source tree, so a `.cfg` kept anywhere on disk still finds specsim's filter curves, telluric spectra and WFE tables. To point at your own data instead, use an absolute path, or set an absolute `[run] data_folder` that the other relative paths resolve against.
+- **Output still goes where you are.** Only input lookup is anchored; `savepath` and the like stay relative to your working directory.
+
+So a minimal setup outside the repo is one file:
+
+```
+mkdir ~/my_project && cd ~/my_project
+cp <specsim>/configs/modhis_snr.cfg ./my_run.cfg     # edit magnitudes, texp, conditions
+python -c "from specsim import simulate_from_config; print(simulate_from_config('./my_run.cfg').snr())"
+```
+
 `sim` exposes the built domain objects as attributes (`sim.star`, `sim.spectrograph`, `sim.atmosphere`, `sim.ao_system`, `sim.filt`), and computes results on demand. Telescope area/diameter live on `sim.spectrograph` rather than a separate telescope object:
 ```
 > observation = sim.snr()                                    # per-pixel/per-resolution-element/per-order SNR
@@ -120,7 +136,21 @@ We can then use some plotting tools to plot the snr
 
 `sim.snr()` returns the observed `Spectrograph` itself (the same object as `sim.spectrograph`) -- it carries both the hardware and the results, the same way `TrackingCamera` does. The instrument wavelength and flux per pixel in photons are in `.v` and `.s`; the per-resolution-element wavelength grid and SNR are in `.v_res_element` and `.snr_res_element`. Note `.ytransmit` is the total throughput on the model grid, while `.base_throughput_v` is the base throughput resampled onto `.v`.
 
-To scan over a parameter (e.g. magnitude) without rebuilding the whole scene from scratch, use `sim.set_star_mag(mag)` / `sim.set_ao_mode(mode)` / `sim.set_texp(texp)`, then call `sim.snr()` again -- see `examples/median_bin_snr.py`.
+To scan over a parameter without rebuilding the whole scene from scratch, use one of the four setters -- one per scene object, each taking any subset of that object's inputs -- then call `sim.snr()` again. See `examples/median_bin_snr.py`.
+
+```python
+sim.set_star(mag=12, teff=3500, vsini=5, rv=0)          # on-axis star
+sim.set_star(mag=12, band='K')                           # ... and the band that mag is quoted in
+sim.set_ao(mode='NGS', mag=14, mag_band='R', teff=4000)  # AO mode and guide star
+sim.set_ao(ho_wfe=190, tt_dynamic=2.0)                   # ... or pin the WFE by hand
+sim.set_atmosphere(pwv=1.5, seeing_set='good', zenith_angle=45)
+sim.set_obs(texp=1800, nsamp=8)                          # exposure
+```
+
+Anything not passed is left unchanged, so `sim.set_star(mag=12)` moves only the magnitude; passing several at once does the reload work once rather than once per parameter. Each returns `sim`, so calls chain: `sim.set_obs(texp=1800).snr()`. `None` and `'default'` are real values, not "unchanged" -- `sim.set_ao(ho_wfe=None, tt_dynamic=None)` clears a WFE override, and `sim.set_ao(mag='default')` goes back to inheriting the science star's magnitude.
+
+Changing `band` **reinterprets** the magnitude rather than colour-converting it: an H=10 star becomes a K=10 star, so its physical flux -- and the SNR -- change. Two knock-on effects, both correct rather than surprises to suppress: a companion's magnitude is quoted in the same band and is renormalised too, and `[ao] mag_band='default'` *means* "the science band", so an AO guide magnitude left at default follows along. Since `filt.center_wavelength` sets the Strehl, and the high-order and tip-tilt terms scale differently with wavelength, `mode='auto'` can legitimately pick a different AO mode after a band change. `sim.set_filter(band='K')` is an alias when you only want to move the band.
+
 
 
 # Code structure
@@ -146,7 +176,7 @@ flowchart TD
     end
 
     subgraph RUN ["③ Run"]
-        SIM["<b>Simulate</b> · simulate.py<br/><i>owns the scene and calls .observe()<br/>on demand. set_star_mag/teff,<br/>set_ao_mode, set_texp rebuild<br/>only what changed</i>"]
+        SIM["<b>Simulate</b> · simulate.py<br/><i>owns the scene and calls .observe()<br/>on demand. set_star, set_ao,<br/>set_atmosphere, set_obs rebuild<br/>only what changed</i>"]
     end
 
     subgraph OUT ["④ Analysis and output"]
@@ -188,7 +218,7 @@ flowchart TD
     FUNC -.-> OUT
 ```
 
-The build order in the scene is not arbitrary: the star's magnitude sets which AO mode is chosen, the AO mode sets the wavefront error, and the wavefront error sets the fiber coupling that goes into the spectrograph throughput. That is why `set_star_mag()` and `set_star_teff()` re-run the AO selection and reload the coupling, while `set_texp()` only marks the exposure stale so the next `sim.snr()` re-runs `observe()`.
+The build order in the scene is not arbitrary: the star's magnitude sets which AO mode is chosen, the AO mode sets the wavefront error, and the wavefront error sets the fiber coupling that goes into the spectrograph throughput. This is what decides how much work each setter does. `set_star()` sits at the top of the chain, so it reloads the star, re-runs AO selection and reloads the coupling -- and `band` sits higher still, since it also renormalises any companion and moves the reference wavelength the Strehl is computed at, making it the most expensive input to change. `set_obs()` sits at the bottom and only marks the exposure stale, so the next `sim.snr()` re-runs `observe()`. `set_atmosphere()` splits: seeing and zenith angle index the AO WFE tables and so re-run the AO, while pwv only reaches the exposure and does not.
 
 ## Module reference
 

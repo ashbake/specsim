@@ -134,9 +134,9 @@ class AOSystem:
         """
         Determine the AO correction quality (high-order and tip-tilt
         wavefront error, and resulting Strehl) for the on-axis star. If
-        ho_wfe_set/tt_dynamic_set are both given (floats or both file
-        paths), those user-defined values are used directly and
-        mode_chosen is set to 'User Defined'. Otherwise, WFE lookup tables
+        ho_wfe_set/tt_dynamic_set are both given, those user-defined
+        values [nm and mas] are used directly and mode_chosen is set to
+        'User Defined HO and TT values'. Otherwise, WFE lookup tables
         (ho_wfe_file/tt_dynamic_file) are loaded for every available AO
         mode as a function of guide-star magnitude, seeing, and zenith
         angle; the guide-star magnitude used to sample each mode is
@@ -170,8 +170,11 @@ class AOSystem:
         if self.mag_band != 'default':
             # mag is quoted in a different band than filt -- load just that
             # band's curve + zp/dl_l to scale to (Bandpass.load derives the
-            # filter family from the band: R->Johnson, JHK->2mass, y->cfht)
-            mag_filt = Bandpass.load(filter_path, zp_file, self.mag_band, x=x)
+            # filter family from the band: R->Johnson, JHK->2mass, y->cfht).
+            # No x= here: the consumers below go through .interp()/.xraw/.zp/
+            # .dl_l on the star's own grid, so resampling onto x would build a
+            # multi-million-point array nothing reads.
+            mag_filt = Bandpass.load(filter_path, zp_file, self.mag_band)
 
         if self.teff == 'default':
             # reuse the on-axis star's already-loaded model grid; rescale
@@ -182,24 +185,44 @@ class AOSystem:
             else:
                 ao_star = star.rescaled(self.mag, filt=mag_filt)
         else:  # if new teff, load new model
-            ao_star = Star(StarParams(teff=self.teff, mag=self.mag, vsini=0, rv=0, logg=star.params.logg,
+            # mag == 'default' means "as bright as the science star" -- inherit its
+            # magnitude, which is quoted in filt's band, so scale against filt
+            # rather than mag_filt (mag_band only describes an explicitly set mag).
+            if self.mag == 'default':
+                ao_mag, ao_filt = star.params.mag, filt
+            else:
+                ao_mag, ao_filt = self.mag, (mag_filt if mag_filt is not None else filt)
+            ao_star = Star(StarParams(teff=self.teff, mag=ao_mag, vsini=0, rv=0, logg=star.params.logg,
                                        phoenix_folder=star.params.phoenix_folder, sonora_folder=star.params.sonora_folder)
-                           ).load(x, mag_filt if mag_filt is not None else filt)
+                           ).load(x, ao_filt)
             self.ao_star = ao_star
 
         if self.tt_dynamic_set is not None or self.ho_wfe_set is not None:
-            # requires either both to be text file or both to be floats
-            if type(self.ho_wfe_set) != type(self.tt_dynamic_set):
-                raise ValueError('HO WFE and TT Dynamic must *both* be set to float values or both to file paths to WFE files')
+            # user pinned the WFE by hand -- skip the mode lookup entirely.
+            # Both must be given: a Strehl needs a high-order *and* a tip-tilt
+            # term, and there is no mode to fall back on for the missing one.
+            if self.ho_wfe_set is None or self.tt_dynamic_set is None:
+                raise ValueError('ho_wfe_set and tt_dynamic_set must *both* be set (got ho_wfe_set=%r, '
+                                 'tt_dynamic_set=%r); leave both unset to pick an AO mode from the WFE files'
+                                 % (self.ho_wfe_set, self.tt_dynamic_set))
             self.mode_chosen = 'User Defined HO and TT values'
             self.band = 'N/A'
+            self.ho_wfe = float(self.ho_wfe_set)
+            self.tt_dynamic = float(self.tt_dynamic_set)
+            self.ao_mag = ao_star.magnitude_in_band(mag_filt if mag_filt is not None else filt)
+            self.strehl = (calc_strehl_marechal(self.ho_wfe, filt.center_wavelength)
+                           * tt_to_strehl(self.tt_dynamic, filt.center_wavelength, self.diameter_m))
+            self.strehl_array = np.array([self.strehl])
+            self.ao_modes = np.array([self.mode_chosen])
         else:
             data = load_WFE(self.ho_wfe_file, self.tt_dynamic_file, zenith_angle, seeing_set)
             ao_modes = np.array(list(data.keys()))
             strehl, ho_wfes, tt_wfes, aomags = [], [], [], []
             for ao_mode in ao_modes:
-                # get magnitude in band the AO mode is defined in
-                wfe_bp = Bandpass.load(filter_path, zp_file, data[ao_mode]['band'], x=x)
+                # get magnitude in band the AO mode is defined in (no x= --
+                # this runs once per candidate mode, and magnitude_in_band
+                # only needs the raw curve; see the note on mag_filt above)
+                wfe_bp = Bandpass.load(filter_path, zp_file, data[ao_mode]['band'])
                 wfe_mag = ao_star.magnitude_in_band(wfe_bp)
                 aomags.append(wfe_mag)
                 # interpolate over WFEs and sample HO and TT at correct mag

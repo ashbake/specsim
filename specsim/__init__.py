@@ -17,7 +17,7 @@ be constructed directly when a config file isn't wanted.
 from specsim.analyze import Analyze, CCFSNRResult, ETCResult, RVPrecisionResult
 from specsim.aosystem import AOSystem
 from specsim.atmosphere import Atmosphere
-from specsim.bandpass import Bandpass, YJHK
+from specsim.bandpass import Bandpass, YJHK, available_bands
 from specsim.config import load_config, load_instrument_yaml, simulate_from_config
 from specsim.spectrograph import Spectrograph
 from specsim.simulate import Simulate
@@ -29,6 +29,7 @@ __all__ = [
     'Simulate',
     'Star', 'StarParams', 'Bandpass', 'Atmosphere',
     'AOSystem', 'Spectrograph', 'TrackingCamera',
+    'available_bands',
     'Analyze', 'ETCResult', 'RVPrecisionResult', 'CCFSNRResult',
     'YJHK',
 ]

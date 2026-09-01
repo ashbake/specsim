@@ -15,6 +15,7 @@ os.chdir('./')
 
 from dataclasses import replace
 
+from specsim.paths import DATA_DIR
 from specsim.spectrograph import get_order_bounds, grid_interp_coupling, pick_coupling_rounded
 from specsim.trackingcamera import get_tracking_band
 from specsim.bandpass import Bandpass, YJHK
@@ -25,9 +26,10 @@ from specsim.functions import *
 
 all = {}
 
-# Repo-root-relative, matching the ./data/ paths in configs/instruments/*.yaml.
-# The examples chdir to the repo root before calling into here.
-DATAPATH = './data/'
+# Anchored to the specsim tree, matching how configs/instruments/*.yaml paths
+# are resolved, so plots work from any working directory. SAVEPATH stays
+# relative: output belongs wherever the user is running, not in the source tree.
+DATAPATH = DATA_DIR
 SAVEPATH = './output/'
 
 
@@ -108,7 +110,7 @@ def plot_doppler_spectrographs(sim):
 
 	#tellurics
 	tel_nir = sim.atmosphere.s.copy()
-	data = fits.getdata('./data/telluric/psg_out_2015.06.17_l0_380nm_l1_900nm_res_0.002nm_lon_204.53_lat_19.82_pres_0.5826.fits')
+	data = fits.getdata(DATAPATH + 'telluric/psg_out_2015.06.17_l0_380nm_l1_900nm_res_0.002nm_lon_204.53_lat_19.82_pres_0.5826.fits')
 	_,ind     = np.unique(data['Wave/freq'],return_index=True)
 	tck_tel   = interpolate.splrep(data['Wave/freq'][ind],data['Total'][ind], k=2, s=0)
 	tel_vis = interpolate.splev(sim.x,tck_tel,der=0,ext=1)
@@ -332,7 +334,6 @@ def plot_rv_err_gen(v,s,order_cens,rv_order,rv_floor=0.3,savefig=True,tag='test'
 	axs[1].set_xlim(950,2400)
 	axs[1].set_ylabel(r'$\sigma_{RV}$ [m/s]')
 	axs[1].set_xlabel('Wavelength [nm]')
-
 	axs[0].set_ylabel('SNR/pixel')
 	axs[0].set_title(tag)
 
@@ -514,7 +515,7 @@ def plot_cool_stars():
 	for confirmed planets around cool (Teff < 4000K), small (Rp < 2 Rearth),
 	short period (Teq < 360K) stars
 	"""
-	planets_filename = './data/populations/rv_less2earthrad_less360Teq_less4000Teff_planets_.csv'
+	planets_filename = DATAPATH + 'populations/rv_less2earthrad_less360Teq_less4000Teff_planets_.csv'
 	planet_data =  pd.read_csv(planets_filename,delimiter=',',comment='#')
 
 	hmags = planet_data['sy_hmag']
@@ -554,7 +555,7 @@ def plot_brown_dwarfs():
 		figures are left open on the current pyplot state for the caller
 		to save or display.
 	"""
-	bd_filename = './data/populations/UltracoolSheetMain.csv'
+	bd_filename = DATAPATH + 'populations/UltracoolSheetMain.csv'
 	bd_data =  pd.read_csv(bd_filename,delimiter=',',comment='#')
 
 	#sp_type = bd_data['spt_opt']
@@ -601,7 +602,7 @@ def plot_brown_dwarfs():
 	plt.ylabel('T$_{eff}$ (K)')
 	plt.subplots_adjust(left=0.15)
 
-def plot_throughput_nice(telluric_file,datapath='./data/throughput/hispec_subsystems_11032022/',outputdir='../output/'):
+def plot_throughput_nice(telluric_file,datapath=DATAPATH + 'throughput/hispec_subsystems_11032022/',outputdir='../output/'):
     """
     Plot the HISPEC yJ-band end-to-end throughput for the MRI proposal,
     comparing NGS (natural guide star) vs. LGS (laser guide star) AO
@@ -627,7 +628,7 @@ def plot_throughput_nice(telluric_file,datapath='./data/throughput/hispec_subsys
     datapath : str
         directory containing per-subsystem throughput files; accepted
         but not referenced in the function body (default
-        './data/throughput/hispec_subsystems_11032022/')
+        DATAPATH + 'throughput/hispec_subsystems_11032022/')
     outputdir : str
         directory to read the precomputed *_throughput_*.txt files
         from; accepted but immediately overwritten to './output/'
@@ -641,7 +642,7 @@ def plot_throughput_nice(telluric_file,datapath='./data/throughput/hispec_subsys
         commented out, so the figure is left open rather than saved.
     """
     # plot red only
-    telluric_file = './data/telluric/psg_out_2020.08.02_l0_800nm_l1_2700nm_res_0.001nm_lon_204.53_lat_19.82_pres_0.5826.fits'
+    telluric_file = DATAPATH + 'telluric/psg_out_2020.08.02_l0_800nm_l1_2700nm_res_0.001nm_lon_204.53_lat_19.82_pres_0.5826.fits'
     outputdir     = './output/'
     w, ngs_bspec = np.loadtxt(outputdir + 'ngs_throughput_bspec.txt').T
     w, lgs_bspec = np.loadtxt(outputdir + 'lgs_throughput_bspec.txt').T

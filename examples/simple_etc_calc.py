@@ -8,8 +8,11 @@ font = {'size'   : 14}
 matplotlib.rc('font', **font)
 
 from pathlib import Path
-try: sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-except: pass # if running in terminal must run from main directory to see specsim folder
+try:
+	ROOT = Path(__file__).resolve().parent.parent
+except NameError: # running interactively; assume cwd is examples/
+	ROOT = Path.cwd().parent
+sys.path.insert(0, str(ROOT))
 
 from specsim.config import simulate_from_config
 
@@ -17,11 +20,7 @@ plt.ion()
 
 if __name__=='__main__':
 	#load inputs
-	print("Current working directory:", os.getcwd())
-	# Change current directory to parent directory
-	if os.getcwd().split('/')[-1] == 'examples': os.chdir('..')
-
-	configfile = './configs/hispec_etc_onaxis.cfg'
+	configfile = str(ROOT / 'configs' / 'hispec_etc_onaxis.cfg')
 	sim = simulate_from_config(configfile)
 
 	target_snr = 100
