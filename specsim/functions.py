@@ -458,6 +458,27 @@ def tt_to_strehl(tt,lam,D):
 
     return strehl_tt
 
+def wfe_to_tt(wfe_nm, D):
+    """
+    convert tip/tilt WFE (RMS, nm) directly to tip/tilt angle (RMS, mas)
+    inverse of WFE = theta_rad * D / 4
+
+    inputs
+    ------
+    wfe_nm : float or array [nm]
+        tip/tilt wavefront error, RMS
+    D : float [m]
+        telescope diameter
+
+    outputs
+    -------
+    tt_mas : float or array [mas]
+        tip tilt rms
+    """
+    wfe_m = wfe_nm * 1e-9
+    tt_rad = 4 * wfe_m / D
+    tt_mas = tt_rad * 206265 * 1e3
+    return tt_mas
 
 ##############################################################
 # Optics / atmosphere geometry
