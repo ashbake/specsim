@@ -103,6 +103,8 @@ class INSTRUMENT():
         # code filled in values
         self.base_throughput = None # base throughput of instrument (no coupling)
         self.coupling        = None # coupling of fiber 
+        self.vfn             = None # 0 or 1
+        self.vfn_coupling_file = None # file with vfn coupling data
         self.order_cens      = None # order centers
         self.order_widths    = None # order widths
         self.sig             = None # resolution element in nm   
@@ -181,11 +183,13 @@ class STELLAR():
         self.vsini    = 0     # km/s, vsini of star
         self.mag      = 10    # mag, star magnitude defined in so.filt bandpass
         self.teff     = 3600  # K, star temperature
+        self.host_diam_mas = 0.0 # [mas] angular diameter of host star for geometric null leakage
         self.rv       = 0     # absolute rv of system [km/s]
         self.pl_sep   = 0     # mas, if 0 it will assume on axis, if non zero it will assume off axis
         self.pl_teff  = 800   # K, planet temperature, used if pl_sep>0
         self.pl_mag   = 19    # mag, planet magnitude defined in same bandpass as star, used if pl_sep>0
         self.pl_vsini = 0     # km/s, planet vsini, used if pl_sep>0
+        self.pl_logg  = 4.5   # log g of planet (cgs), used for Sonora model selection if provided
         self.logg     = 4.5   # logg of star, default to 4.5
         # Filled in by code:
         self.vraw = None   # wavelength like normal (should match exoplanet and be in standard wavelength)

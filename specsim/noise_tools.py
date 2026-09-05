@@ -438,7 +438,7 @@ def get_MODHIS_contrast(folder, ao_mode, seeing, zenith_angle, magnitude, waves,
     return overall_contrast
 
 
-def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,vortex_charge):
+def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,vortex_charge,host_diameter=0.0):
     """
     Estimate residual on-axis stellar leakage (contrast) for a vector
     vortex fiber nulling (VFN) coronagraph, i.e. the planet is off axis
@@ -478,6 +478,8 @@ def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,v
     vortex_charge - integer topological charge of the vortex coronagraph
                     (1 or 2); selects the empirical WFE and geometric
                     leakage coefficients
+    host_diameter [mas] - angular diameter of the host star, used for
+                    geometric leakage term (default 0.0, no geometric leakage)
 
     outputs
     -------
@@ -485,13 +487,6 @@ def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,v
         total estimated on-axis stellar leakage contrast (dimensionless,
         sum of WFE, tip/tilt, and geometric leakage terms), clipped to
         be <= 1
-
-    TODO
-    ----
-    need planet throughput to accompany it since off axis?
-    note: this function references an undefined `host_diameter`
-    variable (not one of the listed inputs) for the geometric leakage
-    term; see function body.
     """
     # apply units
     ho_wfe *= u.nm
@@ -506,6 +501,9 @@ def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,v
         wfe_coeff = 0.840       # Updated on 1/11/21 based on 6/17/19 pyWFS data
     elif vortex_charge == 2:
         wfe_coeff = 1.650       # Updated on 1/11/21 based on 6/17/19 pyWFS data
+    elif vortex_charge == 0:    # phase knife
+        wfe_coeff = 0  
+    # TODO: update wfe_coeff for vortex charge 1 and 2, phase knife
 
     #Approximate contrast from WFE
     contrast = (wfe_coeff * ho_wfe.to(u.micron) / wvs)**(2.) # * self.vortex_charge)

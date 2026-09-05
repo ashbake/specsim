@@ -218,15 +218,16 @@ def scale_stellar(filt,stelv,stels,mag):
 	return nphot_expected_0/nphot_model
 
 
-def load_stellar_model(x,mag,teff,vsini,so,rv=0):
+def load_stellar_model(x,mag,teff,vsini,so,rv=0,logg=None):
 	"""
 	Load a model stellar spectrum (Sonora or PHOENIX, chosen by effective
 	temperature), scale it to the designated magnitude, broaden it by
 	rotational velocity, optionally apply a radial-velocity Doppler shift,
 	and interpolate the result onto the requested wavelength grid x.
 
-	Sonora models are used for teff < 2300 K (assuming log g = log10(316*100)
-	= 4.5), otherwise a PHOENIX model at so.stel.logg is used.
+	Sonora models are used for teff < 2300 K, otherwise a PHOENIX model is
+	used. For Sonora models, the surface gravity can be specified via the
+	logg parameter; if not provided, log g = 4.5 (g = 316 m/s²) is used.
 
 	inputs:
 	-------
@@ -255,6 +256,12 @@ def load_stellar_model(x,mag,teff,vsini,so,rv=0):
 		radial velocity offset to apply to the spectrum via a Doppler shift
 		[km/s], used e.g. to offset the star from tellurics for CCF
 		purposes (default 0)
+
+	logg - float or None
+		log10 of surface gravity in cgs [cm/s²]. For Sonora models
+		(teff < 2300 K), this selects the gravity file; if None, defaults
+		to 4.5 (g = 316 m/s²). For PHOENIX models, so.stel.logg is used
+		if logg is None.
 
 	returns:
 	--------
@@ -286,16 +293,25 @@ def load_stellar_model(x,mag,teff,vsini,so,rv=0):
 	l0,l1 = np.min((np.min(x),np.min(so.filt.xraw))),np.max((np.max(x),np.max(so.filt.xraw)))
 
 	if teff < 2300: # sonora models arent sampled as well so use phoenix as low as can
-		g    = '316' # mks units, np.log10(316 * 100)=4.5 to match what im holding for phoenix models.
+		# Convert logg (cgs) to MKS gravity for Sonora filename, default g=316 (logg=4.5)
+		# Grid values match Sonora filename convention (truncated integers)
+		SONORA_G_GRID = np.array([10, 17, 31, 56, 100, 178, 316, 562, 1000, 1780, 3160])
+		if logg is not None:
+			g_mks = 10**logg / 100  # cgs (cm/s2) -> MKS (m/s2)
+			g_val = SONORA_G_GRID[np.argmin(np.abs(SONORA_G_GRID - g_mks))]
+		else:
+			g_val = 316  # default: log g = 4.5
+		g    = str(int(g_val))
 		teff = str(int(teff))
 		stel_file         = so.stel.sonora_folder + 'sp_t%sg%snc_m0.0' %(teff,g)
 		vraw,sraw = load_sonora(stel_file,wav_start=l0,wav_end=l1)
 		model             = 'sonora'
 	else:
 		teff = str(int(teff)).zfill(5)
-		logg = '{:.2f}'.format(so.stel.logg)
-		model             = 'phoenix' 
-		stel_file         = 'lte%s-%s-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'%(teff,logg)
+		logg_val = logg if logg is not None else so.stel.logg
+		logg_str = '{:.2f}'.format(logg_val)
+		model             = 'phoenix'
+		stel_file         = 'lte%s-%s-0.0.PHOENIX-ACES-AGSS-COND-2011-HiRes.fits'%(teff,logg_str)
 		vraw,sraw = load_phoenix(stel_file,so.stel.phoenix_folder,wav_start=l0, wav_end=l1) #phot/m2/s/nm
 	
 

@@ -190,7 +190,7 @@ class fill_data():
 		so.stel.s, so.stel.vraw,so.stel.sraw,so.stel.model, so.stel.stel_file, so.stel.factor_0 = source_tools.load_stellar_model(self.x,so.stel.mag,so.stel.teff,so.stel.vsini,so,rv=so.stel.rv)
 		# load companion if there is one (requires separation>0)
 		if so.stel.pl_sep>0:
-			so.stel.pl_s, _,_,so.stel.pl_model, so.stel.pl_stel_file, so.stel.pl_factor_0 = source_tools.load_stellar_model(self.x,so.stel.pl_mag,so.stel.pl_teff,so.stel.pl_vsini,so,rv=so.stel.rv)
+			so.stel.pl_s, _,_,so.stel.pl_model, so.stel.pl_stel_file, so.stel.pl_factor_0 = source_tools.load_stellar_model(self.x,so.stel.pl_mag,so.stel.pl_teff,so.stel.pl_vsini,so,rv=so.stel.rv,logg=so.stel.pl_logg)
 
 		so.stel.v   = self.x
 		so.stel.units = 'photons/s/m2/nm' # stellar spec is in photons/s/m2/nm
@@ -580,20 +580,37 @@ class fill_data():
 		so.obs.ind_filter - array, indices of so.obs.v that fall within the
 			yJ/HK detector passbands
 		"""
-		# flux density is stellar flux * telescope area * instrument throughput * atmospheric absorption 
+		# flux density is stellar flux * telescope area * instrument throughput * atmospheric absorption
 		# If planet separation is >0, compute for the planet also
 		phot_per_sec_nm = so.stel.s * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
 		if so.stel.pl_sep>0:
-			phot_per_sec_nm_pl = so.stel.pl_s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
-			try:
-				contrast = noise_tools.get_MODHIS_contrast(so.ao.contrast_profile_path, so.ao.mode_chosen, so.tel.seeing, so.obs.zenith_angle, so.stel.mag, self.x, so.stel.pl_sep) # new version, specific to MODHIS
-				print("Using new MODHIS contrast calculator with radial profile database.")
-			except Exception as e:
-				print(f"Warning: {e}, using old contrast calculator with analytic method.")
-				contrast = noise_tools.get_contrast(self.x,so.stel.pl_sep,so.inst.tel_diam,so.tel.seeing,so.ao.strehl) # old version
-			
-			# contrast1 = noise_tools.get_MODHIS_contrast(so.ao.contrast_profile_path, so.ao.mode_chosen, so.tel.seeing, so.obs.zenith_angle, so.stel.mag, self.x, so.stel.pl_sep) # new version, specific to MODHIS
-			# contrast2 = noise_tools.get_contrast(self.x,so.stel.pl_sep,so.inst.tel_diam,so.tel.seeing,so.ao.strehl) # old version
+			if so.inst.vfn:
+				# VFN mode: planet throughput uses phase knife coupling curve instead of standard SMF coupling
+				with open(so.inst.vfn_coupling_file) as _f:
+					_lines = [l for l in _f if not l.startswith('#')]
+				vfn_table = np.loadtxt(_lines[1:], delimiter=',')
+				# Convert planet separation to lambda/D at each wavelength
+				pl_sep_rad = so.stel.pl_sep * 1e-3 / 206265  # mas -> radians
+				ang_sep_LoD = pl_sep_rad / (self.x * 1e-9 / so.inst.tel_diam)  # separation in lambda/D
+				vfn_coupling = np.interp(ang_sep_LoD, vfn_table[:,0], vfn_table[:,1], left=0, right=0)
+				# Planet throughput: base throughput * VFN coupling (no SMF coupling, no Strehl)
+				ytransmit_vfn = so.inst.base_throughput * vfn_coupling * so.ao.dichroic
+				phot_per_sec_nm_pl = so.stel.pl_s * so.inst.tel_area * ytransmit_vfn * np.abs(so.tel.s)
+				# Stellar leakage: VFN null depth model
+				contrast = noise_tools.get_speckle_noise_vfn(self.x, so.ao.ho_wfe, so.ao.tt_dynamic,
+								so.stel.pl_sep, so.stel.mag, so.tel.seeing, so.ao.strehl,
+								so.inst.tel_diam, vortex_charge=getattr(so.inst, 'vfn_charge', 1), host_diameter=so.stel.host_diam_mas)
+				_vfn_charge = getattr(so.inst, 'vfn_charge', 1)
+				_vfn_labels = {0: 'phase knife', 1: 'charge-1 vortex', 2: 'charge-2 vortex'}
+				print(f"Using VFN contrast model ({_vfn_labels.get(_vfn_charge, f'charge={_vfn_charge}')}).")
+			else:
+				phot_per_sec_nm_pl = so.stel.pl_s  * so.inst.tel_area * so.inst.ytransmit * np.abs(so.tel.s)
+				try:
+					contrast = noise_tools.get_MODHIS_contrast(so.ao.contrast_profile_path, so.ao.mode_chosen, so.tel.seeing, so.obs.zenith_angle, so.stel.mag, self.x, so.stel.pl_sep) # new version, specific to MODHIS
+					print("Using new MODHIS contrast calculator with radial profile database.")
+				except Exception as e:
+					print(f"Warning: {e}, using old contrast calculator with analytic method.")
+					contrast = noise_tools.get_contrast(self.x,so.stel.pl_sep,so.inst.tel_diam,so.tel.seeing,so.ao.strehl) # old version
 
 
 		# Figure out the exposure time per frame to avoid saturation
