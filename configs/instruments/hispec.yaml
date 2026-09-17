@@ -26,7 +26,9 @@ atm:
   sky_path: ./data/telluric/sky/
 
 spectrograph:
-  transmission_path: ./data/instrument/hispec/throughput/
+  transmission_file: ./data/instrument/hispec/throughput/base_throughput.csv
+  coupling_path: ./data/instrument/hispec/throughput/coupling/
+  inst_background_file: ./data/instrument/hispec/thermal_background/instbkg.csv
   order_bounds_file: ./data/instrument/hispec/order_bounds.csv
   atm: 1
   adc: 1
@@ -53,8 +55,8 @@ track:
   band: JHgap
   fratio: 35
   camera: h2rg
-  transmission_file: ./data/track/trackingcamera.csv
+  transmission_file: ./data/instrument/hispec/track/trackingcamera.csv
   texp: 1
   field_r: 0
   aberrations_file: ./data/instrument/hispec/track/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt
-  blocking_filter_file: ./data/instrument/hispec/throughput/feicam/blocking_filter.TXT
+  blocking_filter_file: ./data/instrument/hispec/track/blocking_filter.TXT

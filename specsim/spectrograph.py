@@ -10,8 +10,10 @@
 #     Spectrograph(...).load(x, ao).observe(x, star, atm, ao, texp=...)
 #     TrackingCamera(...).observe(x, star, atm, ao, spectrograph)
 #
-# The background/contrast helpers that only this detector uses live here too,
-# mirroring get_sky_bg_tracking/get_inst_bg_tracking in trackingcamera.py.
+# The sky-background and contrast helpers that only this detector uses live
+# here too, mirroring get_sky_bg_tracking in trackingcamera.py. The instrument
+# thermal background is no longer computed from per-subsystem emissivities --
+# it is read from inst_background_file, as the throughput and coupling now are.
 #
 # Note two same-named quantities that are NOT the same array:
 #   .ytransmit         total throughput (base x coupling x dichroic) on grid x
@@ -27,13 +29,17 @@ import numpy as np
 import pandas as pd
 from scipy import interpolate
 from astropy import units as u
-from astropy.modeling.models import BlackBody
 
 from specsim.aosystem import AOSystem
 from specsim.atmosphere import Atmosphere
 from specsim.functions import calc_strehl_marechal, degrade_spec, resample, sum_total_noise
 from specsim.paths import DATA_DIR
 from specsim.star import Star
+
+
+##############################################################
+# Functions to load various input files and compute key things
+###############################################################
 
 def get_sky_bg(x,sky_bg_v,sky_bg,npix=3,R=100000,diam=10,area=76):
     """
@@ -74,95 +80,15 @@ def get_sky_bg(x,sky_bg_v,sky_bg,npix=3,R=100000,diam=10,area=76):
     """
     diam *= u.m
     area = area * u.m * u.m
-    wave = x*u.nm
+    wave = x * u.nm
 
     fwhm = ((wave  / diam) * u.radian).to(u.arcsec)
     solidangle = fwhm**2 * 1.13 #corrected for Gaussian beam (factor 1.13)
 
-    pix_width_nm  = (wave/R/npix) #* u.nm
-    sky_background_interp=np.interp(wave.value, sky_bg_v, sky_bg) * u.photon/(u.s*u.arcsec**2*u.nm*u.m**2) * area * solidangle * pix_width_nm
+    pix_width_nm = (wave/R/npix) #* u.nm
+    sky_background_interp = np.interp(wave.value, sky_bg_v, sky_bg) * u.photon/(u.s*u.arcsec**2*u.nm*u.m**2) * area * solidangle * pix_width_nm
 
-    return sky_background_interp.value # ph/s
-
-
-def get_inst_bg(x,npix=3,R=100000,diam=10,area=76,datapath=DATA_DIR + 'throughput/hispec_subsystems_11032022/'):
-    """
-    Generate instrument thermal background per reduced pixel, default to HISPEC.
-    Loads the emissivity and physical temperature of each red-arm and
-    blue-arm instrument subsystem (via get_emissivity), builds a
-    Planck blackbody spectrum for each temperature scaled by the
-    telescope area and the diffraction-limited beam solid angle, weights
-    each blackbody by the corresponding subsystem emissivity, sums the
-    contributions across subsystems, converts to a photon rate over one
-    reduced-pixel resolution element (wave/R/npix), stitches the red and
-    blue arm results together at 1.4 micron, and spline-interpolates the
-    result back onto the input wavelength grid.
-    Source: DMawet jup. notebook
-
-    inputs:
-    -------
-    x : array [nm]
-        wavelength in nanometers
-    npix: integer
-        number of pixels
-    R: float
-        resolving power of instrument, default is 100,000
-    diam: float [m]
-        diameter of telescope in meters
-    area: float [m^2]
-        area of telescope in meters squared
-    datapath: string
-        path to where throughput data in HISPEC format is
-
-    outputs:
-    --------
-    array [ph/s]
-        instrument thermal background photon rate per reduced pixel
-        (already considering PSF sampling), sampled on the input
-        wavelength grid x
-    """
-    em_red,em_blue, temps = get_emissivity(x,datapath=datapath)
-
-    # assign units
-    diam *= u.m
-    area *= u.m * u.m
-    wave = x*u.nm
-
-    # compute pixel width in nanometers
-    fwhm = ((wave  / diam) * u.radian).to(u.arcsec)
-    solidangle = fwhm**2 * 1.13 #corrected for Gaussian beam (factor 1.13)
-    pix_width_nm  = (wave/R/npix) #* u.nm 
-
-    # step through temperatures and emissivities for red and blue
-    # em_red and em_blue are indexed matching temp index
-    for i,temp in enumerate(temps):
-        bbtemp_fxn  = BlackBody(temp * u.K, scale=1.0 * u.erg / (u.micron * u.s * u.cm**2 * u.arcsec**2)) 
-        bbtemp      = bbtemp_fxn(wave) *  area.to(u.cm**2) * solidangle
-        if i==0:
-            tel_thermal_red  = em_red[i] * bbtemp.to(u.photon/u.s/u.micron, equivalencies=u.spectral_density(wave)) * pix_width_nm
-            tel_thermal_blue = em_blue[i] * bbtemp.to(u.photon/u.s/u.micron, equivalencies=u.spectral_density(wave)) * pix_width_nm
-        else:
-            therm_red_temp   = em_red[i] * bbtemp.to(u.photon/u.s/u.micron, equivalencies=u.spectral_density(wave)) * pix_width_nm
-            therm_blue_temp  = em_blue[i] * bbtemp.to(u.photon/u.s/u.micron, equivalencies=u.spectral_density(wave)) * pix_width_nm
-            tel_thermal_red+= therm_red_temp
-            tel_thermal_blue+= therm_blue_temp
-
-    # interpolate and combine into one thermal spectrum
-    isubred = np.where(wave > 1.4*u.um)[0]
-    em_red_tot  = tel_thermal_red[isubred].decompose()
-    isubblue = np.where(wave <1.4*u.um)[0]
-    em_blue_tot  = tel_thermal_blue[isubblue].decompose()
-
-    # w,s
-    w = np.concatenate([x[isubblue],x[isubred]])
-    s = np.concatenate([em_blue_tot,em_red_tot])
-
-    # interpolate onto input x array
-    tck        = interpolate.splrep(w,s.value, k=2, s=0)
-    em_total   = interpolate.splev(x,tck,der=0,ext=1)
-
-    return em_total # units of ph/s/reduced_pix
-
+    return sky_background_interp.value # ph/s/reduced pixel
 
 def get_contrast(wave,pl_sep,tel_diam,seeing,strehl):
     """
@@ -232,7 +158,6 @@ def get_contrast(wave,pl_sep,tel_diam,seeing,strehl):
     contrast[contrast>1] = 1.
 
     return contrast
-
 
 def get_MODHIS_contrast(folder, ao_mode, seeing, zenith_angle, magnitude, waves, radius):
     """Function to get contrast from a particular file at a given radius.
@@ -325,7 +250,6 @@ def get_MODHIS_contrast(folder, ao_mode, seeing, zenith_angle, magnitude, waves,
             overall_contrast[i] = 1
 
     return overall_contrast
-
 
 def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,vortex_charge):
     """
@@ -437,7 +361,6 @@ def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,v
 
     return contrast
 
-
 def get_order_bounds(filename):
     """
     open order bounds file
@@ -455,12 +378,7 @@ def get_order_bounds(filename):
     cenlam, width = f.T[0],f.T[1]
     return cenlam, width
 
-
-##############################################################
-# Instrument throughput and fiber coupling, read off disk
-###############################################################
-
-def pick_coupling_rounded(transmission_path,w,ho_wfe, tt_dynamic, lo_wfe=50, tt_static=0, defocus=0, atm=1,adc=1,pl_on=1,piaa_boost=1.3):
+def pick_coupling_rounded(coupling_path,w,ho_wfe, tt_dynamic, lo_wfe=50, tt_static=0, defocus=0, atm=1,adc=1,pl_on=1,piaa_boost=1.3):
     """
     Look up fiber injection/coupling efficiency by rounding the requested
     wavefront-error and tip-tilt parameters to the nearest values available
@@ -472,8 +390,8 @@ def pick_coupling_rounded(transmission_path,w,ho_wfe, tt_dynamic, lo_wfe=50, tt_
 
     inputs
     ------
-    transmission_path : string
-        path to the directory containing the 'coupling/' subfolder with the
+    coupling_path : string
+        path to the directory containing the coupling files with the
         couplingEff_atm%s_adc%s_PL%s_defoc%snmRMS_LO%snmRMS_ttStatic%smas_ttDynamic%smasRMS.csv
         grid files
     w : array
@@ -525,7 +443,7 @@ def pick_coupling_rounded(transmission_path,w,ho_wfe, tt_dynamic, lo_wfe=50, tt_
     else:
         wave=w.copy()
     
-    filename_skeleton = 'coupling/couplingEff_atm%s_adc%s_PL%s_defoc%snmRMS_LO%snmRMS_ttStatic%smas_ttDynamic%smasRMS.csv'
+    filename_skeleton = 'couplingEff_atm%s_adc%s_PL%s_defoc%snmRMS_LO%snmRMS_ttStatic%smas_ttDynamic%smasRMS.csv'
     tt_dynamic_rounded = np.round(2 * tt_dynamic) / 2 # round to neared 0.5 because grid is sampled to 0.5mas
     lo_wfe_rounded = int(100*np.round(4*(lo_wfe/100))/4) # round to nearest 25
     tt_static_rounded = np.round(tt_static*2)/2
@@ -534,9 +452,20 @@ def pick_coupling_rounded(transmission_path,w,ho_wfe, tt_dynamic, lo_wfe=50, tt_
     defocus_rounded =  int(100*np.round(4*(defocus/100))/4)
 
     if tt_dynamic_rounded < 20:
-        f = pd.read_csv(transmission_path+filename_skeleton%(int(atm),int(adc),int(pl_on),defocus_rounded,lo_wfe_rounded,tt_static_rounded,tt_dynamic_rounded)) # load file
+        filename = coupling_path+filename_skeleton%(int(atm),int(adc),int(pl_on),defocus_rounded,lo_wfe_rounded,tt_static_rounded,tt_dynamic_rounded)
     else:
-        f = pd.read_csv(transmission_path+filename_skeleton%(int(atm),int(adc),int(pl_on),defocus_rounded,lo_wfe_rounded,tt_static_rounded,19.5)) # load file
+        filename = coupling_path+filename_skeleton%(int(atm),int(adc),int(pl_on),defocus_rounded,lo_wfe_rounded,tt_static_rounded,19.5)
+
+    # Only part of the grid is shipped, so a perfectly reasonable run can land
+    # on a combination with no file. Say which one, rather than just the path.
+    try:
+        f = pd.read_csv(filename)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            "no coupling file for atm=%s adc=%s PL=%s defocus=%snm LO=%snm ttStatic=%smas ttDynamic=%smas "
+            "(from ho_wfe/tt_dynamic rounded onto the grid). Looked for %s"
+            % (int(atm), int(adc), int(pl_on), defocus_rounded, lo_wfe_rounded,
+               tt_static_rounded, tt_dynamic_rounded, filename))
 
     if pl_on:
         coupling_data_raw = f['coupling_eff_mode1'] + f['coupling_eff_mode2'] + f['coupling_eff_mode3']
@@ -553,6 +482,327 @@ def pick_coupling_rounded(transmission_path,w,ho_wfe, tt_dynamic, lo_wfe=50, tt_
 
     return coupling, ho_strehl
 
+
+class Spectrograph:
+    """
+    Spectrograph wavelength range, resolution, detector properties, echelle
+    order geometry, and total optical throughput, plus the telescope
+    collecting area/diameter (area_m2/diameter_m) it's paired with -- these
+    are fixed per instrument (e.g. HISPEC/Keck vs. MODHIS/TMT), not
+    independently variable, so they live here rather than on a separate
+    Telescope object. (Renamed from Instrument, since AOSystem/TrackingCamera
+    are also part of "the instrument" and now live in this same module.)
+    """
+    def __init__(self, l0: float = 900, l1: float = 2500, res: float = 100000, res_samp: float = 3,
+                 pix_vert: float = 4, extraction_frac: float = 0.925,
+                 saturation: float = 100000, readnoise: float = 12, darknoise: float = 0.01,
+                 pl_on: int = 1, rv_floor: float = 0.5, atm: int = 1, adc: int = 1,
+                 coupling_path: Optional[str] = None, transmission_file: Optional[str] = None,
+                 inst_background_file: Optional[str] = None,
+                 order_bounds_file: Optional[str] = None,
+                 area_m2: float = 76, diameter_m: float = 10):
+        self.l0 = l0
+        self.l1 = l1
+        self.res = res
+        self.res_samp = res_samp
+        self.pix_vert = pix_vert
+        self.extraction_frac = extraction_frac
+        self.saturation = saturation
+        self.readnoise = readnoise
+        self.darknoise = darknoise
+        self.pl_on = pl_on
+        self.rv_floor = rv_floor
+        self.atm = atm
+        self.adc = adc
+        self.coupling_path = coupling_path
+        self.transmission_file = transmission_file
+        self.inst_background_file = inst_background_file
+        self.order_bounds_file = order_bounds_file
+        self.area_m2 = area_m2        # telescope collecting area [m^2] -- tied to the instrument's telescope, not independently variable
+        self.diameter_m = diameter_m  # telescope diameter [m]
+
+        # derived state, set by load()
+        self.order_cens: Optional[np.ndarray] = None
+        self.order_widths: Optional[np.ndarray] = None
+        self.sig: Optional[np.ndarray] = None
+        self.base_throughput: Optional[np.ndarray] = None
+        self.coupling: Optional[np.ndarray] = None
+        self.xtransmit: Optional[np.ndarray] = None
+        self.ytransmit: Optional[np.ndarray] = None    # total throughput on grid x (base x coupling x dichroic)
+        self.inst_bg_tck = None                        # spline of the tabulated instrument background, evaluated onto .v by observe()
+        # derived state, set by observe()
+        self.star: Optional[Star] = None
+        self.atmosphere = None
+        self.ao_system = None
+        self.texp: Optional[float] = None
+        self.texp_frame_set = 'default'
+        self.nsamp: Optional[int] = None
+        self.zenith_angle: Optional[float] = None
+        self.companion: Optional[Star] = None
+        self.pl_sep: float = 0
+        self.texp_frame: Optional[float] = None
+        self.nframes: Optional[int] = None
+        self.frame_phot_per_nm: Optional[np.ndarray] = None
+        self.frame_phot_per_nm_pl: Optional[np.ndarray] = None
+        self.v: Optional[np.ndarray] = None                    # wavelength grid of the observed spectrum [nm]
+        self.s_frame_star: Optional[np.ndarray] = None
+        self.s_frame: Optional[np.ndarray] = None
+        self.contrast: Optional[np.ndarray] = None
+        self.speckle_frame: Optional[np.ndarray] = None
+        self.s: Optional[np.ndarray] = None                    # observed spectrum, all frames [photons]
+        self.base_throughput_v: Optional[np.ndarray] = None    # base_throughput resampled onto self.v (NOT ytransmit, which is the total throughput on x)
+        self.sky_bg_ph: Optional[np.ndarray] = None
+        self.inst_bg_ph: Optional[np.ndarray] = None
+        self.noise_frame: Optional[np.ndarray] = None
+        self.noise: Optional[np.ndarray] = None
+        self.snr: Optional[np.ndarray] = None
+        self.v_res_element: Optional[np.ndarray] = None
+        self.snr_res_element: Optional[np.ndarray] = None
+        self.snr_max_orders: Optional[np.ndarray] = None
+        self.snr_mean_orders: Optional[np.ndarray] = None
+        self.order_inds: Optional[list] = None
+        self.ind_filter: Optional[np.ndarray] = None
+
+    def load(self, x: np.ndarray, ao_system: AOSystem, pl_sep: float = 0) -> "Spectrograph":
+        """
+        Load the echelle order geometry, the per-pixel wavelength sampling,
+        the total instrument throughput curve (base optical/detector
+        throughput from transmission_file, times the fiber coupling
+        efficiency looked up in coupling_path, times the AO dichroic), and
+        the tabulated instrument thermal background. Depends on ao_system
+        already having been built (needs ho_wfe/tt_static/tt_dynamic/
+        defocus/pywfs_dichroic).
+
+        inputs
+        ------
+        x - array, shared wavelength grid [nm]
+        ao_system - AOSystem, already .select()-ed
+        pl_sep - float [mas], companion separation. Only used to decide
+            whether the on-axis PIAA coupling boost applies; observe() is
+            what actually acts on the separation. Needed here because the
+            coupling curve is built at load time.
+
+        output
+        ------
+        self, with order_cens/order_widths/sig/base_throughput/coupling/
+        xtransmit/ytransmit/inst_bg_tck set
+        """
+        self.order_cens, self.order_widths = get_order_bounds(self.order_bounds_file)
+        self.sig = x / self.res / self.res_samp  # lambda/res = dlambda, nm per pixel
+        self.pl_sep = pl_sep
+
+        ######################
+        # load throughput
+        ######################
+        # Load base throughput from file, *excludes coupling and PIAA boost*
+        thput_x, thput_y = np.loadtxt(self.transmission_file, delimiter=',').T
+        if np.max(thput_x) < 5: thput_x *= 1000  # convert to nanometers
+        tck_thput = interpolate.splrep(thput_x, thput_y, k=1, s=0)
+        self.xtransmit = x
+        self.base_throughput = interpolate.splev(x, tck_thput, der=0, ext=1)
+        self.base_throughput = np.where(self.base_throughput < 0, 0, self.base_throughput)  # make negative throughput values to 0
+
+        # define PIAA boost - if off axis, don't get boost
+        piaa_boost = 1.0 if self.pl_sep > 0 else 1.3
+
+        # load coupling which includes HO strehl and piaa_boost
+        self.coupling, _ = pick_coupling_rounded(
+            self.coupling_path, x, ao_system.ho_wfe, ao_system.tt_dynamic,
+            lo_wfe=ao_system.lo_wfe, tt_static=ao_system.tt_static, defocus=ao_system.defocus,
+            atm=self.atm, adc=self.adc, pl_on=self.pl_on, piaa_boost=piaa_boost)
+
+        # Multiply couping, pyramid dichroic and base throughput to get total throughput
+        self.ytransmit = self.base_throughput * self.coupling * ao_system.pywfs_dichroic  # pywfs not being considered typically so pywfs_dichroic is one here
+
+        ######################
+        # load background -
+        # note this includes the instrument throughput to the spectrograph already
+        # and is ph/s per reduced pixel
+        ######################
+        # Per *reduced pixel*, so the file bakes in the res/pix_vert it was
+        # generated with - changing those in a config no longer rescales it.
+        # Only the spline is built here; observe() evaluates it onto the
+        # resampled grid .v, which is what the noise terms are summed on.
+        bkg_x, bkg_y = np.loadtxt(self.inst_background_file, delimiter=',').T
+        if np.max(bkg_x) < 5: bkg_x *= 1000  # convert to nanometers
+        self.inst_bg_tck = interpolate.splrep(bkg_x, bkg_y, k=1, s=0)
+
+        return self
+
+    def observe(self, x: np.ndarray, star: Star, atmosphere: Atmosphere, ao_system: AOSystem,
+                texp: float = 900, texp_frame_set='default', nsamp: int = 1,
+                zenith_angle: float = 45, companion: Optional[Star] = None,
+                pl_sep: float = 0) -> "Spectrograph":
+        """
+        Compute the flux reaching the spectrometer (stellar spectrum x
+        telescope area x spectrograph throughput x telluric transmission),
+        pick the per-frame exposure time to avoid saturation (or use a
+        user-set value), degrade and resample the spectrum onto the
+        spectrograph's resolution/pixel grid, add sky and spectrograph thermal
+        background, and compute the total photon and read/dark noise per
+        frame and across all frames. From that, derive the SNR spectrum
+        per pixel (v, snr) and per resolution element (v_res_element,
+        snr_res_element), plus max/mean SNR per echelle order.
+
+        If pl_sep>0 (off-axis companion), additionally computes the
+        companion flux and the stellar speckle contribution at the
+        companion's separation (via ao_system.contrast_profile_path/MODHIS
+        contrast calculator, falling back to an analytic contrast model),
+        and s/snr then refer to the companion signal with the star's
+        speckle halo as an added noise/background term.
+
+        Requires .load() to have been called first (needs ytransmit/sig/
+        order_cens). Returns self, so calls can be chained:
+        Spectrograph(...).load(x, ao).observe(x, star, atm, ao).
+        """
+        self.star, self.atmosphere, self.ao_system = star, atmosphere, ao_system
+        self.texp, self.texp_frame_set, self.nsamp = texp, texp_frame_set, nsamp
+        self.zenith_angle, self.companion, self.pl_sep = zenith_angle, companion, pl_sep
+        spec, atm, aos = self, atmosphere, ao_system
+
+        # flux density is stellar flux * telescope area * spectrograph throughput * atmospheric absorption
+        # If planet separation is >0, compute for the planet also
+        phot_per_sec_nm = star.s * spec.area_m2 * spec.ytransmit * np.abs(atm.s)
+        if self.pl_sep > 0:
+            phot_per_sec_nm_pl = self.companion.s * spec.area_m2 * spec.ytransmit * np.abs(atm.s)
+            try:
+                contrast = get_MODHIS_contrast(aos.contrast_profile_path, aos.mode_chosen, atm.seeing,
+                                                            self.zenith_angle, star.params.mag, x, self.pl_sep)  # new version, specific to MODHIS
+                print("Using new MODHIS contrast calculator with radial profile database.")
+            except Exception as e:
+                print(f"Warning: {e}, using old contrast calculator with analytic method.")
+                contrast = get_contrast(x, self.pl_sep, spec.diameter_m, atm.seeing, aos.strehl)  # old version
+
+        # Figure out the exposure time per frame to avoid saturation
+        # Default case takes 900s as maximum frame exposure time length
+        if self.texp_frame_set == 'default':
+            if self.pl_sep > 0:  # use estimated planet flux if off axis mode
+                max_ph_per_s = np.max((phot_per_sec_nm_pl + contrast * phot_per_sec_nm) * spec.sig)
+            else:
+                max_ph_per_s = np.max(phot_per_sec_nm * spec.sig)
+            # set text frame
+            if self.texp < 900:
+                texp_frame_tmp = np.min((self.texp, spec.saturation / max_ph_per_s))
+            else:
+                texp_frame_tmp = np.min((900, spec.saturation / max_ph_per_s))
+            self.nframes = int(np.ceil(self.texp / texp_frame_tmp))
+            print('Nframes set to %s' % self.nframes)
+            self.texp_frame = np.round(self.texp / self.nframes, 2)
+            print('Texp per frame set to %s' % self.texp_frame)
+        # user defined exposure time per frame case:
+        else:
+            if self.texp < self.texp_frame_set:
+                print('Exposure time is less than the set exposure time per frame, will set frame time to the total exposure time')
+            self.texp_frame = np.min((self.texp_frame_set, self.texp))
+            self.nframes = int(np.ceil(self.texp / self.texp_frame))
+            print('Texp per frame set to user defined value %s' % self.texp_frame)
+            print('Nframes set to %s' % self.nframes)
+
+        # Degrade to spectrograph resolution after applying frame exposure time
+        self.frame_phot_per_nm = phot_per_sec_nm * self.texp_frame
+        s_ccd_lores = degrade_spec(star.v, self.frame_phot_per_nm, spec.res)
+
+        if self.pl_sep > 0:
+            self.frame_phot_per_nm_pl = phot_per_sec_nm_pl * self.texp_frame
+            s_ccd_lores_pl = degrade_spec(star.v, self.frame_phot_per_nm_pl, spec.res)
+
+        # Resample onto res element grid - new wavelength grid self.v
+        self.v, self.s_frame_star = resample(star.v, s_ccd_lores, sig=np.mean(spec.sig), dx=0, eta=1, mode='fast')
+        self.s_frame_star *= spec.extraction_frac
+        # remove negatives from star spectrum
+        self.s_frame_star = np.where(self.s_frame_star < 0, 0, self.s_frame_star)
+        if self.pl_sep > 0:
+            _, self.s_frame = resample(star.v, s_ccd_lores_pl, sig=np.mean(spec.sig), dx=0, eta=1, mode='fast')
+            self.s_frame *= spec.extraction_frac  # extraction fraction, reduce photons to mimic spectral extraction imperfection
+
+            # interpolate contrast curve onto new low res array
+            spec_contrast_interp = interpolate.interp1d(spec.xtransmit, contrast)
+            self.contrast = spec_contrast_interp(self.v)
+            # speckle is the star flux times contrast
+            self.speckle_frame = self.contrast * self.s_frame_star
+        else:  # sframe is the star when on axis, speckle is zeros
+            self.s_frame = self.s_frame_star
+            self.speckle_frame = np.zeros_like(self.s_frame)
+
+        # Get total spectrum for all frames
+        # save planet spectrum as main science spectrum
+        self.s = self.s_frame * self.nframes
+
+        # Resample throughput for applying to sky background
+        base_throughput_interp = interpolate.interp1d(spec.xtransmit, spec.base_throughput)
+        self.base_throughput_v = base_throughput_interp(self.v)  # base throughput resampled onto self.v
+
+        # Load background spectrum - sky is top of telescope and will be reduced by spec BASE throughput.
+        # Coupling already accounted for in solid angle of fiber. Does spec bkg needs partial throughput
+        # applied - ignored for now to be conservative
+        self.sky_bg_ph = self.base_throughput_v * get_sky_bg(self.v, atm.v, atm.sky_bg, npix=spec.pix_vert,
+                                                                  R=spec.res, diam=spec.diameter_m, area=spec.area_m2)
+
+        # Instrument thermal background, from the file load() splined. Already
+        # includes the throughput to the spectrograph, so no base_throughput_v here.
+        self.inst_bg_ph = interpolate.splev(self.v, spec.inst_bg_tck, der=0, ext=1)
+
+
+        # Calculate noise
+        if spec.pl_on:  # 3 port lantern hack
+            # need to figure out what to do for sky and spec bkg bc depends on coupling
+            # TODO i think the inst bkg is wrong for yJ but doesn't really matter bc this is low anyways
+            noise_frame_yJ = np.sqrt(3) * sum_total_noise(
+                self.s_frame / 3, self.texp_frame, self.nsamp, self.inst_bg_ph / np.sqrt(3), self.sky_bg_ph / np.sqrt(3),
+                spec.darknoise, spec.readnoise, spec.pix_vert, self.speckle_frame)  # flux split evenly over 3 traces for each of 3 PL outputs
+            noise_frame = sum_total_noise(
+                self.s_frame, self.texp_frame, self.nsamp, self.inst_bg_ph, self.sky_bg_ph,
+                spec.darknoise, spec.readnoise, spec.pix_vert, self.speckle_frame)
+            yJ_sub = np.where(self.v < 1400)[0]
+            noise_frame[yJ_sub] = noise_frame_yJ[yJ_sub]  # fill in yj with sqrt(3) times noise in PL case
+        else:
+            noise_frame = sum_total_noise(
+                self.s_frame, self.texp_frame, self.nsamp, self.inst_bg_ph, self.sky_bg_ph,
+                spec.darknoise, spec.readnoise, spec.pix_vert, self.speckle_frame)
+
+        # Remove nans and 0s from noise frame, make these infinite
+        noise_frame[np.where(np.isnan(noise_frame))] = np.inf
+        noise_frame[np.where(noise_frame == 0)] = np.inf
+
+        # Combine noise in quadrature for all frames
+        self.noise_frame = noise_frame
+        self.noise = np.sqrt(self.nframes) * noise_frame
+
+        # Compute snr and resample to get SNR per res element (assumes flux in the number of pixels
+        # spanning a res element (3 for hispec/modhis) combine in quadrature)
+        self.snr = self.s / self.noise
+        self.v_res_element, self.snr_res_element = resample(
+            self.v, self.snr, sig=spec.res_samp, dx=0, eta=1 / np.sqrt(spec.res_samp), mode='pixels')
+
+        # compute median and max snr per order
+        order_snrs_mean, order_snrs_max, order_inds = [], [], []
+        for i, lam_cen in enumerate(spec.order_cens):
+            order_ind = np.where((self.v_res_element > lam_cen - 0.9 * spec.order_widths[i] / 2) &
+                                  (self.v_res_element < lam_cen + 0.9 * spec.order_widths[i] / 2))[0]
+            order_inds.append(order_ind)
+            if np.nanmean(self.snr_res_element[order_ind]) > 0.001:
+                order_snrs_mean.append(np.nanmean(self.snr_res_element[order_ind]))
+                order_snrs_max.append(np.nanmax(self.snr_res_element[order_ind]))
+            else:
+                order_snrs_mean.append(np.nan)
+                order_snrs_max.append(np.nan)
+
+        self.snr_max_orders = np.array(order_snrs_max)
+        self.snr_mean_orders = np.array(order_snrs_mean)
+        self.order_inds = order_inds
+
+        # define indices in passbands that actually fall on detectors (TODO should tweak these?)
+        ind_yj = np.where((self.v > 980) & (self.v < 1335))[0]
+        ind_hk = np.where((self.v > 1480) & (self.v < 2450))[0]
+        self.ind_filter = np.array(ind_yj.tolist() + ind_hk.tolist())
+
+        return self
+
+
+
+#######################
+# Functions not in use
+#######################
 
 def pick_coupling_interpolate(w,dynwfe,ttStatic,ttDynamic,LO=50,PLon=0,piaa_boost=1.3,points=None,values=None):
     """
@@ -733,186 +983,6 @@ def grid_interp_coupling(PLon=1,path=DATA_DIR + 'instrument/hispec/throughput/co
         return points,values_1
 
 
-def get_emissivity(wave,datapath=DATA_DIR + 'instrument/hispec/throughput/'):
-    """
-    Load and interpolate the per-surface emissivity curves for each optical
-    element in the red and blue optical paths (excluding fiber coupling),
-    onto the requested wavelength grid, along with the assumed physical
-    temperature of each surface. Fiber contributions ('fib*') are doubled
-    to account for the integrating-sphere measurement setup used to derive
-    those emissivity files.
-
-    inputs
-    ------
-    wave : array
-        wavelength array to sample emissivity on; converted from nm to
-        microns internally if min(wave) > 10
-    datapath : string, optional
-        path to the directory containing per-surface subfolders
-        (tel/ao/feicom/feired/feiblue/fibred/fibblue/rspec), each with a
-        '<surface>_emissivity.csv' file (columns: wavelength_um, emissivity)
-
-    outputs
-    -------
-    em_red : list of arrays
-        emissivity vs wave for each surface in the red path
-        (['tel','ao','feicom','feired','fibred','rspec']), in that order
-    em_blue : list of arrays
-        emissivity vs wave for each surface in the blue path
-        (['tel','ao','feicom','feiblue','fibblue','bspec']), in that order
-    temps : list of floats [K]
-        assumed physical temperature for each of the 6 surface slots,
-        [276,276,276,276,276,77] (thermal background surfaces at ambient,
-        detector/cold stage at 77 K)
-    """
-    x = wave.copy()
-    if np.min(x) > 10:
-        x/=1000 #convert nm to um
-
-    red_include = ['tel', 'ao', 'feicom', 'feired','fibred','rspec']#,'coupling']
-    blue_include = ['tel', 'ao', 'feicom', 'feiblue','fibblue','bspec']
-    temps = [276,276,276,276,276,77]
-
-    em_red, em_blue = [],[]
-    for i in red_include:
-        wtemp, stemp = np.loadtxt(datapath + i + '/%s_emissivity.csv'%i, delimiter=',',skiprows=1).T
-        f = interpolate.interp1d(wtemp, stemp, bounds_error=False,fill_value=0)
-        if i.startswith('fib'):
-            em_red.append(2*f(x)) # count fib twice because of integrating sphere
-        else:
-            em_red.append(f(x))
-
-    for i in blue_include:
-        wtemp, stemp = np.loadtxt(datapath + i + '/%s_emissivity.csv'%i, delimiter=',',skiprows=1).T
-        f = interpolate.interp1d(wtemp, stemp, bounds_error=False,fill_value=0)
-        if i.startswith('fib'):
-            em_blue.append(2*f(x)) # count fib twice bc of integrating sphere
-        else:
-            em_blue.append(f(x)) #
-
-    return em_red,em_blue,temps
-
-
-def get_emissivities(wave,surfaces=['tel'],datapath=DATA_DIR + 'instrument/hispec/throughput/'):
-    """
-    Derive per-surface emissivity as (1 - throughput) for an arbitrary list
-    of named surfaces, by loading each surface's '<surface>_throughput.csv'
-    file and interpolating it onto the requested wavelength grid. Unlike
-    get_emissivity(), this does not use dedicated emissivity CSV files or
-    apply the fiber integrating-sphere doubling factor, and the caller
-    supplies the list of surfaces to include.
-
-    inputs
-    ------
-    wave : array
-        wavelength array to sample emissivity on; converted from nm to
-        microns internally if min(wave) > 10
-    surfaces : list of strings, optional
-        names of the subfolders/surfaces to load, each expected to contain a
-        '<surface>_throughput.csv' file (columns: wavelength_um, throughput).
-        Default ['tel']
-    datapath : string, optional
-        path to the directory containing the per-surface subfolders
-
-    outputs
-    -------
-    em : list of arrays
-        1 - throughput vs wave, one array per entry in 'surfaces', in the
-        same order
-    """
-    x = wave.copy()
-    if np.min(x) > 10:
-        x/=1000 #convert nm to um
-
-    em= []
-    for i in surfaces:
-        wtemp, stemp = np.loadtxt(datapath + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
-        f = interpolate.interp1d(wtemp, stemp, bounds_error=False,fill_value=0)
-        em.append(1-f(x)) # 1 - interp throughput onto x
-
-    return em
-
-
-def get_base_throughput(wave,datapath=DATA_DIR + 'instrument/hispec/throughput/'):
-    """
-    Compute the total instrument throughput excluding fiber coupling, by
-    multiplying together the per-surface throughput curves along the red
-    path (['tel','ao','feicom','feired','fibred','rspec']) for wavelengths
-    > 1.4 um and along the blue path
-    (['tel','ao','feicom','feiblue','fibblue','bspec']) for wavelengths
-    < 1.4 um, then concatenating the two bands into a single blue-to-red
-    array on the input wavelength grid. To plot the result, use
-    plot.plot_base_throughput().
-
-    inputs
-    ------
-    wave - array
-        wavelength array [nm] to sample throughput on (converted to microns
-        internally if min(wave) > 10)
-    ploton - Bool
-        default is False, whether to plot throughput (blue and red curves
-        vs wavelength) and save the figure to './base_throughput.png'
-    datapath - string
-        path to throughput files in special HISPEC/MODHIS structure, with
-        one subfolder per surface each containing a '<surface>_throughput.csv'
-        file (columns: wavelength_um, throughput)
-
-    outputs:
-    ---------
-    s - array
-        total base throughput, sampled on wave grid, blue band
-        (wave < 1.4 um) followed by red band (wave > 1.4 um)
-    data - dict
-        nested dict {'red': {surface: throughput_array, ...},
-        'blue': {surface: throughput_array, ...}} holding the individual
-        per-surface throughput curves (each interpolated onto wave) used to
-        build snew
-    """
-    # wavelength array to um
-    x = wave.copy()
-    if np.min(x) > 10:
-        x/=1000 #convert nm to um
-
-    data={}
-    data['red']  = {}
-    data['blue'] = {}
-    #plt.figure()
-    for spec in ['red','blue']:
-        if spec=='red':
-            include = ['tel', 'ao', 'feicom', 'feired','fibred','rspec']#,'coupling']
-        if spec=='blue':
-            include = ['tel', 'ao', 'feicom', 'feiblue','fibblue','bspec']#,'coupling']
-
-        for i in include:
-            if i==include[0]:
-                wtemp, stemp = np.loadtxt(datapath + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
-                f = interpolate.interp1d(wtemp, stemp, bounds_error=False,fill_value=0)
-                s = f(x)
-                #plt.plot(w,s,label=i)
-            else:
-                wtemp, stemp = np.loadtxt(datapath + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
-                # interpolate onto s
-                f = interpolate.interp1d(wtemp, stemp, bounds_error=False,fill_value=0)
-                s*=f(x)
-                #plt.plot(w,s,label=i)
-            # store throughput in dictionary
-            data[spec][i] = f(x)
-
-        if spec=='red':
-            isub = np.where(x > 1.4) 
-            wred = x[isub]
-            specred = s[isub]
-        if spec=='blue':
-            isub = np.where(x<1.4)
-            specblue = s[isub]
-            wblue = x[isub]
-    
-    w = np.concatenate([wblue,wred])
-    s = np.concatenate([specblue,specred])
-
-    return s, data
-
-
 def load_photonic_lantern():
     """
     Load the photonic lantern's mode-transfer (unitary) matrices, which map
@@ -938,293 +1008,3 @@ def load_photonic_lantern():
     data = np.load(DATA_DIR + 'throughput/photonic_lantern/unitary_matrices.npy')
     
     return wavearr,data
-
-
-class Spectrograph:
-    """
-    Spectrograph wavelength range, resolution, detector properties, echelle
-    order geometry, and total optical throughput, plus the telescope
-    collecting area/diameter (area_m2/diameter_m) it's paired with -- these
-    are fixed per instrument (e.g. HISPEC/Keck vs. MODHIS/TMT), not
-    independently variable, so they live here rather than on a separate
-    Telescope object. (Renamed from Instrument, since AOSystem/TrackingCamera
-    are also part of "the instrument" and now live in this same module.)
-    """
-
-    def __init__(self, l0: float = 900, l1: float = 2500, res: float = 100000, res_samp: float = 3,
-                 pix_vert: float = 4, extraction_frac: float = 0.925,
-                 saturation: float = 100000, readnoise: float = 12, darknoise: float = 0.01,
-                 pl_on: int = 1, rv_floor: float = 0.5, atm: int = 1, adc: int = 1,
-                 transmission_path: Optional[str] = None, transmission_file: Optional[str] = None,
-                 order_bounds_file: Optional[str] = None,
-                 area_m2: float = 76, diameter_m: float = 10):
-        self.l0 = l0
-        self.l1 = l1
-        self.res = res
-        self.res_samp = res_samp
-        self.pix_vert = pix_vert
-        self.extraction_frac = extraction_frac
-        self.saturation = saturation
-        self.readnoise = readnoise
-        self.darknoise = darknoise
-        self.pl_on = pl_on
-        self.rv_floor = rv_floor
-        self.atm = atm
-        self.adc = adc
-        self.transmission_path = transmission_path
-        self.transmission_file = transmission_file
-        self.order_bounds_file = order_bounds_file
-        self.area_m2 = area_m2        # telescope collecting area [m^2] -- tied to the instrument's telescope, not independently variable
-        self.diameter_m = diameter_m  # telescope diameter [m]
-
-        # derived state, set by load()
-        self.order_cens: Optional[np.ndarray] = None
-        self.order_widths: Optional[np.ndarray] = None
-        self.sig: Optional[np.ndarray] = None
-        self.base_throughput: Optional[np.ndarray] = None
-        self.coupling: Optional[np.ndarray] = None
-        self.xtransmit: Optional[np.ndarray] = None
-        self.ytransmit: Optional[np.ndarray] = None    # total throughput on grid x (base x coupling x dichroic)
-        # derived state, set by observe()
-        self.star: Optional[Star] = None
-        self.atmosphere = None
-        self.ao_system = None
-        self.texp: Optional[float] = None
-        self.texp_frame_set = 'default'
-        self.nsamp: Optional[int] = None
-        self.zenith_angle: Optional[float] = None
-        self.companion: Optional[Star] = None
-        self.pl_sep: float = 0
-        self.texp_frame: Optional[float] = None
-        self.nframes: Optional[int] = None
-        self.frame_phot_per_nm: Optional[np.ndarray] = None
-        self.frame_phot_per_nm_pl: Optional[np.ndarray] = None
-        self.v: Optional[np.ndarray] = None                    # wavelength grid of the observed spectrum [nm]
-        self.s_frame_star: Optional[np.ndarray] = None
-        self.s_frame: Optional[np.ndarray] = None
-        self.contrast: Optional[np.ndarray] = None
-        self.speckle_frame: Optional[np.ndarray] = None
-        self.s: Optional[np.ndarray] = None                    # observed spectrum, all frames [photons]
-        self.base_throughput_v: Optional[np.ndarray] = None    # base_throughput resampled onto self.v (NOT ytransmit, which is the total throughput on x)
-        self.sky_bg_ph: Optional[np.ndarray] = None
-        self.inst_bg_ph: Optional[np.ndarray] = None
-        self.noise_frame: Optional[np.ndarray] = None
-        self.noise: Optional[np.ndarray] = None
-        self.snr: Optional[np.ndarray] = None
-        self.v_res_element: Optional[np.ndarray] = None
-        self.snr_res_element: Optional[np.ndarray] = None
-        self.snr_max_orders: Optional[np.ndarray] = None
-        self.snr_mean_orders: Optional[np.ndarray] = None
-        self.order_inds: Optional[list] = None
-        self.ind_filter: Optional[np.ndarray] = None
-
-    def load(self, x: np.ndarray, ao_system: AOSystem) -> "Spectrograph":
-        """
-        Load the echelle order geometry, the per-pixel wavelength sampling,
-        and the total instrument throughput curve (base optical/detector
-        throughput times fiber coupling efficiency times the AO dichroic).
-        If transmission_file is set (and loadable), a user-supplied total
-        throughput curve is used directly instead. Depends on ao_system
-        already having been built (needs ho_wfe/tt_static/tt_dynamic/
-        defocus/pywfs_dichroic).
-
-        inputs
-        ------
-        x - array, shared wavelength grid [nm]
-        ao_system - AOSystem, already .select()-ed
-
-        output
-        ------
-        self, with order_cens/order_widths/sig/base_throughput/coupling/
-        xtransmit/ytransmit set
-        """
-        self.order_cens, self.order_widths = get_order_bounds(self.order_bounds_file)
-        self.sig = x / self.res / self.res_samp  # lambda/res = dlambda, nm per pixel
-
-        try:  # if a custom transmission file is given and loadable, use it, otherwise load HISPEC/MODHIS version
-            thput_x, thput_y = np.loadtxt(self.transmission_file, delimiter=',').T
-            if np.max(thput_x) < 5: thput_x *= 1000  # convert to nanometers
-            tck_thput = interpolate.splrep(thput_x, thput_y, k=1, s=0)
-            self.xtransmit = x
-            self.ytransmit = interpolate.splev(x, tck_thput, der=0, ext=1)
-            self.ytransmit = np.where(self.ytransmit < 0, 0, self.ytransmit)  # make negative throughput values to 0
-            self.base_throughput = self.ytransmit.copy()
-            print('Loaded Custom Transmission File')
-        except Exception:
-            self.base_throughput, _ = get_base_throughput(x, datapath=self.transmission_path)  # everything except coupling
-            self.base_throughput = np.where(self.base_throughput < 0, 0, self.base_throughput)  # make negative throughput values to 0
-
-            self.coupling, _ = pick_coupling_rounded(
-                self.transmission_path, x, ao_system.ho_wfe, ao_system.tt_dynamic,
-                lo_wfe=ao_system.lo_wfe, tt_static=ao_system.tt_static, defocus=ao_system.defocus,
-                atm=self.atm, adc=self.adc, pl_on=self.pl_on)
-
-            self.xtransmit = x
-            self.ytransmit = self.base_throughput * self.coupling * ao_system.pywfs_dichroic  # pywfs not being considered typically so pywfs_dichroic is one here
-
-        return self
-
-    def observe(self, x: np.ndarray, star: Star, atmosphere: Atmosphere, ao_system: AOSystem,
-                texp: float = 900, texp_frame_set='default', nsamp: int = 1,
-                zenith_angle: float = 45, companion: Optional[Star] = None,
-                pl_sep: float = 0) -> "Spectrograph":
-        """
-        Compute the flux reaching the spectrometer (stellar spectrum x
-        telescope area x spectrograph throughput x telluric transmission),
-        pick the per-frame exposure time to avoid saturation (or use a
-        user-set value), degrade and resample the spectrum onto the
-        spectrograph's resolution/pixel grid, add sky and spectrograph thermal
-        background, and compute the total photon and read/dark noise per
-        frame and across all frames. From that, derive the SNR spectrum
-        per pixel (v, snr) and per resolution element (v_res_element,
-        snr_res_element), plus max/mean SNR per echelle order.
-
-        If pl_sep>0 (off-axis companion), additionally computes the
-        companion flux and the stellar speckle contribution at the
-        companion's separation (via ao_system.contrast_profile_path/MODHIS
-        contrast calculator, falling back to an analytic contrast model),
-        and s/snr then refer to the companion signal with the star's
-        speckle halo as an added noise/background term.
-
-        Requires .load() to have been called first (needs ytransmit/sig/
-        order_cens). Returns self, so calls can be chained:
-        Spectrograph(...).load(x, ao).observe(x, star, atm, ao).
-        """
-        self.star, self.atmosphere, self.ao_system = star, atmosphere, ao_system
-        self.texp, self.texp_frame_set, self.nsamp = texp, texp_frame_set, nsamp
-        self.zenith_angle, self.companion, self.pl_sep = zenith_angle, companion, pl_sep
-        spec, atm, aos = self, atmosphere, ao_system
-
-        # flux density is stellar flux * telescope area * spectrograph throughput * atmospheric absorption
-        # If planet separation is >0, compute for the planet also
-        phot_per_sec_nm = star.s * spec.area_m2 * spec.ytransmit * np.abs(atm.s)
-        if self.pl_sep > 0:
-            phot_per_sec_nm_pl = self.companion.s * spec.area_m2 * spec.ytransmit * np.abs(atm.s)
-            try:
-                contrast = get_MODHIS_contrast(aos.contrast_profile_path, aos.mode_chosen, atm.seeing,
-                                                            self.zenith_angle, star.params.mag, x, self.pl_sep)  # new version, specific to MODHIS
-                print("Using new MODHIS contrast calculator with radial profile database.")
-            except Exception as e:
-                print(f"Warning: {e}, using old contrast calculator with analytic method.")
-                contrast = get_contrast(x, self.pl_sep, spec.diameter_m, atm.seeing, aos.strehl)  # old version
-
-        # Figure out the exposure time per frame to avoid saturation
-        # Default case takes 900s as maximum frame exposure time length
-        if self.texp_frame_set == 'default':
-            if self.pl_sep > 0:  # use estimated planet flux if off axis mode
-                max_ph_per_s = np.max((phot_per_sec_nm_pl + contrast * phot_per_sec_nm) * spec.sig)
-            else:
-                max_ph_per_s = np.max(phot_per_sec_nm * spec.sig)
-            # set text frame
-            if self.texp < 900:
-                texp_frame_tmp = np.min((self.texp, spec.saturation / max_ph_per_s))
-            else:
-                texp_frame_tmp = np.min((900, spec.saturation / max_ph_per_s))
-            self.nframes = int(np.ceil(self.texp / texp_frame_tmp))
-            print('Nframes set to %s' % self.nframes)
-            self.texp_frame = np.round(self.texp / self.nframes, 2)
-            print('Texp per frame set to %s' % self.texp_frame)
-        # user defined exposure time per frame case:
-        else:
-            if self.texp < self.texp_frame_set:
-                print('Exposure time is less than the set exposure time per frame, will set frame time to the total exposure time')
-            self.texp_frame = np.min((self.texp_frame_set, self.texp))
-            self.nframes = int(np.ceil(self.texp / self.texp_frame))
-            print('Texp per frame set to user defined value %s' % self.texp_frame)
-            print('Nframes set to %s' % self.nframes)
-
-        # Degrade to spectrograph resolution after applying frame exposure time
-        self.frame_phot_per_nm = phot_per_sec_nm * self.texp_frame
-        s_ccd_lores = degrade_spec(star.v, self.frame_phot_per_nm, spec.res)
-
-        if self.pl_sep > 0:
-            self.frame_phot_per_nm_pl = phot_per_sec_nm_pl * self.texp_frame
-            s_ccd_lores_pl = degrade_spec(star.v, self.frame_phot_per_nm_pl, spec.res)
-
-        # Resample onto res element grid - new wavelength grid self.v
-        self.v, self.s_frame_star = resample(star.v, s_ccd_lores, sig=np.mean(spec.sig), dx=0, eta=1, mode='fast')
-        self.s_frame_star *= spec.extraction_frac
-        # remove negatives from star spectrum
-        self.s_frame_star = np.where(self.s_frame_star < 0, 0, self.s_frame_star)
-        if self.pl_sep > 0:
-            _, self.s_frame = resample(star.v, s_ccd_lores_pl, sig=np.mean(spec.sig), dx=0, eta=1, mode='fast')
-            self.s_frame *= spec.extraction_frac  # extraction fraction, reduce photons to mimic spectral extraction imperfection
-
-            # interpolate contrast curve onto new low res array
-            spec_contrast_interp = interpolate.interp1d(spec.xtransmit, contrast)
-            self.contrast = spec_contrast_interp(self.v)
-            # speckle is the star flux times contrast
-            self.speckle_frame = self.contrast * self.s_frame_star
-        else:  # sframe is the star when on axis, speckle is zeros
-            self.s_frame = self.s_frame_star
-            self.speckle_frame = np.zeros_like(self.s_frame)
-
-        # Get total spectrum for all frames
-        # save planet spectrum as main science spectrum
-        self.s = self.s_frame * self.nframes
-
-        # Resample throughput for applying to sky background
-        base_throughput_interp = interpolate.interp1d(spec.xtransmit, spec.base_throughput)
-        self.base_throughput_v = base_throughput_interp(self.v)  # base throughput resampled onto self.v
-
-        # Load background spectrum - sky is top of telescope and will be reduced by spec BASE throughput.
-        # Coupling already accounted for in solid angle of fiber. Does spec bkg needs partial throughput
-        # applied - ignored for now to be conservative
-        self.sky_bg_ph = self.base_throughput_v * get_sky_bg(self.v, atm.v, atm.sky_bg, npix=spec.pix_vert,
-                                                                  R=spec.res, diam=spec.diameter_m, area=spec.area_m2)
-        self.inst_bg_ph = get_inst_bg(self.v, npix=spec.pix_vert, R=spec.res, diam=spec.diameter_m,
-                                                    area=spec.area_m2, datapath=spec.transmission_path)
-
-        # Calculate noise
-        if spec.pl_on:  # 3 port lantern hack
-            # need to figure out what to do for sky and spec bkg bc depends on coupling
-            noise_frame_yJ = np.sqrt(3) * sum_total_noise(
-                self.s_frame / 3, self.texp_frame, self.nsamp, self.inst_bg_ph / np.sqrt(3), self.sky_bg_ph / np.sqrt(3),
-                spec.darknoise, spec.readnoise, spec.pix_vert, self.speckle_frame)  # flux split evenly over 3 traces for each of 3 PL outputs
-            noise_frame = sum_total_noise(
-                self.s_frame, self.texp_frame, self.nsamp, self.inst_bg_ph, self.sky_bg_ph,
-                spec.darknoise, spec.readnoise, spec.pix_vert, self.speckle_frame)
-            yJ_sub = np.where(self.v < 1400)[0]
-            noise_frame[yJ_sub] = noise_frame_yJ[yJ_sub]  # fill in yj with sqrt(3) times noise in PL case
-        else:
-            noise_frame = sum_total_noise(
-                self.s_frame, self.texp_frame, self.nsamp, self.inst_bg_ph, self.sky_bg_ph,
-                spec.darknoise, spec.readnoise, spec.pix_vert, self.speckle_frame)
-
-        # Remove nans and 0s from noise frame, make these infinite
-        noise_frame[np.where(np.isnan(noise_frame))] = np.inf
-        noise_frame[np.where(noise_frame == 0)] = np.inf
-
-        # Combine noise in quadrature for all frames
-        self.noise_frame = noise_frame
-        self.noise = np.sqrt(self.nframes) * noise_frame
-
-        # Compute snr and resample to get SNR per res element (assumes flux in the number of pixels
-        # spanning a res element (3 for hispec/modhis) combine in quadrature)
-        self.snr = self.s / self.noise
-        self.v_res_element, self.snr_res_element = resample(
-            self.v, self.snr, sig=spec.res_samp, dx=0, eta=1 / np.sqrt(spec.res_samp), mode='pixels')
-
-        # compute median and max snr per order
-        order_snrs_mean, order_snrs_max, order_inds = [], [], []
-        for i, lam_cen in enumerate(spec.order_cens):
-            order_ind = np.where((self.v_res_element > lam_cen - 0.9 * spec.order_widths[i] / 2) &
-                                  (self.v_res_element < lam_cen + 0.9 * spec.order_widths[i] / 2))[0]
-            order_inds.append(order_ind)
-            if np.nanmean(self.snr_res_element[order_ind]) > 0.001:
-                order_snrs_mean.append(np.nanmean(self.snr_res_element[order_ind]))
-                order_snrs_max.append(np.nanmax(self.snr_res_element[order_ind]))
-            else:
-                order_snrs_mean.append(np.nan)
-                order_snrs_max.append(np.nan)
-
-        self.snr_max_orders = np.array(order_snrs_max)
-        self.snr_mean_orders = np.array(order_snrs_mean)
-        self.order_inds = order_inds
-
-        # define indices in passbands that actually fall on detectors (TODO should tweak these?)
-        ind_yj = np.where((self.v > 980) & (self.v < 1335))[0]
-        ind_hk = np.where((self.v > 1480) & (self.v < 2450))[0]
-        self.ind_filter = np.array(ind_yj.tolist() + ind_hk.tolist())
-
-        return self

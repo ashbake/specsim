@@ -33,6 +33,19 @@ was divided by. This moved rv_tot 0.7292 -> 0.7359 m/s -- small because
 deep telluric lines are masked out anyway -- and the change is
 concentrated where it should be, penalising the most telluric-affected
 quartile of orders by ~8% and the cleanest quartile by ~0.4%.
+
+Regenerated a fourth time when the spectrograph stopped multiplying the
+per-subsystem throughput curves together and started reading one
+pre-computed base-throughput file (transmission_file), which is all the
+data tree still carries. For MODHIS that swapped a product peaking at
+0.179 for transmission_total_nocoupling.txt, peaking at 0.216 -- ~22%
+higher, fairly flat across yJ and HK. Everything downstream moved by
+exactly the source-photon-limited scaling of that one factor: snr (∝ sqrt
+T) x1.11, rv_order (∝ 1/sqrt T) x0.908, etc_order_mean (∝ 1/T) x0.824,
+rv_tot 0.7359 -> 0.6951 m/s (the smaller shift is the 0.5 m/s rv_floor
+added in quadrature), ccf_snr 9337 -> 12241. v_res_element and order_cens
+are unchanged, as they must be -- nothing about the wavelength solution
+moved.
 """
 import inspect
 import os

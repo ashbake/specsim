@@ -26,7 +26,9 @@ atm:
   sky_path: ./data/telluric/sky/
 
 spectrograph:
-  transmission_path: ./data/instrument/modhis/throughput/
+  transmission_file: ./data/instrument/modhis/throughput/transmission_total_nocoupling.txt
+  inst_background_file: ./data/instrument/modhis/thermal_background/instbkg_RSPEC.csv
+  coupling_path: ./data/instrument/modhis/throughput/coupling/
   order_bounds_file: ./data/instrument/modhis/order_bounds.csv
   atm: 0
   adc: 0
@@ -54,8 +56,8 @@ track:
   band: JHgap
   fratio: 35
   camera: h2rg
-  transmission_file: ./data/track/trackingcamera.csv
+  transmission_file: ./data/instrument/modhis/track/trackingcamera.csv
   texp: 1
   field_r: 0
   aberrations_file: ./data/instrument/modhis/track/HISPEC_ParaxialTel_OAP_TrackCamParax_SpotSizevsField.txt
-  blocking_filter_file: ./data/instrument/modhis/throughput/feicam/blocking_filter.TXT
+  blocking_filter_file: ./data/instrument/modhis/track/blocking_filter.TXT

@@ -24,9 +24,9 @@ def _sibling(*parts):
 
 # The AO modes below land on tip-tilt residuals of 5.5-7.5 mas, and the repo
 # only ships the 3 mas coupling table, so point the spectrograph at the full
-# HISPEC throughput tree instead. Same subsystem layout as
-# data/instrument/hispec/throughput/, so the base throughput comes from here too.
-TRANSMISSION_PATH = _sibling('HISPEC', '_data', 'throughput', 'hispec_subsystems')
+# coupling grid in the HISPEC throughput tree instead. Base throughput still
+# comes from the repo's transmission_file -- only the coupling grid is swapped.
+COUPLING_PATH = _sibling('HISPEC', '_data', 'throughput', 'hispec_subsystems', 'coupling')
 
 # Likewise, the repo only ships 2300 K and 5800 K PHOENIX models; the target
 # temperatures below need the fuller local grid.
@@ -54,7 +54,7 @@ if __name__ == '__main__':
 	# filt band is fixed at build time (the whole scene is built on its
 	# bandpass), so it's a constructor override rather than a setter
 	sim = simulate_from_config(os.path.join(_root, 'configs', 'hispec_snr.cfg'), filt_band='K')
-	sim.spectrograph.transmission_path = TRANSMISSION_PATH
+	sim.spectrograph.coupling_path = COUPLING_PATH
 
 	# Pin the AO mode *before* moving the star. The config leaves mode='auto',
 	# and set_star() re-runs mode selection -- under 'auto' that picks the best

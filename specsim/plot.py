@@ -1267,8 +1267,27 @@ def plot_throughput(spectrograph, star, filt, ao_system, savepath=SAVEPATH):
     plt.savefig(savepath + figname)
 
 
+def _require_subsystems_path(subsystems_path, caller):
+    """
+    The budget plots below are the only thing left that wants a throughput
+    curve per subsystem. The spectrograph reads one pre-summed base-throughput
+    file now, so that tree is no longer bundled with specsim and there is no
+    sensible default to fall back on -- say where it went instead of failing
+    on a path nobody set.
+    """
+    if subsystems_path is None:
+        raise ValueError(
+            "%s needs subsystems_path: the folder holding one '<subsystem>/<subsystem>_throughput.csv' "
+            "per subsystem (tel, ao, feicom, feired, fibred, rspec, feiblue, fibblue, bspec). specsim no "
+            "longer ships that tree -- the spectrograph reads a single pre-summed curve from "
+            "transmission_file -- so point this at the throughput folder of a full HISPEC/MODHIS data "
+            "checkout, e.g. '<HISPEC>/_data/throughput/hispec_subsystems/'." % caller)
+    return subsystems_path
+
+
 def plot_throughput_components_HK(telluric_file=DATAPATH + 'telluric/psg_out_2020.08.02_l0_800nm_l1_2700nm_res_0.001nm_lon_204.53_lat_19.82_pres_0.5826.fits',
-                                    transmission_path = DATAPATH + 'instrument/hispec/throughput/',
+                                    subsystems_path = None,
+                                    coupling_path = DATAPATH + 'instrument/hispec/throughput/coupling/',
                                     outputdir=SAVEPATH,
                                     ngs_wfe=[130,3],
                                     lgs_wfe=[220,9.4],
@@ -1287,9 +1306,13 @@ def plot_throughput_components_HK(telluric_file=DATAPATH + 'telluric/psg_out_202
         path to a FITS file (PSG telluric transmission model) with
         'Wave/freq' and 'Total' columns, used for the atmospheric
         transmission curve
-    transmission_path : string, optional
-        path to the directory of per-surface '<surface>_throughput.csv'
-        files (and the 'coupling/' grid used by pick_coupling_rounded)
+    subsystems_path : string
+        required -- path to the directory of per-subsystem
+        '<subsystem>/<subsystem>_throughput.csv' files. Not bundled with
+        specsim, which reads one pre-summed base-throughput curve instead;
+        point this at a full HISPEC/MODHIS data checkout
+    coupling_path : string, optional
+        path to the coupling grid directory passed to pick_coupling_rounded
     outputdir : string, optional
         directory to save the output 'e2e_plot_HK.png'/'.pdf' figures.
         Default SAVEPATH
@@ -1314,6 +1337,7 @@ def plot_throughput_components_HK(telluric_file=DATAPATH + 'telluric/psg_out_202
         Draws a new matplotlib figure and saves it to
         '<outputdir>/e2e_plot_HK.png' and '<outputdir>/e2e_plot_HK.pdf'
     """
+    subsystems_path = _require_subsystems_path(subsystems_path, 'plot_throughput_components_HK')
     data={}
     data['red'] = {}
 
@@ -1327,10 +1351,10 @@ def plot_throughput_components_HK(telluric_file=DATAPATH + 'telluric/psg_out_202
 
         for i in include:
             if i==include[0]:
-                w,s = np.loadtxt(transmission_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
+                w,s = np.loadtxt(subsystems_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
                 data[spec][i] = s
             else:
-                wtemp, stemp = np.loadtxt(transmission_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
+                wtemp, stemp = np.loadtxt(subsystems_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
                 # interpolate onto s
                 f = interpolate.interp1d(wtemp, stemp, bounds_error=False,fill_value=0)
                 data[spec][i] = f(w)
@@ -1346,8 +1370,8 @@ def plot_throughput_components_HK(telluric_file=DATAPATH + 'telluric/psg_out_202
  
     #load coupling for two options
     # inputs : waves,dynwfe,ttStatic,ttDynamic
-    data['coupling_NGS'],strehl  = pick_coupling_rounded(transmission_path,w,ngs_wfe[0], ngs_wfe[1])
-    data['coupling_LGS'],strehl2 = pick_coupling_rounded(transmission_path,w,lgs_wfe[0], lgs_wfe[1])
+    data['coupling_NGS'],strehl  = pick_coupling_rounded(coupling_path,w,ngs_wfe[0], ngs_wfe[1])
+    data['coupling_LGS'],strehl2 = pick_coupling_rounded(coupling_path,w,lgs_wfe[0], lgs_wfe[1])
 
 
     if np.max(w)>1000: w/=1000
@@ -1405,7 +1429,8 @@ def plot_throughput_components_HK(telluric_file=DATAPATH + 'telluric/psg_out_202
 
 
 def plot_throughput_components_YJ(telluric_file=DATAPATH + 'telluric/psg_out_2020.08.02_l0_800nm_l1_2700nm_res_0.001nm_lon_204.53_lat_19.82_pres_0.5826.fits',
-                                    transmission_path = DATAPATH + 'instrument/hispec/throughput/coupling/',
+                                    subsystems_path = None,
+                                    coupling_path = DATAPATH + 'instrument/hispec/throughput/coupling/',
                                     outputdir=SAVEPATH,
                                     ngs_wfe=[130,3],
                                     lgs_wfe=[220,9.4],
@@ -1426,10 +1451,13 @@ def plot_throughput_components_YJ(telluric_file=DATAPATH + 'telluric/psg_out_202
         'Wave/freq' and 'Total' columns; loaded and degraded but not
         plotted in this function (see semilogy line, currently commented
         out)
-    transmission_path : string, optional
-        path to the directory of per-surface '<surface>_throughput.csv'
-        files; also used (with a 'coupling/' suffix) as the coupling grid
-        path for grid_interp_coupling and pick_coupling_rounded
+    subsystems_path : string
+        required -- path to the directory of per-subsystem
+        '<subsystem>/<subsystem>_throughput.csv' files. Not bundled with
+        specsim, which reads one pre-summed base-throughput curve instead;
+        point this at a full HISPEC/MODHIS data checkout
+    coupling_path : string, optional
+        coupling grid directory for grid_interp_coupling and pick_coupling_rounded
     outputdir : string, optional
         directory to save the output 'e2e_mri_plot_yJ.png'/'.pdf' figures
         and the 'ngs_throughput_bspec.txt'/'lgs_throughput_bspec.txt' data
@@ -1460,6 +1488,7 @@ def plot_throughput_components_YJ(telluric_file=DATAPATH + 'telluric/psg_out_202
         '<outputdir>/ngs_throughput_bspec.txt' and
         '<outputdir>/lgs_throughput_bspec.txt'
     """
+    subsystems_path = _require_subsystems_path(subsystems_path, 'plot_throughput_components_YJ')
     data={}
     data['red'] = {}
     data['blue'] =  {}
@@ -1476,10 +1505,10 @@ def plot_throughput_components_YJ(telluric_file=DATAPATH + 'telluric/psg_out_202
 
         for i in include:
             if i==include[0]:
-                w,s = np.loadtxt(transmission_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
+                w,s = np.loadtxt(subsystems_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
                 data[spec][i] = s
             else:
-                wtemp, stemp = np.loadtxt(transmission_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
+                wtemp, stemp = np.loadtxt(subsystems_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
                 # interpolate onto s
                 f = interpolate.interp1d(wtemp, stemp, bounds_error=False,fill_value=0)
                 data[spec][i] = f(w)
@@ -1495,12 +1524,12 @@ def plot_throughput_components_YJ(telluric_file=DATAPATH + 'telluric/psg_out_202
  
     #load coupling for two options
     # inputs : waves,dynwfe,ttStatic,ttDynamic
-    out = grid_interp_coupling(1,path=transmission_path  + 'coupling/',atm=atm,adc=adc)
+    out = grid_interp_coupling(1,path=coupling_path,atm=atm,adc=adc)
     #data['coupling_NGS'],strehl  = pick_coupling(w,ngs_wfe[0],0,ngs_wfe[1],LO=0,PLon=1,points=out[0],values=out[1:])
-    data['coupling_NGS'],strehl = pick_coupling_rounded(transmission_path,w,ngs_wfe[0], ngs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=1,adc=1,pl_on=1,piaa_boost=1.3)
-    out = grid_interp_coupling(1,path=transmission_path +'coupling/',atm=atm,adc=adc)
+    data['coupling_NGS'],strehl = pick_coupling_rounded(coupling_path,w,ngs_wfe[0], ngs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=1,adc=1,pl_on=1,piaa_boost=1.3)
+    out = grid_interp_coupling(1,path=coupling_path,atm=atm,adc=adc)
     #data['coupling_LGS'],strehl2 = pick_coupling(w,lgs_wfe[0],0,lgs_wfe[1],LO=30,PLon=1,points=out[0],values=out[1:])
-    data['coupling_LGS'],strehl2  = pick_coupling_rounded(transmission_path,w,lgs_wfe[0], lgs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=1,adc=1,pl_on=1,piaa_boost=1.3)
+    data['coupling_LGS'],strehl2  = pick_coupling_rounded(coupling_path,w,lgs_wfe[0], lgs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=1,adc=1,pl_on=1,piaa_boost=1.3)
 
     if np.max(w)>1000: w/=1000
     # plot blue only
@@ -1559,7 +1588,8 @@ def plot_throughput_components_YJ(telluric_file=DATAPATH + 'telluric/psg_out_202
 
 
 def plot_throughput_components(telluric_file=DATAPATH + 'telluric/psg_out_2020.08.02_l0_800nm_l1_2700nm_res_0.001nm_lon_204.53_lat_19.82_pres_0.5826.fits',
-                                    transmission_path = DATAPATH + 'instrument/hispec/throughput/',
+                                    subsystems_path = None,
+                                    coupling_path = DATAPATH + 'instrument/hispec/throughput/coupling/',
                                     outputdir=SAVEPATH,
                                     ngs_wfe=[130,3],
                                     lgs_wfe=[220,9.4],
@@ -1580,10 +1610,13 @@ def plot_throughput_components(telluric_file=DATAPATH + 'telluric/psg_out_2020.0
         path to a FITS file (PSG telluric transmission model) with
         'Wave/freq' and 'Total' columns, loaded/degraded into data['atm']
         (not directly plotted in this function)
-    transmission_path : string, optional
-        path to the directory of per-surface '<surface>_throughput.csv'
-        files; also used (with a 'coupling/' suffix) as the coupling grid
-        path for grid_interp_coupling and pick_coupling_rounded
+    subsystems_path : string
+        required -- path to the directory of per-subsystem
+        '<subsystem>/<subsystem>_throughput.csv' files. Not bundled with
+        specsim, which reads one pre-summed base-throughput curve instead;
+        point this at a full HISPEC/MODHIS data checkout
+    coupling_path : string, optional
+        coupling grid directory for grid_interp_coupling and pick_coupling_rounded
     outputdir : string, optional
         directory to save the output 'e2e_plot_all.png'/'.pdf' figures and
         the 'ngs_throughput_<band>.txt'/'lgs_throughput_<band>.txt' data
@@ -1628,6 +1661,7 @@ def plot_throughput_components(telluric_file=DATAPATH + 'telluric/psg_out_2020.0
     writes '<outputdir>/ngs_throughput_<band>.txt' and
     '<outputdir>/lgs_throughput_<band>.txt' for band in ['blue','red']
     """
+    subsystems_path = _require_subsystems_path(subsystems_path, 'plot_throughput_components')
     data={}
     data['red'] = {}
     data['blue'] =  {}
@@ -1642,10 +1676,10 @@ def plot_throughput_components(telluric_file=DATAPATH + 'telluric/psg_out_2020.0
 
         for i in include:
             if i==include[0]:
-                w,s = np.loadtxt(transmission_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
+                w,s = np.loadtxt(subsystems_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
                 data[spec][i] = s
             else:
-                wtemp, stemp = np.loadtxt(transmission_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
+                wtemp, stemp = np.loadtxt(subsystems_path + i + '/%s_throughput.csv'%i, delimiter=',',skiprows=1).T
                 # interpolate onto s
                 f = interpolate.interp1d(wtemp, stemp, bounds_error=False,fill_value=0)
                 data[spec][i] = f(w)
@@ -1661,11 +1695,11 @@ def plot_throughput_components(telluric_file=DATAPATH + 'telluric/psg_out_2020.0
  
     #load coupling for two options
     # inputs : waves,dynwfe,ttStatic,ttDynamic
-    out = grid_interp_coupling(1,path=transmission_path  + 'coupling/',atm=atm,adc=adc)
-    data['coupling_NGS'],strehl = pick_coupling_rounded(transmission_path,w,ngs_wfe[0], ngs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=atm,adc=adc,pl_on=0,piaa_boost=1.3)
+    out = grid_interp_coupling(1,path=coupling_path,atm=atm,adc=adc)
+    data['coupling_NGS'],strehl = pick_coupling_rounded(coupling_path,w,ngs_wfe[0], ngs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=atm,adc=adc,pl_on=0,piaa_boost=1.3)
  
-    out = grid_interp_coupling(1,path=transmission_path +'coupling/',atm=atm,adc=adc)
-    data['coupling_LGS'],strehl2  = pick_coupling_rounded(transmission_path,w,lgs_wfe[0], lgs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=atm,adc=adc,pl_on=0,piaa_boost=1.3)
+    out = grid_interp_coupling(1,path=coupling_path,atm=atm,adc=adc)
+    data['coupling_LGS'],strehl2  = pick_coupling_rounded(coupling_path,w,lgs_wfe[0], lgs_wfe[1], lo_wfe=50, tt_static=0, defocus=30, atm=atm,adc=adc,pl_on=0,piaa_boost=1.3)
 
     if np.max(w)>1000: w/=1000
     lw=2

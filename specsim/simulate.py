@@ -79,7 +79,7 @@ class Simulate:
         self.atmosphere.load(self.x, self.zenith_angle)
         self.ao_system.select(self.x, self.star, self.filt, self.filter_path, self.zp_file,
                                self.zenith_angle, self.atmosphere.seeing_set, YJHK)
-        self.spectrograph.load(self.x, self.ao_system)
+        self.spectrograph.load(self.x, self.ao_system, pl_sep=self.pl_sep)
 
         self.tracking_camera: Optional[TrackingCamera] = None
         self._observed = False
@@ -161,7 +161,7 @@ class Simulate:
         "Re-run AO mode selection and reload the fiber coupling that depends on its WFE, then invalidate. Every setter that touches something upstream of the AO ends here."
         self.ao_system.select(self.x, self.star, self.filt, self.filter_path, self.zp_file,
                                self.zenith_angle, self.atmosphere.seeing_set, YJHK)
-        self.spectrograph.load(self.x, self.ao_system)
+        self.spectrograph.load(self.x, self.ao_system, pl_sep=self.pl_sep)
         self._invalidate()
 
     def set_star(self, *, mag=UNSET, teff=UNSET, vsini=UNSET, rv=UNSET, logg=UNSET,

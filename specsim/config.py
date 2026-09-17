@@ -239,7 +239,9 @@ def simulate_from_config(configfile, instrument_configfile=None, **overrides):
                                 readnoise=spectrograph_cfg.get('readnoise', 12), darknoise=spectrograph_cfg.get('darknoise', 0.01),
                                 pl_on=spectrograph_cfg.get('pl_on', 1), rv_floor=spectrograph_cfg.get('rv_floor', 0.5),
                                 atm=spectrograph_cfg.get('atm', 1), adc=spectrograph_cfg.get('adc', 1),
-                                transmission_path=spectrograph_cfg.get('transmission_path'), transmission_file=spectrograph_cfg.get('transmission_file'),
+                                transmission_file=spectrograph_cfg.get('transmission_file'),
+                                coupling_path=spectrograph_cfg.get('coupling_path'),
+                                inst_background_file=spectrograph_cfg.get('inst_background_file'),
                                 order_bounds_file=spectrograph_cfg.get('order_bounds_file'), **telescope)
 
     tracking_camera = None
