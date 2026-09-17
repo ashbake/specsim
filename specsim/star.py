@@ -161,7 +161,32 @@ class Star:
     rotational broadening, and RV shift, plus the resulting arrays.
     """
 
-    def __init__(self, params: StarParams):
+    def __init__(self, params: Optional[StarParams] = None, **overrides):
+        """
+        Build a star from its parameters. Three equivalent forms, so nothing
+        has to go through StarParams unless it's already holding one:
+
+            Star(teff=2700, mag=10, phoenix_folder=...)   # straight from keywords
+            Star(sim.star.params, teff=2700)              # like that star, but hotter
+            Star(some_star_params)                        # from a record you already have
+
+        The second form is the one worth knowing: it copies everything from an
+        existing star -- including the model folders, which are easy to forget
+        and fail late -- and overrides only what's named.
+
+        inputs
+        ------
+        params : StarParams, optional
+            an existing parameter record to start from; defaults are used if
+            omitted
+        **overrides
+            any StarParams field (teff, mag, vsini, rv, logg, phoenix_folder,
+            sonora_folder), applied on top of `params`
+        """
+        if params is None:
+            params = StarParams(**overrides)
+        elif overrides:
+            params = replace(params, **overrides)
         self.params = params
 
         # derived state, set by load()
@@ -231,7 +256,7 @@ class Star:
         """
         if self.factor_0 is None:
             raise RuntimeError("call load() before rescaled()")
-        new_star = Star(replace(self.params, mag=mag))
+        new_star = Star(self.params, mag=mag)
         new_star.model, new_star.stel_file = self.model, self.stel_file
 
         if filt is None:
@@ -285,6 +310,17 @@ class Star:
 
     def _load_model_grid(self, teff, logg, wav_start, wav_end):
         "Pick Sonora (teff < 2300K) vs PHOENIX and set vraw/sraw/model/stel_file."
+        # Both branches build a filename by concatenation, so an unset folder
+        # surfaced as a bare "unsupported operand type(s) for +: 'NoneType' and
+        # 'str'" that named neither the parameter nor the model. Say which one.
+        model, folder = ('sonora', self.params.sonora_folder) if teff < 2300 else ('phoenix', self.params.phoenix_folder)
+        if folder is None:
+            raise ValueError(
+                "teff=%s needs a %s model grid, but %s_folder is not set on this star's StarParams. "
+                "Pass it explicitly -- StarParams(%s_folder=...) or sim.set_star(%s_folder=...) -- or take "
+                "it from an existing star with sim.star.params.%s_folder. Configs set it under 'stel:' in "
+                "the instrument YAML." % (teff, model.upper() if model == 'phoenix' else 'Sonora',
+                                          model, model, model, model))
         if teff < 2300:
             g = '316'  # mks units, log10(316*100)=4.5, matches phoenix logg convention used below
             self.stel_file = self.params.sonora_folder + 'sp_t%sg%snc_m0.0' % (int(teff), g)

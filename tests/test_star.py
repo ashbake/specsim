@@ -179,3 +179,53 @@ def test_vsini_broadening_conserves_band_integrated_flux(make_bandpass):
     flux_broadened = integrate(x, s_broadened * filt_interp(x))
 
     assert flux_broadened == pytest.approx(flux_unbroadened, rel=0.02)
+
+
+def test_missing_model_folder_names_the_parameter(make_bandpass):
+    """
+    StarParams defaults both model folders to None, and the filename is built
+    by string concatenation, so an unset folder used to surface as a bare
+    "unsupported operand type(s) for +: 'NoneType' and 'str'" naming neither
+    the parameter nor the model grid it wanted.
+    """
+    x = np.arange(1000, 1800, 0.1)
+    bp = make_bandpass("J")
+
+    with pytest.raises(ValueError, match="phoenix_folder is not set"):
+        Star(StarParams(teff=5800, mag=10)).load(x, bp)
+
+    with pytest.raises(ValueError, match="sonora_folder is not set"):
+        Star(StarParams(teff=1400, mag=10)).load(x, bp)
+
+    # the other folder being set is not enough -- it must be the one for this teff
+    with pytest.raises(ValueError, match="phoenix_folder is not set"):
+        Star(StarParams(teff=5800, mag=10, sonora_folder=SONORA_DIR)).load(x, bp)
+
+
+def test_star_construction_forms(make_bandpass):
+    """
+    Star can be built straight from keywords, or from an existing params
+    record with overrides, without the caller ever naming StarParams. The
+    override form is what makes it easy to reuse a scene star's model folders
+    instead of forgetting them (which fails late and cryptically).
+    """
+    x = np.arange(1200, 1400, 0.1)
+    bp = make_bandpass("J")
+    folders = dict(phoenix_folder=PHOENIX_DIR, sonora_folder=SONORA_DIR)
+
+    from_keywords = Star(teff=5800, mag=10, **folders)
+    from_record = Star(StarParams(teff=5800, mag=10, **folders))
+    assert from_keywords.params == from_record.params
+
+    # overrides copy everything not named -- notably the model folders
+    base = StarParams(teff=5800, mag=10, vsini=7, **folders)
+    tweaked = Star(base, teff=2300, mag=12)
+    assert tweaked.params.phoenix_folder == PHOENIX_DIR
+    assert tweaked.params.sonora_folder == SONORA_DIR
+    assert (tweaked.params.teff, tweaked.params.mag) == (2300, 12)
+    assert tweaked.params.vsini == 7  # untouched fields survive
+    assert base.teff == 5800  # and the original record is not mutated
+
+    # the keyword form really loads, and matches the record form
+    assert np.allclose(Star(teff=5800, mag=10, **folders).load(x, bp).s,
+                       Star(base, vsini=0).load(x, bp).s)
