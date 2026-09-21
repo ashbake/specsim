@@ -30,13 +30,13 @@ data/
   filters/                          # filter profiles + zeropoints.txt
   stel/phoenix/, stel/sonora/       # stellar model grids
   telluric/                         # PSG telluric spectrum + sky/ background
-  track/                            # tracking camera transmission (shared)
   instrument/<hispec|modhis>/
     ao/                             # HO WFE + tip-tilt files, contrastcurves/
-    track/                          # ZEMAX spot-size vs. field aberrations
-    throughput/                     # per-subsystem throughput subfolders
-                                    #   (feicam/ also holds the cold-snout
-                                    #    blocking filter)
+    track/                          # tracking camera transmission, ZEMAX
+                                    #   spot-size vs. field aberrations, and
+                                    #   the cold-snout blocking filter
+    throughput/                     # base_throughput curve + coupling/ grid
+    thermal_background/             # instrument thermal background per arm
     order_bounds.csv
 ```
 
@@ -51,7 +51,7 @@ The MODHIS dynamic tip tilt file, for example, called `TTDYNAMIC_NFIRAOS_091123.
 #### Instrument (throughput) Files
 The spectrograph reads three things under `spectrograph:` in the instrument YAML, each a path in its own right:
 
-- `transmission_file` - a single two-column CSV (wavelength, fractional throughput) giving the **base** throughput: everything except fiber coupling. Wavelengths in nm, or in microns if the largest value is under 5. The bundled HISPEC file, `data/instrument/hispec/throughput/base_throughput.csv`, is spliced from the blue-arm (BSPEC) and red-arm (RSPEC) curves. The per-subsystem tree this was built from (ao, bspec, feiblue, feicam, feicom, feired, fibblue, fibred, rspec, tel, each holding a `{x}_throughput.csv`) is no longer bundled; the throughput-budget plotters in `specsim.plot` are the only thing that still reads it, and they take a `subsystems_path` pointing at a full HISPEC/MODHIS data checkout.
+- `transmission_file` - a single two-column CSV (wavelength, fractional throughput) giving the **base** throughput: everything except fiber coupling. Wavelengths in nm, or in microns if the largest value is under 5. The bundled HISPEC file, `data/instrument/hispec/throughput/base_throughput.csv`, is spliced from the blue-arm (BSPEC) and red-arm (RSPEC) curves. The per-subsystem tree this was built from (ao, bspec, feiblue, feicam, feicom, feired, fibblue, fibred, rspec, tel, each holding a `{x}_throughput.csv`) is no longer bundled. The only thing that still reads it is the throughput-budget plotters, which have moved to `references/plot_references.py`; they take a `subsystems_path` pointing at a full HISPEC/MODHIS data checkout.
 - `coupling_path` - the folder of fiber coupling simulation outputs, e.g. `couplingEff_atm1_adc1_PL0_defoc0nmRMS_LO0nmRMS_ttStatic1.5mas_ttDynamic5.5masRMS.csv`. The coupling depends on the wavefront error and also takes parameters specifying whether atmospheric refraction and ADC corrections were assumed, and if the photonic lantern (PL) was used. These are set under `spectrograph:` as `atm`, `adc`, and `pl_on`. Only part of the grid is bundled, so a run whose rounded tip/tilt lands on a missing file raises an error naming the combination it looked for.
 - `inst_background_file` - a two-column CSV (wavelength, ph/s) of instrument thermal background, already including the throughput up to the spectrograph. This replaces the old per-subsystem emissivity calculation. Values are **per reduced pixel**, so the file bakes in the `res` and `pix_vert` it was generated with.
 
@@ -67,7 +67,7 @@ The tracking camera has its own transmission file variable (`transmission_file`)
 The cold-snout blocking filter used for the camera's thermal background is pointed to by `blocking_filter_file` under `track:`, and lives in each instrument's `track/` folder alongside the other tracking-camera files. Previously it was found implicitly by appending `feicam/blocking_filter.TXT` to the spectrograph's throughput path, which only HISPEC had -- so tracking-camera calculations failed for MODHIS. Both the blocking filter and the aberrations file are currently HISPEC-derived and copied into the MODHIS tree, so each instrument can be repointed independently as MODHIS-specific versions become available.
 
 #### Filter Files
-The filters used primarily here are 2MASS J/H/K and CFHT y band, similar to PSISIM. These are provided in the `data/filters/` folder (pointed to by `filter_path`/`zp_file` under `filt:` in the instrument YAML). Other filters can be used, but the code relies on the file `zeropoints.txt`, which contains zero point information for each filter. This file must be updated if a new filter is added. The filter band is specified under `[filt]` in the user `.cfg`; the filter family is derived from the band by `Bandpass.family_for_band` (2MASS for J/H/K, CFHT for y, Johnson otherwise), so you only set `band`. Set `family` explicitly under `[filt]` only for a band whose conventional family is not the one you want (e.g. the SLOAN, decam, or TESS curves in `data/filters/`). This filter profile is primarily used to correctly scale the magnitude of the stellar model. The band can also be changed at runtime with `sim.set_star(band='K')`. `specsim.available_bands(zp_file)` lists every `(family, band)` that can be loaded, and `Bandpass.loaded()` reports the ones loaded so far this session.
+The filters used primarily here are 2MASS J/H/K and CFHT y band, similar to PSISIM. These are provided in the `data/filters/` folder (pointed to by `filter_path`/`zp_file` under `filt:` in the instrument YAML). Other filters can be used, but the code relies on the file `zeropoints.txt`, which contains zero point information for each filter. This file must be updated if a new filter is added. The band is specified under `[stel]` in the user `.cfg`, alongside the `mag` it qualifies -- the user `.cfg` has no `[filt]` section, since the filter file paths are instrument-fixed. The filter family is derived from the band by `Bandpass.family_for_band` (2MASS for J/H/K, CFHT for y, Johnson otherwise), so you only set `band`. Set `family` explicitly under `[stel]` only for a band whose conventional family is not the one you want (e.g. the SLOAN, decam, or TESS curves in `data/filters/`). This filter profile is primarily used to correctly scale the magnitude of the stellar model. The band can also be changed at runtime with `sim.set_star(band='K')`. `specsim.available_bands(zp_file)` lists every `(family, band)` that can be loaded, and `Bandpass.loaded()` reports the ones loaded so far this session.
 
 The [SVO service](http://svo2.cab.inta-csic.es/theory/fps/index.php?mode=browse&gname=2MASS&asttype=) is a handy place to download filter profiles.
 
@@ -97,7 +97,6 @@ For nonzero planet separations, specsim can calculate the expected contrast betw
 First (from the code directory) start a python session and import some key packages from specsim:
 ```
 > from specsim.config import simulate_from_config
-> from specsim import plot
 ```
 
 Configuration is split across two files. A user-facing `.cfg` file (e.g. `./configs/modhis_snr.cfg`) holds the parameters you'll typically change from run to run -- star magnitude/teff/vsini, exposure time, observing conditions (pwv/seeing), and which AO star to guide on -- plus `[run] instrument`, which selects an instrument. The parameters tied to that instrument (telescope area/diameter, detector properties, AO WFE file paths, tracking camera hardware, filter/telluric file paths) live in a corresponding YAML file under `configs/instruments/` (e.g. `configs/instruments/modhis.yaml`), so they don't need to be duplicated into every user config. `simulate_from_config` reads both and merges them into one `Simulate` scene:
@@ -120,36 +119,44 @@ So a minimal setup outside the repo is one file:
 ```
 mkdir ~/my_project && cd ~/my_project
 cp <specsim>/configs/modhis_snr.cfg ./my_run.cfg     # edit magnitudes, texp, conditions
-python -c "from specsim import simulate_from_config; print(simulate_from_config('./my_run.cfg').snr())"
+python -c "from specsim import simulate_from_config; print(simulate_from_config('./my_run.cfg').observe())"
 ```
 
 `sim` exposes the built domain objects as attributes (`sim.star`, `sim.spectrograph`, `sim.atmosphere`, `sim.ao_system`, `sim.filt`), and computes results on demand. Telescope area/diameter live on `sim.spectrograph` rather than a separate telescope object:
 ```
-> observation = sim.snr()                                    # per-pixel/per-resolution-element/per-order SNR
+> observation = sim.observe()                                # per-pixel/per-resolution-element/per-order SNR
 > rv_result   = sim.rv_precision(telluric_cutoff=0.2, velocity_cutoff=2)
 > ccf_result  = sim.ccf_snr()
 > etc_result  = sim.exposure_time_for_snr(target_snr=100)
 ```
 
-We can then use some plotting tools to plot the snr
+The plots are methods on `sim`, which already holds the star, filter, AO system and spectrograph they need -- only the options are left to pass. Each returns the matplotlib `(fig, ax)`, and writes a PNG only if you give it a `savepath`:
 ```
-> plot.plot_snr(sim.spectrograph, sim.ao_system, sim.filt, sim.star, snrtype='res_element', savepath=savepath)
+> sim.plot_snr(snrtype='res_element')                        # returns (fig, ax), writes nothing
+> fig, ax = sim.plot_snr_orders(mode='peak', savepath=savepath)
+> sim.plot_rv_err()                                          # runs rv_precision() for you
+> sim.plot_track_background()                                # runs tracking() for you
+> sim.plot_coupling(); sim.plot_base_throughput(); sim.plot_spec_background()
 ```
+Each method is a thin wrapper over a function of the same name in `specsim/plot.py`, which still takes plain domain objects, for plotting something that never came from a `Simulate`. Plots needing data the repo does not ship, and a few broken ones, are parked in `references/plot_references.py` and are not imported by the package.
 
-`sim.snr()` returns the observed `Spectrograph` itself (the same object as `sim.spectrograph`) -- it carries both the hardware and the results, the same way `TrackingCamera` does. The instrument wavelength and flux per pixel in photons are in `.v` and `.s`; the per-resolution-element wavelength grid and SNR are in `.v_res_element` and `.snr_res_element`. Note `.ytransmit` is the total throughput on the model grid, while `.base_throughput_v` is the base throughput resampled onto `.v`.
+`sim.observe()` returns the observed `Spectrograph` itself (the same object as `sim.spectrograph`) -- it carries both the hardware and the results, the same way `TrackingCamera` does. The instrument wavelength and flux per pixel in photons are in `.v` and `.s`; the per-resolution-element wavelength grid and SNR are in `.v_res_element` and `.snr_res_element`. Note `.ytransmit` is the total throughput on the model grid, while `.base_throughput_v` is the base throughput resampled onto `.v`.
 
-To scan over a parameter without rebuilding the whole scene from scratch, use one of the four setters -- one per scene object, each taking any subset of that object's inputs -- then call `sim.snr()` again. See `examples/median_bin_snr.py`.
+To scan over a parameter without rebuilding the whole scene from scratch, use one of the four setters -- one per scene object, each taking any subset of that object's inputs -- then call `sim.observe()` again. See `examples/median_bin_snr.py`.
 
 ```python
 sim.set_star(mag=12, teff=3500, vsini=5, rv=0)          # on-axis star
 sim.set_star(mag=12, band='K')                           # ... and the band that mag is quoted in
+sim.set_star(Av=1.5)                                     # ... and the extinction along the sightline
 sim.set_ao(mode='NGS', mag=14, mag_band='R', teff=4000)  # AO mode and guide star
 sim.set_ao(ho_wfe=190, tt_dynamic=2.0)                   # ... or pin the WFE by hand
 sim.set_atmosphere(pwv=1.5, seeing_set='good', zenith_angle=45)
-sim.set_obs(texp=1800, nsamp=8)                          # exposure
+sim.set_obs(texp=1800, texp_frame_set=600)               # exposure
 ```
 
-Anything not passed is left unchanged, so `sim.set_star(mag=12)` moves only the magnitude; passing several at once does the reload work once rather than once per parameter. Each returns `sim`, so calls chain: `sim.set_obs(texp=1800).snr()`. `None` and `'default'` are real values, not "unchanged" -- `sim.set_ao(ho_wfe=None, tt_dynamic=None)` clears a WFE override, and `sim.set_ao(mag='default')` goes back to inheriting the science star's magnitude.
+Anything not passed is left unchanged, so `sim.set_star(mag=12)` moves only the magnitude; passing several at once does the reload work once rather than once per parameter. Each returns `sim`, so calls chain: `sim.set_obs(texp=1800).observe()`. `None` and `'default'` are real values, not "unchanged" -- `sim.set_ao(ho_wfe=None, tt_dynamic=None)` clears a WFE override, and `sim.set_ao(mag='default')` goes back to inheriting the science star's magnitude.
+
+Interstellar extinction is one number: `extinction` under `[stel]` in the `.cfg` (A_V in magnitudes, default 0, so leaving it out changes nothing), which becomes `StarParams.Av` and can be moved at runtime with `sim.set_star(Av=...)`. It reddens the raw model spectrum via the Cardelli, Clayton & Mathis (1989) curve with Rv=3.1 *before* the magnitude scaling, so `mag` stays the **observed** magnitude in its band and the extinction shows up as a colour rather than as a dimming there. Being a property of the sightline rather than of one object, the same A_V is applied to a companion and to an AO guide star built from a different Teff -- so a reddened star is also a fainter guide star in V, and `mode='auto'` can pick a different AO mode because of it.
 
 Changing `band` **reinterprets** the magnitude rather than colour-converting it: an H=10 star becomes a K=10 star, so its physical flux -- and the SNR -- change. Two knock-on effects, both correct rather than surprises to suppress: a companion's magnitude is quoted in the same band and is renormalised too, and `[ao] mag_band='default'` *means* "the science band", so an AO guide magnitude left at default follows along. Since `filt.center_wavelength` sets the Strehl, and the high-order and tip-tilt terms scale differently with wavelength, `mode='auto'` can legitimately pick a different AO mode after a band change. `sim.set_filter(band='K')` is an alias when you only want to move the band.
 
@@ -157,70 +164,24 @@ Changing `band` **reinterprets** the magnitude rather than colour-converting it:
 
 # Code structure
 
-Data flows in one direction: **config files** are read into **scene objects**, the scene is exposed on the detectors, and everything downstream (**analysis**, **plots**) reads the result. Each detector owns both its hardware and its exposure, with the same two-phase shape: `.load()` sets up everything that depends only on the instrument and the AO correction, then `.observe()` exposes on a star. Telescope area and diameter are fed straight to `AOSystem`, `Spectrograph` and `TrackingCamera`, so no hardware object has to reach through another one for them. Each box below is one class or module; arrows are "is built from" / "feeds into".
+Data flows in one direction: **config files** are read into **scene objects**, the scene is exposed on the detectors, and everything downstream (**analysis**, **plots**) reads the result. Each detector owns both its hardware and its exposure, with the same two-phase shape: `.load()` sets up everything that depends only on the instrument and the AO correction, then `.observe()` exposes on a star. Telescope area and diameter are fed straight to `AOSystem`, `Spectrograph` and `TrackingCamera`, so no hardware object has to reach through another one for them. Each box below is one class or module, and arrows are "feeds into"; what each one holds is in the module table further down.
 
 ```mermaid
 flowchart TD
-    subgraph CFG ["① Config — configs/"]
-        USERCFG["<b>&lt;name&gt;.cfg</b><br/><i>per-run: star mag/teff/vsini,<br/>texp, pwv, seeing, AO mode</i>"]
-        INSTYAML["<b>instruments/&lt;inst&gt;.yaml</b><br/><i>fixed per instrument: detector,<br/>WFE + data file paths, telescope</i>"]
-        CONFIG["<b>config.py</b><br/><i>simulate_from_config()<br/>merges both, resolves data paths,<br/>constructs the scene objects</i>"]
-        TEL["<b>[telescope]</b><br/><i>area_m2 + diameter_m, fed to all<br/>three hardware objects directly</i>"]
-    end
-
-    subgraph SCENE ["② Scene — loaded and wired by Simulate.__init__, in this order"]
-        BP["<b>Bandpass</b> · bandpass.py<br/><i>filter curve + zeropoint.<br/>Family derived from the band</i>"]
-        STAR["<b>Star</b> · star.py<br/><i>PHOENIX/Sonora spectrum, scaled<br/>to mag in Bandpass, vsini + RV</i>"]
-        ATM["<b>Atmosphere</b> · atmosphere.py<br/><i>telluric transmission per species,<br/>sky background, seeing</i>"]
-        AO["<b>AOSystem</b> · aosystem.py<br/><i>.select(): picks AO mode from the<br/>guide-star mag, gives HO WFE /<br/>tip-tilt / Strehl</i>"]
-        SPEC["<b>Spectrograph</b> · spectrograph.py<br/><i>.load(): throughput x fiber coupling<br/>(needs the AO Strehl), orders, detector.<br/>.observe(): photons, backgrounds, noise,<br/>SNR per pixel/res element/order</i>"]
-        TRACK["<b>TrackingCamera</b> · trackingcamera.py<br/><i>optional. .load(): detector, bandpass,<br/>plate scale, PSF FWHM, thermal bg.<br/>.observe(): sky bg, signal, SNR,<br/>centroid error</i>"]
-    end
-
-    subgraph RUN ["③ Run"]
-        SIM["<b>Simulate</b> · simulate.py<br/><i>owns the scene and calls .observe()<br/>on demand. set_star, set_ao,<br/>set_atmosphere, set_obs rebuild<br/>only what changed</i>"]
-    end
-
-    subgraph OUT ["④ Analysis and output"]
-        ANA["<b>Analyze</b> · analyze.py<br/><i>rv_precision, ccf_snr,<br/>exposure_time_for_snr,<br/>exposure_time_for_ccf_snr</i>"]
-        PLOT["<b>plot.py</b><br/><i>SNR, throughput, coupling,<br/>backgrounds, RV error</i>"]
-    end
-
-    subgraph SHARED ["Shared, no domain state"]
-        FUNC["<b>functions.py</b><br/><i>integration, LSF/resampling, Strehl,<br/>detector noise terms, doppler + RV<br/>information. Imported by every<br/>module in ② and ④</i>"]
-    end
-
-    USERCFG --> CONFIG
-    INSTYAML --> CONFIG
-    INSTYAML --> TEL
-    CONFIG --> SIM
-
-    SIM -.builds.-> BP
-    BP --> STAR
-    STAR --> AO
-    ATM --> AO
-    TEL --> AO
-    TEL --> SPEC
-    TEL --> TRACK
-
-    AO --> SPEC
-    STAR --> SPEC
-    ATM --> SPEC
-    AO --> TRACK
-    STAR --> TRACK
-    ATM --> TRACK
-
-    SIM --> SPEC
-    SPEC --> ANA
-    SPEC --> PLOT
+    CFG[".cfg + instrument .yaml"] --> SIM["Simulate"]
+    SIM --> BP["Bandpass"]
+    BP --> STAR["Star"]
+    STAR --> AO["AOSystem"]
+    ATM["Atmosphere"] --> AO
+    AO --> SPEC["Spectrograph"]
+    AO --> TRACK["TrackingCamera"]
+    SPEC --> ANA["Analyze"]
+    SPEC --> PLOT["plot.py"]
     ANA --> PLOT
     TRACK --> PLOT
-
-    FUNC -.-> SCENE
-    FUNC -.-> OUT
 ```
 
-The build order in the scene is not arbitrary: the star's magnitude sets which AO mode is chosen, the AO mode sets the wavefront error, and the wavefront error sets the fiber coupling that goes into the spectrograph throughput. This is what decides how much work each setter does. `set_star()` sits at the top of the chain, so it reloads the star, re-runs AO selection and reloads the coupling -- and `band` sits higher still, since it also renormalises any companion and moves the reference wavelength the Strehl is computed at, making it the most expensive input to change. `set_obs()` sits at the bottom and only marks the exposure stale, so the next `sim.snr()` re-runs `observe()`. `set_atmosphere()` splits: seeing and zenith angle index the AO WFE tables and so re-run the AO, while pwv only reaches the exposure and does not.
+The build order in the scene is not arbitrary: the star's magnitude sets which AO mode is chosen, the AO mode sets the wavefront error, and the wavefront error sets the fiber coupling that goes into the spectrograph throughput. This is what decides how much work each setter does. `set_star()` sits at the top of the chain, so it reloads the star, re-runs AO selection and reloads the coupling -- and `band` sits higher still, since it also renormalises any companion and moves the reference wavelength the Strehl is computed at, making it the most expensive input to change. `set_obs()` sits at the bottom and only marks the exposure stale, so the next `sim.observe()` re-runs the exposure. `set_atmosphere()` splits: seeing and zenith angle index the AO WFE tables and so re-run the AO, while pwv only reaches the exposure and does not.
 
 ## Module reference
 
@@ -235,7 +196,7 @@ The build order in the scene is not arbitrary: the star's magnitude sets which A
 | `spectrograph.py` | `Spectrograph` | Science detector: `.load()` throughput, then `.observe()` an exposure. Instrument throughput/coupling file readers live here |
 | `trackingcamera.py` | `TrackingCamera` | Guide detector: `.load()` optics/PSF, then `.observe()` an exposure |
 | `analyze.py` | `Analyze`, result dataclasses | Everything downstream of an exposure |
-| `plot.py` | plotting functions | Takes domain objects, never a config |
+| `plot.py` | plotting functions, plus the `sim.plot_*()` methods that wrap them | Takes domain objects, never a config |
 | `functions.py` | generic math | No specsim imports — the bottom of the stack |
 
 
