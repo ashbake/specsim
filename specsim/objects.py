@@ -183,7 +183,7 @@ class STELLAR():
         self.vsini    = 0     # km/s, vsini of star
         self.mag      = 10    # mag, star magnitude defined in so.filt bandpass
         self.teff     = 3600  # K, star temperature
-        self.host_diam_mas = 0.0 # [mas] angular diameter of host star for geometric null leakage
+        self.host_diam_mas = 0.0 # [mas] angular diameter of host star for geometric null leakage, or 'auto' (from the PHOENIX scaling)
         self.rv       = 0     # absolute rv of system [km/s]
         self.pl_sep   = 0     # mas, if 0 it will assume on axis, if non zero it will assume off axis
         self.pl_teff  = 800   # K, planet temperature, used if pl_sep>0

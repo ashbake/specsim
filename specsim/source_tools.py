@@ -150,6 +150,57 @@ def load_sonora(stelname,wav_start=750,wav_end=780):
 
 	return lam[isub]/10.0,spec[isub] * 10 * 100**2 #nm, phot/m2/s/nm (my fave)
 
+
+def load_diamondback(stelname,wav_start=750,wav_end=780):
+	"""
+	Load a Sonora Diamondback (Morley et al. 2024) spectrum and return the
+	requested wavelength subarray in photon flux units.
+
+	Diamondback files differ from Bobcat in two ways that matter here:
+	  - flux is F_lambda in W/m2/m (Bobcat is F_nu in erg/cm2/s/Hz), so the
+	    c/lambda^2 conversion used in load_sonora must NOT be applied;
+	  - the header length is not fixed, so non-numeric lines are skipped.
+
+	inputs:
+	-------
+	stelname - str
+		path to the Diamondback spectrum (columns: wavelength [micron],
+		flux [W/m2/m])
+	wav_start, wav_end - float
+		bounds of the returned subarray [nm]
+
+	returns:
+	--------
+	wavelength - array [nm], ascending
+	flux - array [phot/m2/s/nm]
+	"""
+	rows = []
+	with open(stelname) as fh:
+		for line in fh:
+			parts = line.split()
+			if len(parts) < 2:
+				continue
+			try:
+				rows.append((float(parts[0]), float(parts[1])))
+			except ValueError:
+				continue  # header / comment line
+	f = np.array(rows)
+	order = np.argsort(f[:,0])
+	lam_nm  = f[order,0] * 1e3          
+	flam   = f[order,1]                 # W/m2/m
+
+	h = 6.62607015e-34
+	c = 2.99792458e8
+
+	lam_m = lam_nm * 1e-9              # nm -> m, for the hc/lambda energy term
+	phot = flam * lam_m / (h * c) * 1e-9   # phot/s/m2/nm
+
+	isub = np.where((lam_nm > wav_start) & (lam_nm < wav_end))[0]
+
+	return lam_nm[isub], phot[isub]
+
+
+
 def calc_nphot(dl_l, zp, mag):
 	"""
 	http://astroweb.case.edu/ssm/ASTR620/mags.html
@@ -218,7 +269,7 @@ def scale_stellar(filt,stelv,stels,mag):
 	return nphot_expected_0/nphot_model
 
 
-def load_stellar_model(x,mag,teff,vsini,so,rv=0,logg=None):
+def load_stellar_model(x,mag,teff,vsini,so,rv=0,logg=None,stel_file=None,model=None):
 	"""
 	Load a model stellar spectrum (Sonora or PHOENIX, chosen by effective
 	temperature), scale it to the designated magnitude, broaden it by
@@ -263,6 +314,16 @@ def load_stellar_model(x,mag,teff,vsini,so,rv=0,logg=None):
 		to 4.5 (g = 316 m/s²). For PHOENIX models, so.stel.logg is used
 		if logg is None.
 
+	stel_file - str or None
+		explicit path to a model spectrum. If given, it is loaded directly
+		and teff/logg are NOT used to pick the file (the caller chooses the
+		grid point, e.g. Bobcat vs Diamondback by Teff and nearest log g).
+		model is inferred from the filename if not given.
+
+	model - str or None
+		'sonora' (Bobcat), 'diamondback' or 'phoenix'; only used with
+		stel_file.
+
 	returns:
 	--------
 	shifted_spec - array
@@ -292,13 +353,17 @@ def load_stellar_model(x,mag,teff,vsini,so,rv=0,logg=None):
 	# wavelength bounds should incldue filter entirely
 	l0,l1 = np.min((np.min(x),np.min(so.filt.xraw))),np.max((np.max(x),np.max(so.filt.xraw)))
 
-	if teff < 2300: # sonora models arent sampled as well so use phoenix as low as can
+	if stel_file is not None: # caller chose the exact file (e.g. Bobcat/Diamondback split)
+		model     = model if model is not None else _infer_model_from_file(stel_file)
+		vraw,sraw = _load_model_file(model,stel_file,so,l0,l1)
+	elif teff < 2300: # sonora models arent sampled as well so use phoenix as low as can
 		# Convert logg (cgs) to MKS gravity for Sonora filename, default g=316 (logg=4.5)
 		# Grid values match Sonora filename convention (truncated integers)
 		SONORA_G_GRID = np.array([10, 17, 31, 56, 100, 178, 316, 562, 1000, 1780, 3160])
 		if logg is not None:
-			g_mks = 10**logg / 100  # cgs (cm/s2) -> MKS (m/s2)
-			g_val = SONORA_G_GRID[np.argmin(np.abs(SONORA_G_GRID - g_mks))]
+			# nearest in log g: the grid is evenly spaced in log, so nearest in
+			# linear g is biased toward the lower gravity
+			g_val = SONORA_G_GRID[np.argmin(np.abs(np.log10(SONORA_G_GRID) + 2 - logg))]
 		else:
 			g_val = 316  # default: log g = 4.5
 		g    = str(int(g_val))
@@ -393,6 +458,8 @@ def get_band_mag2(so,family,band,factor_0):
             vraw,sraw = load_phoenix(so.stel.stel_file,so.stel.phoenix_folder,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
         elif so.stel.model=='sonora':
             vraw,sraw = load_sonora(so.stel.stel_file,wav_start=np.min(x), wav_end=np.max(x)) #phot/m2/s/nm
+        elif so.stel.model == 'diamondback':
+            vraw, sraw = load_diamondback(so.stel.stel_file, wav_start=np.min(x), wav_end=np.max(x))  # phot/m2/s/nm
     else:
         vraw,sraw = so.stel.vraw, so.stel.sraw
 
@@ -484,6 +551,9 @@ def get_band_mag(so,vraw, sraw, model,stel_file,family,band,factor_0):
         elif model=='sonora':
             vraw,sraw = load_sonora(stel_file,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
             print('Note: had to reload Sonora stellar model for _get_band_mag')
+        elif model=='diamondback':
+            vraw,sraw = load_diamondback(stel_file,wav_start=np.min(xfilt), wav_end=np.max(xfilt)) #phot/m2/s/nm
+            print('Note: had to reload Diamondback model for _get_band_mag')
 
     filtered_stel = factor_0 * sraw * filt_interp(vraw)
     flux = integrate(vraw,filtered_stel)    #phot/m2/s
@@ -550,3 +620,22 @@ def _lsf_rotate(deltav,vsini,epsilon=0.6):
     kernel = (ep1*np.sqrt(xvals_abs) + ep2*xvals_abs)/ep3
 
     return kernel, velgrid
+
+
+def _load_model_file(model,stel_file,so,wav_start,wav_end):
+	"""Dispatch to the right reader for a model family ('phoenix', 'sonora', 'diamondback')."""
+	if model=='phoenix':
+		return load_phoenix(stel_file,so.stel.phoenix_folder,wav_start=wav_start,wav_end=wav_end)
+	if model=='diamondback':
+		return load_diamondback(stel_file,wav_start=wav_start,wav_end=wav_end)
+	return load_sonora(stel_file,wav_start=wav_start,wav_end=wav_end)
+
+
+def _infer_model_from_file(stel_file):
+	"""Bobcat files are named sp_t..., PHOENIX lte..., Diamondback t...g...f..."""
+	base = os.path.basename(stel_file)
+	if base.startswith('lte'):
+		return 'phoenix'
+	if base.startswith('sp_'):
+		return 'sonora'
+	return 'diamondback'

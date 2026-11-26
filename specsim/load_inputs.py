@@ -190,7 +190,7 @@ class fill_data():
 		so.stel.s, so.stel.vraw,so.stel.sraw,so.stel.model, so.stel.stel_file, so.stel.factor_0 = source_tools.load_stellar_model(self.x,so.stel.mag,so.stel.teff,so.stel.vsini,so,rv=so.stel.rv)
 		# load companion if there is one (requires separation>0)
 		if so.stel.pl_sep>0:
-			so.stel.pl_s, _,_,so.stel.pl_model, so.stel.pl_stel_file, so.stel.pl_factor_0 = source_tools.load_stellar_model(self.x,so.stel.pl_mag,so.stel.pl_teff,so.stel.pl_vsini,so,rv=so.stel.rv,logg=so.stel.pl_logg)
+			so.stel.pl_s, _,_,so.stel.pl_model, so.stel.pl_stel_file, so.stel.pl_factor_0 = source_tools.load_stellar_model(self.x,so.stel.pl_mag,so.stel.pl_teff,so.stel.pl_vsini,so,rv=so.stel.rv,logg=so.stel.pl_logg,stel_file=getattr(so.stel,'pl_spec_file',None))
 
 		so.stel.v   = self.x
 		so.stel.units = 'photons/s/m2/nm' # stellar spec is in photons/s/m2/nm
