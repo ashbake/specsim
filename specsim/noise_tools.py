@@ -438,7 +438,7 @@ def get_MODHIS_contrast(folder, ao_mode, seeing, zenith_angle, magnitude, waves,
     return overall_contrast
 
 
-def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,vortex_charge):
+def get_contrast_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,vortex_charge,host_diameter=0.0):
     """
     Estimate residual on-axis stellar leakage (contrast) for a vector
     vortex fiber nulling (VFN) coronagraph, i.e. the planet is off axis
@@ -474,10 +474,12 @@ def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,v
     strehl        - Strehl ratio of the AO correction (carried through
                     for context; not currently used in the leakage
                     calculation below)
-    tel_diam [m]  - telescope diameter
+    tel_diam [m]  - telescope diameter (D of the lambda/D; the VFN path passes so.inst.vfn_diam if set)
     vortex_charge - integer topological charge of the vortex coronagraph
-                    (1 or 2); selects the empirical WFE and geometric
+                    (1 or 2, or 0 for a phase knife); selects the empirical WFE, tip/tilt and geometric
                     leakage coefficients
+    host_diameter [mas] - angular diameter of the host star, used for
+                    geometric leakage term (default 0.0, no geometric leakage)
 
     outputs
     -------
@@ -485,13 +487,6 @@ def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,v
         total estimated on-axis stellar leakage contrast (dimensionless,
         sum of WFE, tip/tilt, and geometric leakage terms), clipped to
         be <= 1
-
-    TODO
-    ----
-    need planet throughput to accompany it since off axis?
-    note: this function references an undefined `host_diameter`
-    variable (not one of the listed inputs) for the geometric leakage
-    term; see function body.
     """
     # apply units
     ho_wfe *= u.nm
@@ -500,12 +495,17 @@ def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,v
     tel_diam *= u.m
     host_diameter *=u.mas
 
-    #-- Get Stellar leakage due to WFE
-    #Pick the WFE coefficient based on the vortex charge. Coeff values emprically determined in simulation
+    # Stellar leakage from wavefront error.
+    # WFE coefficients are empirically determined from simulation.
+    # Last updated 2026-11-09 from 2026-09-21 HAKA telemetry (5 stable
+    # captures, fiber at mask centre, HO WFE from HAKA table, J/H/K mean).
+    # Previous values noted for reference.
     if vortex_charge == 1:
-        wfe_coeff = 0.840       # Updated on 1/11/21 based on 6/17/19 pyWFS data
+        wfe_coeff = 0.892   # charge-1 vortex  (prev: 0.840, 2021-01-11)
     elif vortex_charge == 2:
-        wfe_coeff = 1.650       # Updated on 1/11/21 based on 6/17/19 pyWFS data
+        wfe_coeff = 1.237   # charge-2 vortex  (prev: 1.650, 2021-01-11)
+    elif vortex_charge == 0:
+        wfe_coeff = 0.619   # phase knife       (prev: 0.69)
 
     #Approximate contrast from WFE
     contrast = (wfe_coeff * ho_wfe.to(u.micron) / wvs)**(2.) # * self.vortex_charge)
@@ -516,13 +516,19 @@ def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,v
 
     # Use leakage approx. from Ruane et. al 2019 
         # https://arxiv.org/pdf/1908.09780.pdf      Eq. 3
-    ttnull = (ttlamD)**(2*vortex_charge)
+    if vortex_charge == 1:
+        tt_coeff = 1.05         # Keck pupil, HISPEC fibers, J/H/K mean (Ruane et al. 2019: 1)
+    elif vortex_charge == 2:
+        tt_coeff = 1.04         # Keck pupil, HISPEC fibers, J/H/K mean (Ruane et al. 2019: 1)
+    elif vortex_charge == 0:    # phase knife
+        tt_coeff = 0.85         # Keck pupil, HISPEC fibers, edge-angle average, J/H/K mean; tt_dyn per axis
+    ttnull = tt_coeff * (ttlamD)**(2*max(vortex_charge, 1))     # knife null is first order, like charge 1
 
     # Add to total contrast
     contrast += ttnull
 
     #-- Get Stellar leakage due to finite sized star (Geometric leakage)
-      # Assumes user has already set host diameter with set_vfn_host_diameter()
+      # Host diameter from fill_data.stellar(): so.stel.host_diam_mas, or the PHOENIX scaling if 'auto'
       # Equation and coefficients are from Ruante et. al 2019
         # https://arxiv.org/pdf/1908.09780.pdf     fig 7c
     # Convert host_diameter to units of lambda/D
@@ -530,12 +536,14 @@ def get_speckle_noise_vfn(wave,ho_wfe,tt_dyn,pl_sep,mag,seeing,strehl,tel_diam,v
 
     # Define Coefficients for geometric leakage equation
     if vortex_charge == 1:
-        geo_coeff = 3.5
+        geo_coeff = 3.93        # Keck pupil, HISPEC fibers, J/H/K mean (Ruane et al. 2019: 3.5)
     elif vortex_charge == 2:
-        geo_coeff = 4.2
+        geo_coeff = 4.37        # Keck pupil, HISPEC fibers, J/H/K mean (Ruane et al. 2019: 4.2)
+    elif vortex_charge == 0:    # phase knife
+        geo_coeff = 4.36        # Keck pupil, HISPEC fibers, edge-angle average, J/H/K mean
     
     # Compute leakage
-    geonull = (host_diam_LoD / geo_coeff)**(2*vortex_charge)
+    geonull = (host_diam_LoD / geo_coeff)**(2*max(vortex_charge, 1))     # knife null is first order, like charge 1
     
     # Add to total contrast
     contrast += geonull
